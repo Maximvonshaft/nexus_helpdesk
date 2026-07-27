@@ -726,6 +726,13 @@ def accept_handoff_request(
     conversation, control, ticket = _context(db, row)
     _require_scope(db, current_user=current_user, control=control)
     if row.status == "accepted" and row.assigned_agent_id == current_user.id:
+        if ticket is not None:
+            ticket.assignee_id = current_user.id
+            ticket.status = TicketStatus.in_progress
+            ticket.conversation_state = ConversationState.human_owned
+            ticket.required_action = None
+            ticket.updated_at = utc_now()
+        db.flush()
         return serialize_handoff_request(
             db,
             row,
@@ -925,16 +932,27 @@ def force_takeover_ticket(
         if ticket.assignee_id == previous_agent_id:
             ticket.assignee_id = None
     row.forced_by_user_id = current_user.id
-    result = assign_handoff_to_agent(
-        db,
-        request_row=row,
-        conversation=conversation,
-        user=current_user,
-        mode="forced",
-    )
+    if row.status == "accepted" and row.assigned_agent_id == current_user.id:
+        result = serialize_handoff_request(
+            db,
+            row,
+            current_user=current_user,
+            conversation=conversation,
+            ticket=ticket,
+        )
+    else:
+        result = assign_handoff_to_agent(
+            db,
+            request_row=row,
+            conversation=conversation,
+            user=current_user,
+            mode="forced",
+        )
+    ticket.assignee_id = current_user.id
     ticket.status = TicketStatus.in_progress
     ticket.conversation_state = ConversationState.human_owned
     ticket.required_action = None
+    ticket.updated_at = utc_now()
     conversation.takeover_mode = "forced"
     row.decision_note = _clip(note, MAX_NOTE_CHARS)
     db.flush()
