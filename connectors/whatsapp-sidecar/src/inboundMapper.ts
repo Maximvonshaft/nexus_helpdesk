@@ -1,9 +1,22 @@
-import type { FromMeInboundMode, NormalizedInboundMessage } from "./types.js";
+import type {
+  FromMeInboundMode,
+  NormalizedInboundMessage,
+  WhatsAppMediaKind
+} from "./types.js";
 
 export interface InboundMapperOptions {
   allowFromMeInbound?: boolean;
   fromMeMode?: FromMeInboundMode;
   fromMeTestPrefix?: string;
+}
+
+interface ExtractedContent {
+  body: string;
+  mediaId: string | null;
+  mediaKind: WhatsAppMediaKind | null;
+  mediaMimeType: string | null;
+  mediaFilename: string | null;
+  replyToMessageId: string | null;
 }
 
 function phoneFromJid(jid: string | undefined | null): string | null {
@@ -12,12 +25,7 @@ function phoneFromJid(jid: string | undefined | null): string | null {
   return cleaned ? `+${cleaned}` : null;
 }
 
-function extractText(message: any): {
-  body: string;
-  mediaId: string | null;
-  mediaMimeType: string | null;
-  replyToMessageId: string | null;
-} {
+function extractText(message: any): ExtractedContent {
   const content = message?.message || {};
   const extended = content.extendedTextMessage || {};
   const context =
@@ -31,7 +39,9 @@ function extractText(message: any): {
     return {
       body: String(content.conversation).trim(),
       mediaId: null,
+      mediaKind: null,
       mediaMimeType: null,
+      mediaFilename: null,
       replyToMessageId: context.stanzaId ? String(context.stanzaId) : null
     };
   }
@@ -39,7 +49,9 @@ function extractText(message: any): {
     return {
       body: String(extended.text).trim(),
       mediaId: null,
+      mediaKind: null,
       mediaMimeType: null,
+      mediaFilename: null,
       replyToMessageId: context.stanzaId ? String(context.stanzaId) : null
     };
   }
@@ -51,11 +63,14 @@ function extractText(message: any): {
     ["sticker", content.stickerMessage]
   ] as const) {
     if (!value) continue;
-    const caption = String(value.caption || value.fileName || "").trim();
+    const filename = String(value.fileName || "").trim().slice(0, 255) || null;
+    const caption = String(value.caption || filename || "").trim();
     return {
       body: `<media:${kind}>${caption ? ` ${caption}` : ""}`,
       mediaId: value.url ? String(value.url) : value.directPath ? String(value.directPath) : null,
-      mediaMimeType: value.mimetype ? String(value.mimetype) : null,
+      mediaKind: kind,
+      mediaMimeType: value.mimetype ? String(value.mimetype).split(";", 1)[0].trim().toLowerCase() : null,
+      mediaFilename: filename,
       replyToMessageId: value.contextInfo?.stanzaId
         ? String(value.contextInfo.stanzaId)
         : null
@@ -68,7 +83,9 @@ function extractText(message: any): {
     return {
       body: `<location:${coordinates}>${label ? ` ${label}` : ""}`,
       mediaId: null,
+      mediaKind: null,
       mediaMimeType: null,
+      mediaFilename: null,
       replyToMessageId: null
     };
   }
@@ -76,11 +93,20 @@ function extractText(message: any): {
     return {
       body: "<contacts>",
       mediaId: null,
+      mediaKind: null,
       mediaMimeType: null,
+      mediaFilename: null,
       replyToMessageId: null
     };
   }
-  return { body: "", mediaId: null, mediaMimeType: null, replyToMessageId: null };
+  return {
+    body: "",
+    mediaId: null,
+    mediaKind: null,
+    mediaMimeType: null,
+    mediaFilename: null,
+    replyToMessageId: null
+  };
 }
 
 function messageType(message: any): string {
@@ -155,7 +181,9 @@ export function normalizeBaileysInbound(
     projection_mode: projectionMode,
     reply_to_message_id: extracted.replyToMessageId,
     media_id: extracted.mediaId,
-    media_mime_type: extracted.mediaMimeType
+    media_kind: extracted.mediaKind,
+    media_mime_type: extracted.mediaMimeType,
+    media_filename: extracted.mediaFilename
   };
   if (fromMe && projectionMode === "test_visitor") {
     normalized.self_echo_test_prefix = testPrefix;
