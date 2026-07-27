@@ -10,10 +10,21 @@ from starlette.routing import Match
 from app.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
+WIDGET_RUNTIME = (
+    ROOT / "backend" / "app" / "static" / "webchat" / "widget-runtime.js"
+)
 
 
 def test_webchat_ws_is_feature_flagged_by_default():
-    old = {key: os.environ.get(key) for key in ("WEBCHAT_WS_ENABLED", "WEBCHAT_WS_ADMIN_ENABLED", "WEBCHAT_WS_PUBLIC_ENABLED", "WEBCHAT_WS_BROKER")}
+    old = {
+        key: os.environ.get(key)
+        for key in (
+            "WEBCHAT_WS_ENABLED",
+            "WEBCHAT_WS_ADMIN_ENABLED",
+            "WEBCHAT_WS_PUBLIC_ENABLED",
+            "WEBCHAT_WS_BROKER",
+        )
+    }
     try:
         for key in old:
             os.environ.pop(key, None)
@@ -73,7 +84,9 @@ def test_webchat_ws_rejects_memory_broker_in_production(monkeypatch):
 
 
 def test_nginx_webchat_ws_upgrade_contract():
-    text = (ROOT / "deploy" / "nginx" / "default.conf").read_text(encoding="utf-8")
+    text = (ROOT / "deploy" / "nginx" / "default.conf").read_text(
+        encoding="utf-8"
+    )
 
     assert "map $http_upgrade $connection_upgrade" in text
     assert "location = /api/webchat/ws" in text
@@ -86,29 +99,51 @@ def test_nginx_webchat_ws_upgrade_contract():
 def test_webchat_ws_runtime_dependency_and_route_registry_contract(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-    requirements = (ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
+    requirements = (ROOT / "backend" / "requirements.txt").read_text(
+        encoding="utf-8"
+    )
 
     assert "websockets==13.1" in requirements
 
     from app.api import webchat_ws as ws_module
 
-    route = next((item for item in ws_module.router.routes if getattr(item, "path", None) == "/api/webchat/ws"), None)
+    route = next(
+        (
+            item
+            for item in ws_module.router.routes
+            if getattr(item, "path", None) == "/api/webchat/ws"
+        ),
+        None,
+    )
     assert route is not None
-    websocket_scope = {"type": "websocket", "path": "/api/webchat/ws", "root_path": ""}
-    http_scope = {"type": "http", "path": "/api/webchat/ws", "root_path": "", "method": "GET"}
+    websocket_scope = {
+        "type": "websocket",
+        "path": "/api/webchat/ws",
+        "root_path": "",
+    }
+    http_scope = {
+        "type": "http",
+        "path": "/api/webchat/ws",
+        "root_path": "",
+        "method": "GET",
+    }
     assert route.matches(websocket_scope)[0] is Match.FULL
     assert route.matches(http_scope)[0] is not Match.FULL
     assert getattr(route, "endpoint", None) is ws_module.webchat_ws
 
-    main_source = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
-    router_source = (ROOT / "backend" / "app" / "bootstrap" / "routers.py").read_text(encoding="utf-8")
+    main_source = (ROOT / "backend" / "app" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    router_source = (
+        ROOT / "backend" / "app" / "bootstrap" / "routers.py"
+    ).read_text(encoding="utf-8")
     assert "from ..api.webchat_ws import router as webchat_ws_router" in router_source
     assert "webchat_ws_router," in router_source
     assert "register_api_routers(app)" in main_source
 
 
 def test_static_widget_uses_ws_without_url_token_transport():
-    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    text = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
     assert "new WebSocket(wsUrl())" in text
     assert "visitor_token:" in text
@@ -117,7 +152,7 @@ def test_static_widget_uses_ws_without_url_token_transport():
 
 
 def test_static_widget_runtime_session_uses_public_ws_and_keeps_disable_fallback():
-    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    text = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
     assert "fast_ai" not in text
     assert "data-webchat-mode" not in text
@@ -127,7 +162,7 @@ def test_static_widget_runtime_session_uses_public_ws_and_keeps_disable_fallback
 
 
 def test_static_widget_ai_turn_events_only_control_typing_state():
-    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    text = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
     assert "function syncAiTyping(status, pending, elapsedMs)" in text
     assert "normalized === 'bridge_calling'" in text
@@ -144,9 +179,13 @@ def test_static_widget_ai_turn_events_only_control_typing_state():
 
 
 def test_static_widget_merges_server_echo_with_optimistic_message():
-    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    text = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
-    assert "var clientKey = msg.client_message_id ? 'client:' + String(msg.client_message_id) : null;" in text
+    assert (
+        "var clientKey = msg.client_message_id ? 'client:' + "
+        "String(msg.client_message_id) : null;"
+        in text
+    )
     assert "if (clientKey && state.rendered[clientKey])" in text
     assert "state.rendered[serverKey] = state.rendered[clientKey]" in text
     assert "var el = appendMessage(role, text, '', serverKey);" in text
@@ -155,7 +194,9 @@ def test_static_widget_merges_server_echo_with_optimistic_message():
 
 def test_webchat_static_assets_force_cache_revalidation():
     main = (ROOT / "backend" / "app" / "main.py").read_text(encoding="utf-8")
-    demo = (ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html").read_text(encoding="utf-8")
+    demo = (
+        ROOT / "backend" / "app" / "static" / "webchat" / "demo" / "index.html"
+    ).read_text(encoding="utf-8")
 
     assert 'request.url.path.startswith("/webchat/")' in main
     assert re.search(
@@ -168,7 +209,7 @@ def test_webchat_static_assets_force_cache_revalidation():
 
 
 def test_static_widget_recovers_stale_visitor_session_before_retrying_send():
-    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    text = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
     assert "function isLegacySessionAuthError(err)" in text
     assert "err.status === 401 || err.status === 403 || err.status === 404" in text
@@ -180,11 +221,21 @@ def test_static_widget_recovers_stale_visitor_session_before_retrying_send():
 
 
 def test_webchat_ws_observability_and_connection_limits_contract():
-    settings_text = (ROOT / "backend" / "app" / "settings.py").read_text(encoding="utf-8")
-    env_example = (ROOT / "backend" / ".env.example").read_text(encoding="utf-8")
-    observability = (ROOT / "backend" / "app" / "services" / "observability.py").read_text(encoding="utf-8")
-    ws_route = (ROOT / "backend" / "app" / "api" / "webchat_ws.py").read_text(encoding="utf-8")
-    hub = (ROOT / "backend" / "app" / "services" / "webchat_realtime_hub.py").read_text(encoding="utf-8")
+    settings_text = (ROOT / "backend" / "app" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    env_example = (ROOT / "backend" / ".env.example").read_text(
+        encoding="utf-8"
+    )
+    observability = (
+        ROOT / "backend" / "app" / "services" / "observability.py"
+    ).read_text(encoding="utf-8")
+    ws_route = (ROOT / "backend" / "app" / "api" / "webchat_ws.py").read_text(
+        encoding="utf-8"
+    )
+    hub = (
+        ROOT / "backend" / "app" / "services" / "webchat_realtime_hub.py"
+    ).read_text(encoding="utf-8")
 
     assert "WEBCHAT_WS_MAX_CONNECTIONS" in settings_text
     assert "WEBCHAT_WS_MAX_CONNECTIONS_PER_USER" in settings_text
@@ -211,4 +262,8 @@ def test_webchat_ws_observability_and_connection_limits_contract():
         assert event_name in ws_route
     assert "websocket_active_connections" in hub
     assert 'log_event(20, "websocket_connected", client_type=client_type)' in ws_route
-    assert all("visitor_token" not in line and "access_token" not in line for line in ws_route.splitlines() if "log_event" in line)
+    assert all(
+        "visitor_token" not in line and "access_token" not in line
+        for line in ws_route.splitlines()
+        if "log_event" in line
+    )
