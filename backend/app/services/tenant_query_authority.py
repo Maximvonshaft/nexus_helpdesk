@@ -32,7 +32,8 @@ class ActorTenantQueryScope:
 
     Capabilities may broaden visibility only *inside* this scope. Platform-global
     reads require a separate Principal and must not be synthesized from Tenant
-    roles or capabilities.
+    roles or capabilities. ``tenant_id=None`` is the isolated legacy-shadow
+    domain, not an unbounded query.
     """
 
     tenant_id: int | None
@@ -102,17 +103,20 @@ class ActorTenantQueryScope:
         *,
         purpose: str | None = None,
     ) -> Query:
-        query = (
-            db.query(BackgroundJob)
-            .join(
-                BackgroundJobScope,
-                BackgroundJobScope.job_id == BackgroundJob.id,
+        query = db.query(BackgroundJob).join(
+            BackgroundJobScope,
+            BackgroundJobScope.job_id == BackgroundJob.id,
+        )
+        if self.is_legacy_shadow:
+            query = query.filter(
+                BackgroundJobScope.scope_type == "shadow",
+                BackgroundJobScope.tenant_id.is_(None),
             )
-            .filter(
+        else:
+            query = query.filter(
                 BackgroundJobScope.scope_type == "tenant",
                 BackgroundJobScope.tenant_id == self.tenant_id,
             )
-        )
         if purpose is not None:
             query = query.filter(BackgroundJobScope.purpose == purpose)
         return query
