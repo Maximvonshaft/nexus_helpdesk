@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import false, or_, select
+from sqlalchemy import false, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -13,25 +13,11 @@ from ..schemas import (
     UserRead,
 )
 from ..services.ai_config_service import list_published_resources
-from ..services.identity_tenant_scope import actor_tenant_id
 from ..services.scope_permissions import has_global_case_visibility
+from ..services.tenant_query_authority import actor_tenant_query_scope
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/lookups", tags=["lookups"])
-
-
-def _tenant_filter(model, tenant_id: int | None):
-    column = getattr(model, "tenant_id")
-    return column == tenant_id if tenant_id is not None else column.is_(None)
-
-
-def _actor_market_ids(db: Session, current_user) -> tuple[int | None, object]:
-    tenant_id = actor_tenant_id(db, current_user)
-    market_ids = select(Market.id).where(
-        _tenant_filter(Market, tenant_id),
-        Market.is_active.is_(True),
-    )
-    return tenant_id, market_ids
 
 
 @router.get("/users", response_model=list[UserRead])
@@ -39,11 +25,8 @@ def list_users(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tenant_id = actor_tenant_id(db, current_user)
-    query = db.query(User).filter(
-        User.is_active.is_(True),
-        _tenant_filter(User, tenant_id),
-    )
+    scope = actor_tenant_query_scope(db, current_user)
+    query = scope.users(db).filter(User.is_active.is_(True))
     if not has_global_case_visibility(current_user, db):
         query = query.filter(
             or_(
@@ -59,11 +42,8 @@ def list_teams(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tenant_id = actor_tenant_id(db, current_user)
-    query = db.query(Team).filter(
-        Team.is_active.is_(True),
-        _tenant_filter(Team, tenant_id),
-    )
+    scope = actor_tenant_query_scope(db, current_user)
+    query = scope.teams(db).filter(Team.is_active.is_(True))
     if not has_global_case_visibility(current_user, db):
         query = (
             query.filter(Team.id == current_user.team_id)
@@ -78,18 +58,12 @@ def list_markets(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tenant_id = actor_tenant_id(db, current_user)
-    query = db.query(Market).filter(
-        Market.is_active.is_(True),
-        _tenant_filter(Market, tenant_id),
-    )
+    scope = actor_tenant_query_scope(db, current_user)
+    query = scope.markets(db).filter(Market.is_active.is_(True))
     if not has_global_case_visibility(current_user, db):
         team = (
-            db.query(Team)
-            .filter(
-                Team.id == current_user.team_id,
-                _tenant_filter(Team, tenant_id),
-            )
+            scope.teams(db)
+            .filter(Team.id == current_user.team_id)
             .first()
             if current_user.team_id is not None
             else None
@@ -114,17 +88,14 @@ def list_operator_bulletins(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tenant_id, market_ids = _actor_market_ids(db, current_user)
+    scope = actor_tenant_query_scope(db, current_user)
     query = db.query(MarketBulletin).filter(
-        MarketBulletin.market_id.in_(market_ids)
+        MarketBulletin.market_id.in_(scope.active_market_ids())
     )
     if not has_global_case_visibility(current_user, db):
         team = (
-            db.query(Team)
-            .filter(
-                Team.id == current_user.team_id,
-                _tenant_filter(Team, tenant_id),
-            )
+            scope.teams(db)
+            .filter(Team.id == current_user.team_id)
             .first()
             if current_user.team_id is not None
             else None
@@ -147,8 +118,9 @@ def list_tags(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    # Tag is the canonical platform taxonomy and has no Tenant-owned mutable
-    # fields. Ticket visibility remains Tenant-scoped at the Ticket authority.
+    del current_user
+    # Tag is the canonical immutable platform taxonomy. Tenant-owned mutable
+    # workflow data remains scoped at Ticket and TicketTag authorities.
     return db.query(Tag).order_by(Tag.name.asc(), Tag.id.asc()).all()
 
 
@@ -159,14 +131,13 @@ def list_ai_configs(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    tenant_id = actor_tenant_id(db, current_user)
+    scope = actor_tenant_query_scope(db, current_user)
     if market_id is not None:
         market = (
-            db.query(Market)
+            scope.markets(db)
             .filter(
                 Market.id == market_id,
                 Market.is_active.is_(True),
-                _tenant_filter(Market, tenant_id),
             )
             .first()
         )
