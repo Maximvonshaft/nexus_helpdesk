@@ -1,5 +1,6 @@
 export type ConnectorMode = "mock" | "baileys";
 export type FromMeInboundMode = "ignore" | "store_only" | "test_visitor";
+export type WhatsAppMediaKind = "image" | "video" | "audio" | "document" | "sticker";
 
 export type AccountStatus =
   | "idle"
@@ -105,7 +106,9 @@ export interface NormalizedInboundMessage {
   self_echo_test_prefix?: string;
   reply_to_message_id?: string | null;
   media_id?: string | null;
+  media_kind?: WhatsAppMediaKind | null;
   media_mime_type?: string | null;
+  media_filename?: string | null;
 }
 
 export interface SendRequest {
@@ -114,6 +117,17 @@ export interface SendRequest {
   chat_jid?: string | null;
   body: string;
   reply_to_message_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SendMediaRequest {
+  idempotency_key: string;
+  target?: string | null;
+  chat_jid?: string | null;
+  media_kind: WhatsAppMediaKind;
+  media_type: string;
+  filename?: string | null;
+  caption?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -153,4 +167,9 @@ export interface WhatsAppConnector {
     request: PairingCodeRequest
   ): Promise<PairingCodeResult>;
   send(accountId: string, request: SendRequest): Promise<SendResult>;
+  sendMedia(
+    accountId: string,
+    request: SendMediaRequest,
+    content: Buffer
+  ): Promise<SendResult>;
 }
