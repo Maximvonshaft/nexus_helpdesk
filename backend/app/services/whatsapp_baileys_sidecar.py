@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol
+from urllib.parse import quote
 
 import httpx
 
@@ -20,6 +21,7 @@ class BaileysSidecarHttpClient(Protocol):
         *,
         headers: dict[str, str],
         json: dict[str, Any] | None = None,
+        content: bytes | None = None,
         timeout: float,
     ) -> Any:
         ...
@@ -216,9 +218,89 @@ def send_baileys_text(
         },
         client=client,
     )
+    return _send_result(data, fallback_code="baileys_send_failed")
+
+
+def send_baileys_media(
+    connection: WhatsAppConnection,
+    *,
+    target: str,
+    content: bytes,
+    media_kind: str,
+    media_type: str,
+    filename: str | None,
+    caption: str | None,
+    idempotency_key: str,
+    metadata: dict[str, Any],
+    client: BaileysSidecarHttpClient | None = None,
+) -> BaileysSendResult:
+    if not content:
+        raise BaileysSidecarError(
+            "empty_media_content",
+            "WhatsApp media content is empty",
+            retryable=False,
+        )
+    kind = str(media_kind or "").strip().lower()
+    if kind not in {"image", "video", "audio", "document", "sticker"}:
+        raise BaileysSidecarError(
+            "unsupported_whatsapp_media_kind",
+            "Unsupported WhatsApp media kind",
+            retryable=False,
+        )
+    settings = get_whatsapp_runtime_settings()
+    token = _sidecar_token(settings)
+    account_id = _session_key(connection)
+    url = f"{settings.baileys_sidecar_url}/accounts/{account_id}/send-media"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": str(media_type or "application/octet-stream").split(";", 1)[0].strip().lower(),
+        "Content-Length": str(len(content)),
+        "X-Nexus-Idempotency-Key": idempotency_key,
+        "X-Nexus-Target": str(target or "").strip(),
+        "X-Nexus-Media-Kind": kind,
+        "X-Nexus-Media-Type": str(media_type or "application/octet-stream").split(";", 1)[0].strip().lower(),
+        "X-Nexus-Media-Filename": quote(str(filename or "")[:255], safe=""),
+        "X-Nexus-Media-Caption": quote(str(caption or "")[:1024], safe=""),
+        "X-Nexus-Outbound-Message-Id": str(metadata.get("outbound_message_id") or ""),
+        "X-Nexus-Ticket-Id": str(metadata.get("ticket_id") or ""),
+        "X-Nexus-Connection-Id": str(metadata.get("connection_id") or ""),
+    }
+    active_client = client or httpx.Client()
+    close_client = client is None
+    try:
+        response = active_client.post(
+            url,
+            headers=headers,
+            content=content,
+            timeout=max(float(settings.transport_timeout_seconds), 60.0),
+        )
+        data = _response_json(response)
+    except httpx.TimeoutException as exc:
+        raise BaileysSidecarError(
+            "baileys_sidecar_timeout",
+            "Baileys sidecar media send timed out",
+            retryable=True,
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise BaileysSidecarError(
+            "baileys_sidecar_transport_error",
+            "Baileys sidecar media transport failed",
+            retryable=True,
+        ) from exc
+    finally:
+        if close_client and hasattr(active_client, "close"):
+            active_client.close()
+    return _send_result(data, fallback_code="baileys_media_send_failed")
+
+
+def _send_result(
+    data: dict[str, Any],
+    *,
+    fallback_code: str,
+) -> BaileysSendResult:
     if data.get("ok") is not True or str(data.get("status") or "") != "sent":
         raise BaileysSidecarError(
-            _optional(data.get("error_code")) or "baileys_send_failed",
+            _optional(data.get("error_code")) or fallback_code,
             _optional(data.get("error_message")) or "Baileys did not accept the message",
             retryable=bool(data.get("retryable", True)),
         )
@@ -229,8 +311,10 @@ def send_baileys_text(
             "Baileys accepted no visible WhatsApp message",
             retryable=True,
         )
-    sent_at = _parse_datetime(data.get("sent_at"))
-    return BaileysSendResult(provider_message_id=provider_message_id, sent_at=sent_at)
+    return BaileysSendResult(
+        provider_message_id=provider_message_id,
+        sent_at=_parse_datetime(data.get("sent_at")),
+    )
 
 
 def _request(
@@ -248,13 +332,7 @@ def _request(
             "WhatsApp is disabled in this runtime",
             retryable=False,
         )
-    token = settings.baileys_sidecar_token
-    if not token:
-        raise BaileysSidecarError(
-            "whatsapp_baileys_sidecar_token_missing",
-            "Baileys sidecar token is not configured",
-            retryable=False,
-        )
+    token = _sidecar_token(settings)
     url = f"{settings.baileys_sidecar_url}/accounts/{account_id}/{action}"
     active_client = client or httpx.Client()
     close_client = client is None
@@ -282,12 +360,29 @@ def _request(
     except httpx.HTTPError as exc:
         raise BaileysSidecarError(
             "baileys_sidecar_transport_error",
-            str(exc),
+            "Baileys sidecar transport failed",
             retryable=True,
         ) from exc
     finally:
         if close_client and hasattr(active_client, "close"):
             active_client.close()
+
+
+def _sidecar_token(settings) -> str:
+    if not settings.enabled:
+        raise BaileysSidecarError(
+            "whatsapp_disabled",
+            "WhatsApp is disabled in this runtime",
+            retryable=False,
+        )
+    token = settings.baileys_sidecar_token
+    if not token:
+        raise BaileysSidecarError(
+            "whatsapp_baileys_sidecar_token_missing",
+            "Baileys sidecar token is not configured",
+            retryable=False,
+        )
+    return token
 
 
 def _response_json(response: Any) -> dict[str, Any]:
