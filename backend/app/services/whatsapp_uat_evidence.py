@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import ChannelAccount, WhatsAppInboundMessage
+from ..models import WhatsAppInboundMessage
 from ..models_whatsapp import WhatsAppConnection, WhatsAppMediaAsset
 from ..models_whatsapp_outbound import WhatsAppOutboundPart
 
@@ -140,18 +140,10 @@ def _outbound_part(
     provider_message_id: str,
     require_media: bool = False,
 ) -> WhatsAppOutboundPart:
-    query = (
-        db.query(WhatsAppOutboundPart)
-        .join(
-            ChannelAccount,
-            ChannelAccount.id == connection.channel_account_id,
-        )
-        .filter(
-            WhatsAppOutboundPart.connection_id == connection.id,
-            WhatsAppOutboundPart.tenant_id == connection.tenant_id,
-            WhatsAppOutboundPart.provider_message_id == provider_message_id,
-            ChannelAccount.provider == "whatsapp",
-        )
+    query = db.query(WhatsAppOutboundPart).filter(
+        WhatsAppOutboundPart.connection_id == connection.id,
+        WhatsAppOutboundPart.tenant_id == connection.tenant_id,
+        WhatsAppOutboundPart.provider_message_id == provider_message_id,
     )
     if require_media:
         query = query.filter(WhatsAppOutboundPart.part_type == "media")
