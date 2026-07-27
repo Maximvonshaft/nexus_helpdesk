@@ -123,10 +123,10 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertLess(login, attest)
         for marker in (
             ': "${SOURCE_SHA:?SOURCE_SHA required}"',
-            'git fetch --no-tags origin main',
-            'git rev-parse origin/main',
-            'git diff --quiet',
-            'git diff --cached --quiet',
+            "git fetch --no-tags origin main",
+            "git rev-parse origin/main",
+            "git diff --quiet",
+            "git diff --cached --quiet",
         ):
             self.assertIn(marker, HELPERS)
 
@@ -191,7 +191,7 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("- External effects authorized: `false`", WORKFLOW)
 
-    def test_controlled_compose_is_digest_only_and_has_no_external_sidecars(
+    def test_controlled_compose_is_digest_only_and_uses_unified_background_worker(
         self,
     ) -> None:
         self.assertIn("${CONTROLLED_IMAGE:?", COMPOSE)
@@ -208,9 +208,11 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "worker-outbound-controlled:",
             "worker-background-controlled:",
             "worker-webchat-ai-controlled:",
-            "worker-handoff-snapshot-controlled:",
         ):
             self.assertIn(service, COMPOSE)
+        self.assertNotIn("worker-handoff-snapshot-controlled:", COMPOSE)
+        self.assertNotIn("DATABASE_URL_HANDOFF", COMPOSE)
+        self.assertIn("NEXUS_WORKER_QUEUE: background", COMPOSE)
 
 
 if __name__ == "__main__":
