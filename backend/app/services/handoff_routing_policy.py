@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Iterable
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ..models import Ticket, User
 from ..utils.time import ensure_utc, utc_now
@@ -28,6 +28,7 @@ from .scenario_assignment_service import (
 
 ROUTING_POLICY_SCHEMA = "nexus.handoff-routing-policy.v1"
 DECLINE_TTL_SECONDS = 15 * 60
+RELEASE_DECLINE_TTL_SECONDS = 5 * 60
 RETRY_DELAY_SECONDS = 30
 ROUTING_OUTCOMES = frozenset(
     {
@@ -306,21 +307,46 @@ def record_routing_decline(
     return row
 
 
+def _record_release_generation_decline(
+    request_row: WebchatHandoffRequest,
+) -> None:
+    db = object_session(request_row)
+    if db is None:
+        raise HandoffRoutingPolicyError("handoff_release_session_missing")
+    conversation = db.get(WebchatConversation, request_row.conversation_id)
+    if conversation is None:
+        raise HandoffRoutingPolicyError("handoff_release_conversation_missing")
+    released_agent_id = conversation.active_agent_id
+    if released_agent_id is None:
+        raise HandoffRoutingPolicyError("handoff_release_owner_missing")
+    record_routing_decline(
+        db,
+        request_row=request_row,
+        user_id=released_agent_id,
+        reason_code="agent_released",
+        note=None,
+        ttl_seconds=RELEASE_DECLINE_TTL_SECONDS,
+    )
+
+
 def start_next_routing_generation(
     request_row: WebchatHandoffRequest,
     *,
     reason_code: str,
 ) -> None:
+    normalized_reason = str(reason_code or "retry")[:160]
     request_row.routing_generation = max(
         1,
         int(request_row.routing_generation or 1) + 1,
     )
     request_row.routing_outcome = "waiting"
-    request_row.routing_reason_code = str(reason_code or "retry")[:160]
+    request_row.routing_reason_code = normalized_reason
     request_row.routing_retry_at = None
     request_row.routing_exhausted_at = None
     request_row.routing_fallback_action = None
     request_row.updated_at = utc_now()
+    if normalized_reason == "handoff_released":
+        _record_release_generation_decline(request_row)
 
 
 def mark_routing_outcome(
@@ -435,6 +461,7 @@ def routing_projection(
 
 __all__ = [
     "DECLINE_TTL_SECONDS",
+    "RELEASE_DECLINE_TTL_SECONDS",
     "HandoffRoutingPolicy",
     "HandoffRoutingPolicyError",
     "active_decline_exists",
