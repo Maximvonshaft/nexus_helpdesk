@@ -26,10 +26,12 @@ def test_server_owns_webchat_origin_policy() -> None:
 
 def test_webchat_token_transport_is_header_or_same_origin_only() -> None:
     public_api = _read("backend/app/api/webchat_public.py")
-    widget = _read("backend/app/static/webchat/widget.js")
+    runtime = _read("backend/app/static/webchat/widget-runtime.js")
+    loader = _read("backend/app/static/webchat/widget.js")
     assert "X-Webchat-Visitor-Token" in public_api
-    assert "X-Webchat-Visitor-Token" in widget
-    assert "visitor_token: state.visitorToken" not in widget
+    assert "X-Webchat-Visitor-Token" in runtime
+    assert "visitor_token: state.visitorToken" not in runtime
+    assert "/webchat/widget-runtime.js" in loader
 
 
 def test_public_webchat_payload_does_not_expose_internal_identifiers() -> None:
