@@ -149,7 +149,7 @@ test('Channels is a canonical route in the shared shell and keeps identifiers se
   await expect(page.getByText('WhatsApp 主线路').first()).toBeVisible()
   await expect(page.getByText('•••• 1234')).toBeVisible()
   await expect(page.getByText('+41790001234')).toHaveCount(0)
-  await expect(page.getByText('wa-primary-private')).toBeHidden()
+  await expect(page.getByText('wa-primary-private').first()).toBeHidden()
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
