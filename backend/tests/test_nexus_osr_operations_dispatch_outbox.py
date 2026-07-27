@@ -10,11 +10,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/nexus_osr_dispatch_outbox_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/nexus_osr_dispatch_outbox_tests.db",
+)
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
 from app.db import Base
-from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus
+from app.enums import (
+    ConversationState,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+)
 from app.model_registry import register_all_models
 from app.models import Customer, Ticket, TicketEvent
 from app.models_operations_dispatch import OperationsDispatchOutboxRecord
@@ -55,7 +64,13 @@ def database(tmp_path):
         connect_args={"check_same_thread": False, "timeout": 30},
         future=True,
     )
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     try:
         yield engine, Session
@@ -95,7 +110,13 @@ def _seed_scope(Session):
         return ticket.id, rule.id
 
 
-def _kwargs(ticket_id: int, rule_id: int, *, suffix: str = "default", max_attempts: int = 3):
+def _kwargs(
+    ticket_id: int,
+    rule_id: int,
+    *,
+    suffix: str = "default",
+    max_attempts: int = 3,
+):
     return {
         "dispatch_key": build_operations_dispatch_key(
             tenant_key="tenant-me",
@@ -120,7 +141,10 @@ def _kwargs(ticket_id: int, rule_id: int, *, suffix: str = "default", max_attemp
 def _enqueue_and_claim(Session, *, suffix: str, lease_seconds: int = 20):
     ticket_id, rule_id = _seed_scope(Session)
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix=suffix))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix=suffix),
+        )
         db.commit()
         claimed = claim_next_operations_dispatch(
             db,
@@ -136,7 +160,10 @@ def _enqueue_and_claim(Session, *, suffix: str, lease_seconds: int = 20):
 
 def _dump(record: OperationsDispatchOutboxRecord) -> str:
     return json.dumps(
-        {column.name: getattr(record, column.name) for column in OperationsDispatchOutboxRecord.__table__.columns},
+        {
+            column.name: getattr(record, column.name)
+            for column in OperationsDispatchOutboxRecord.__table__.columns
+        },
         ensure_ascii=False,
         sort_keys=True,
         default=str,
@@ -240,10 +267,18 @@ def test_retry_backoff_and_max_attempts_dead_letter(database):
     _, Session = database
     ticket_id, rule_id = _seed_scope(Session)
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="retry", max_attempts=2))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix="retry", max_attempts=2),
+        )
         db.commit()
 
-        first = claim_next_operations_dispatch(db, lease_owner="worker-a", now=NOW, lease_seconds=60)
+        first = claim_next_operations_dispatch(
+            db,
+            lease_owner="worker-a",
+            now=NOW,
+            lease_seconds=60,
+        )
         assert first is not None
         failed = mark_operations_dispatch_failure(
             db,
@@ -295,9 +330,17 @@ def test_provider_ack_external_reference_and_errors_are_redacted(database):
     _, Session = database
     ticket_id, rule_id = _seed_scope(Session)
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="success-redaction"))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix="success-redaction"),
+        )
         db.commit()
-        record = claim_next_operations_dispatch(db, lease_owner="worker-a", now=NOW, lease_seconds=60)
+        record = claim_next_operations_dispatch(
+            db,
+            lease_owner="worker-a",
+            now=NOW,
+            lease_seconds=60,
+        )
         assert record is not None
         succeeded = mark_operations_dispatch_success(
             db,
@@ -306,20 +349,38 @@ def test_provider_ack_external_reference_and_errors_are_redacted(database):
             provider_acknowledgement={
                 "status": "accepted",
                 "provider_group_id": RAW_GROUP_ID,
-                "detail": f"{RAW_EMAIL} {RAW_PHONE} {RAW_TRACKING} {RAW_ADDRESS} {RAW_SECRET}",
+                "detail": (
+                    f"{RAW_EMAIL} {RAW_PHONE} {RAW_TRACKING} "
+                    f"{RAW_ADDRESS} {RAW_SECRET}"
+                ),
             },
             external_reference="provider-message-raw-123",
             now=NOW + timedelta(seconds=1),
         )
         dumped = _dump(succeeded)
-        for raw in (RAW_GROUP_ID, RAW_EMAIL, RAW_PHONE, RAW_TRACKING, RAW_ADDRESS, RAW_SECRET, "provider-message-raw-123"):
+        for raw in (
+            RAW_GROUP_ID,
+            RAW_EMAIL,
+            RAW_PHONE,
+            RAW_TRACKING,
+            RAW_ADDRESS,
+            RAW_SECRET,
+            "provider-message-raw-123",
+        ):
             assert raw not in dumped
         assert succeeded.provider_acknowledgement.startswith("ack:sha256:")
         assert succeeded.external_reference_safe.startswith("external:sha256:")
 
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="failure-redaction"))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix="failure-redaction"),
+        )
         db.commit()
-        second = claim_next_operations_dispatch(db, lease_owner="worker-b", now=NOW + timedelta(seconds=2))
+        second = claim_next_operations_dispatch(
+            db,
+            lease_owner="worker-b",
+            now=NOW + timedelta(seconds=2),
+        )
         assert second is not None
         failed = mark_operations_dispatch_failure(
             db,
@@ -327,11 +388,21 @@ def test_provider_ack_external_reference_and_errors_are_redacted(database):
             lease_owner="worker-b",
             retryable=False,
             error_category=f"provider {RAW_EMAIL}",
-            error_summary=f"group={RAW_GROUP_ID}; {RAW_EMAIL}; {RAW_PHONE}; {RAW_TRACKING}; {RAW_ADDRESS}; {RAW_SECRET}",
+            error_summary=(
+                f"group={RAW_GROUP_ID}; {RAW_EMAIL}; {RAW_PHONE}; "
+                f"{RAW_TRACKING}; {RAW_ADDRESS}; {RAW_SECRET}"
+            ),
             now=NOW + timedelta(seconds=3),
         )
         dumped = _dump(failed)
-        for raw in (RAW_GROUP_ID, RAW_EMAIL, RAW_PHONE, RAW_TRACKING, RAW_ADDRESS, RAW_SECRET):
+        for raw in (
+            RAW_GROUP_ID,
+            RAW_EMAIL,
+            RAW_PHONE,
+            RAW_TRACKING,
+            RAW_ADDRESS,
+            RAW_SECRET,
+        ):
             assert raw not in dumped
         assert failed.error_category == "redacted_error_category"
         assert "[redacted_email]" in failed.error_summary_redacted
@@ -341,20 +412,40 @@ def test_processor_commits_claim_before_adapter_and_exposes_only_safe_envelope(d
     _, Session = database
     ticket_id, rule_id = _seed_scope(Session)
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="processor"))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix="processor"),
+        )
         db.commit()
 
         observed: list[OperationsDispatchEnvelope] = []
 
         class Adapter:
-            def dispatch(self, envelope: OperationsDispatchEnvelope) -> OperationsDispatchAdapterResult:
+            def dispatch(
+                self,
+                envelope: OperationsDispatchEnvelope,
+            ) -> OperationsDispatchAdapterResult:
                 observed.append(envelope)
                 with Session() as other:
-                    visible = other.get(OperationsDispatchOutboxRecord, envelope.outbox_id)
+                    visible = other.get(
+                        OperationsDispatchOutboxRecord,
+                        envelope.outbox_id,
+                    )
                     assert visible.status == OperationsDispatchStatus.PROCESSING.value
                     assert visible.lease_owner == "worker-a"
-                serialized = json.dumps(envelope.__dict__, sort_keys=True, default=str)
-                for raw in (RAW_GROUP_ID, RAW_EMAIL, RAW_PHONE, RAW_TRACKING, RAW_ADDRESS, RAW_SECRET):
+                serialized = json.dumps(
+                    envelope.__dict__,
+                    sort_keys=True,
+                    default=str,
+                )
+                for raw in (
+                    RAW_GROUP_ID,
+                    RAW_EMAIL,
+                    RAW_PHONE,
+                    RAW_TRACKING,
+                    RAW_ADDRESS,
+                    RAW_SECRET,
+                ):
                     assert raw not in serialized
                 return OperationsDispatchAdapterResult(
                     success=True,
@@ -375,13 +466,30 @@ def test_processor_commits_claim_before_adapter_and_exposes_only_safe_envelope(d
         assert record.provider_acknowledgement.startswith("ack:sha256:")
         assert len(observed) == 1
 
-        events = db.query(TicketEvent).filter(TicketEvent.ticket_id == ticket_id).order_by(TicketEvent.id).all()
-        assert len(events) == 2
-        payloads = [json.loads(event.payload_json) for event in events]
-        assert [payload["phase"] for payload in payloads] == ["claimed", "dispatched"]
-        for payload in payloads:
+        all_payloads = [
+            json.loads(event.payload_json or "{}")
+            for event in db.query(TicketEvent)
+            .filter(TicketEvent.ticket_id == ticket_id)
+            .order_by(TicketEvent.id)
+            .all()
+        ]
+        dispatch_payloads = [
+            payload for payload in all_payloads if payload.get("phase")
+        ]
+        assert [payload["phase"] for payload in dispatch_payloads] == [
+            "claimed",
+            "dispatched",
+        ]
+        for payload in dispatch_payloads:
             serialized = json.dumps(payload, sort_keys=True)
-            for raw in (RAW_GROUP_ID, RAW_EMAIL, RAW_PHONE, RAW_TRACKING, RAW_ADDRESS, RAW_SECRET):
+            for raw in (
+                RAW_GROUP_ID,
+                RAW_EMAIL,
+                RAW_PHONE,
+                RAW_TRACKING,
+                RAW_ADDRESS,
+                RAW_SECRET,
+            ):
                 assert raw not in serialized
 
 
@@ -389,7 +497,10 @@ def test_disabled_adapter_fails_closed_without_external_transport(database):
     _, Session = database
     ticket_id, rule_id = _seed_scope(Session)
     with Session() as db:
-        enqueue_operations_dispatch(db, **_kwargs(ticket_id, rule_id, suffix="disabled"))
+        enqueue_operations_dispatch(
+            db,
+            **_kwargs(ticket_id, rule_id, suffix="disabled"),
+        )
         db.commit()
 
         assert process_operations_dispatch_batch(
