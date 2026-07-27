@@ -165,7 +165,7 @@ test('entering WebCall does not accept or request microphone before explicit med
 
   await page
     .getByRole('dialog', { name: '新的语音来电' })
-    .getByRole('button', { name: '接听通话' })
+    .getByRole('button', { name: '打开通话' })
     .click()
 
   await expect(page).toHaveURL(/\/webcall\/wv_offer_1$/)
