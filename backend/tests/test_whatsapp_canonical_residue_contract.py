@@ -8,6 +8,7 @@ _SCANNED_ROOTS = (
     ROOT / ".github" / "workflows",
     ROOT / "backend" / "app",
     ROOT / "backend" / "scripts",
+    ROOT / "backend" / ".env.example",
     ROOT / "connectors" / "whatsapp-sidecar" / "src",
     ROOT / "deploy",
     ROOT / "scripts" / "deploy",
@@ -29,6 +30,7 @@ _FORBIDDEN = (
 )
 _TEXT_SUFFIXES = {
     ".css",
+    ".example",
     ".html",
     ".js",
     ".json",
@@ -48,9 +50,8 @@ _SELF = Path(__file__).resolve()
 def test_retired_whatsapp_and_handoff_runtime_residues_are_absent() -> None:
     findings: list[str] = []
     for root in _SCANNED_ROOTS:
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
+        candidates = (root,) if root.is_file() else root.rglob("*") if root.exists() else ()
+        for path in candidates:
             if (
                 not path.is_file()
                 or path.is_symlink()
