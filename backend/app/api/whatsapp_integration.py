@@ -5,7 +5,16 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -34,6 +43,8 @@ router = APIRouter(
     tags=["whatsapp-integration"],
 )
 
+_IGNORED_NON_CUSTOMER_CHAT = "ignored_whatsapp_non_customer_chat"
+
 
 def _crypto() -> SecretCryptoService:
     try:
@@ -41,7 +52,7 @@ def _crypto() -> SecretCryptoService:
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail="whatsapp_secret_runtime_unavailable",
         ) from exc
 
 
@@ -73,7 +84,10 @@ def _baileys_connection(
         )
     row = (
         db.query(WhatsAppConnection)
-        .join(ChannelAccount, ChannelAccount.id == WhatsAppConnection.channel_account_id)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
         .filter(
             WhatsAppConnection.transport == "baileys_sidecar",
             WhatsAppConnection.sidecar_session_key == key,
@@ -92,7 +106,10 @@ def _baileys_connection(
 def _meta_connection(db: Session, connection_id: int) -> WhatsAppConnection:
     row = (
         db.query(WhatsAppConnection)
-        .join(ChannelAccount, ChannelAccount.id == WhatsAppConnection.channel_account_id)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
         .filter(
             WhatsAppConnection.id == connection_id,
             WhatsAppConnection.transport == "meta_cloud_api",
@@ -127,7 +144,7 @@ def _verify_baileys_payload(
     except WhatsAppConnectorAuthError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="invalid_whatsapp_connector_auth",
         ) from exc
     payload = _json_payload(raw_body)
     payload_account_id = str(payload.get("account_id") or account_id or "").strip()
@@ -168,6 +185,10 @@ def _parse_datetime(value: Any) -> datetime:
     return utc_now()
 
 
+def _is_ignored_non_customer_chat(exc: WhatsAppInboundError) -> bool:
+    return exc.args == (_IGNORED_NON_CUSTOMER_CHAT,)
+
+
 @router.post("/baileys/inbound")
 async def baileys_whatsapp_inbound(
     request: Request,
@@ -198,19 +219,23 @@ async def baileys_whatsapp_inbound(
         signature=x_nexus_signature,
     )
     connection = _baileys_connection(db, x_nexus_account_id)
-    payload = dict(payload)
-    payload["account_id"] = connection.channel_account.account_id
-    payload["transport"] = "baileys_sidecar"
+    normalized = dict(payload)
+    normalized["account_id"] = connection.channel_account.account_id
+    normalized["transport"] = "baileys_sidecar"
     try:
         with managed_session(db):
-            result = ingest_whatsapp_inbound(db, payload)
+            result = ingest_whatsapp_inbound(db, normalized)
             db.flush()
     except WhatsAppInboundError as exc:
-        if str(exc) == "ignored_whatsapp_non_customer_chat":
-            return {"ok": True, "ignored": True, "reason": str(exc)}
+        if _is_ignored_non_customer_chat(exc):
+            return {
+                "ok": True,
+                "ignored": True,
+                "reason": _IGNORED_NON_CUSTOMER_CHAT,
+            }
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="invalid_whatsapp_inbound",
         ) from exc
     return result.as_dict()
 
@@ -247,7 +272,9 @@ async def baileys_whatsapp_status(
     connection = _baileys_connection(db, x_nexus_account_id)
     with managed_session(db):
         apply_observed_snapshot(connection, payload)
-        connection.channel_account.health_status = _health(connection.observed_state)
+        connection.channel_account.health_status = _health(
+            connection.observed_state
+        )
         connection.channel_account.last_health_check_at = utc_now()
         db.flush()
     return {
@@ -289,25 +316,37 @@ async def baileys_whatsapp_delivery(
         signature=x_nexus_signature,
     )
     connection = _baileys_connection(db, x_nexus_account_id)
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    metadata = (
+        payload.get("metadata")
+        if isinstance(payload.get("metadata"), dict)
+        else {}
+    )
     with managed_session(db):
         result = apply_whatsapp_delivery(
             db,
             connection=connection,
-            provider_message_id=str(payload.get("provider_message_id") or "").strip() or None,
+            provider_message_id=(
+                str(payload.get("provider_message_id") or "").strip() or None
+            ),
             status=str(payload.get("status") or "failed"),
             occurred_at=_parse_datetime(
                 payload.get("occurred_at") or payload.get("sent_at")
             ),
             provider="baileys",
-            receipt_id=str(payload.get("idempotency_key") or "").strip() or None,
+            receipt_id=(
+                str(payload.get("idempotency_key") or "").strip() or None
+            ),
             outbound_message_id=(
                 int(metadata["outbound_message_id"])
                 if metadata.get("outbound_message_id") is not None
                 else None
             ),
-            error_code=str(payload.get("error_code") or "").strip() or None,
-            error_message=str(payload.get("error_message") or "").strip() or None,
+            error_code=(
+                str(payload.get("error_code") or "").strip() or None
+            ),
+            error_message=(
+                str(payload.get("error_message") or "").strip() or None
+            ),
             payload={
                 key: payload.get(key)
                 for key in (
@@ -361,10 +400,13 @@ async def baileys_whatsapp_desired_state(
         )
     rows = (
         db.query(WhatsAppConnection)
-        .join(ChannelAccount, ChannelAccount.id == WhatsAppConnection.channel_account_id)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
         .filter(
             WhatsAppConnection.transport == "baileys_sidecar",
-            WhatsAppConnection.desired_state == "active",
+            WhatsAppConnection.desired_state.in_(("binding", "active")),
             ChannelAccount.is_active.is_(True),
         )
         .order_by(WhatsAppConnection.id.asc())
@@ -387,7 +429,10 @@ async def baileys_whatsapp_desired_state(
 def verify_meta_whatsapp_webhook(
     connection_id: int,
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
-    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    hub_verify_token: str | None = Query(
+        default=None,
+        alias="hub.verify_token",
+    ),
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
     db: Session = Depends(get_db),
 ) -> Response:
@@ -438,7 +483,7 @@ async def receive_meta_whatsapp_webhook(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="invalid_meta_webhook_signature",
         ) from exc
     payload = _json_payload(raw_body)
     inbound_results: list[dict[str, Any]] = []
@@ -447,7 +492,9 @@ async def receive_meta_whatsapp_webhook(
         with managed_session(db):
             for message in iter_meta_inbound_messages(payload):
                 if message.phone_number_id != connection.phone_number_id:
-                    raise WhatsAppInboundError("meta_phone_number_scope_mismatch")
+                    raise WhatsAppInboundError(
+                        "meta_phone_number_scope_mismatch"
+                    )
                 sender_digits = "".join(
                     char for char in message.sender_phone if char.isdigit()
                 )
@@ -474,7 +521,9 @@ async def receive_meta_whatsapp_webhook(
                 )
             for event in iter_meta_delivery_events(payload):
                 if event.phone_number_id != connection.phone_number_id:
-                    raise WhatsAppInboundError("meta_phone_number_scope_mismatch")
+                    raise WhatsAppInboundError(
+                        "meta_phone_number_scope_mismatch"
+                    )
                 delivery_results.append(
                     apply_whatsapp_delivery(
                         db,
@@ -483,7 +532,10 @@ async def receive_meta_whatsapp_webhook(
                         status=event.status,
                         occurred_at=event.occurred_at,
                         provider="meta",
-                        receipt_id=event.conversation_id or event.provider_message_id,
+                        receipt_id=(
+                            event.conversation_id
+                            or event.provider_message_id
+                        ),
                         error_code=event.error_code,
                         error_message=event.error_message,
                         detail=event.pricing_category,
@@ -495,10 +547,10 @@ async def receive_meta_whatsapp_webhook(
             )
             connection.channel_account.last_health_check_at = utc_now()
             db.flush()
-    except WhatsAppInboundError as exc:
+    except (WhatsAppInboundError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail="invalid_meta_whatsapp_webhook",
         ) from exc
     return {
         "ok": True,
