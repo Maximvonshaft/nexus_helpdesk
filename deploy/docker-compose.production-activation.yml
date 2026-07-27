@@ -47,6 +47,10 @@ services:
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
       WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
       OPERATIONS_DISPATCH_MODE: ${OPERATIONS_DISPATCH_MODE:-disabled}
       OPERATIONS_DISPATCH_ADAPTER: ${OPERATIONS_DISPATCH_ADAPTER:-disabled}
@@ -54,6 +58,34 @@ services:
       - python
       - /app/scripts/deploy/validate_production_activation.py
       - --environment
+
+  clamav-controlled:
+    image: ${WHATSAPP_CLAMAV_IMAGE:?set immutable ClamAV image digest}
+    profiles:
+      - whatsapp-media
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+      - /run/clamav:rw,noexec,nosuid,size=64m
+    pids_limit: 256
+    networks:
+      - controlled
+    volumes:
+      - clamav-database:/var/lib/clamav
+    healthcheck:
+      test:
+        - CMD
+        - clamdscan
+        - --ping=1
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   app-controlled:
     environment:
@@ -70,12 +102,19 @@ services:
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
       WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
     depends_on:
       migrate-controlled:
         condition: service_completed_successfully
       production-activation-preflight:
         condition: service_completed_successfully
+      clamav-controlled:
+        condition: service_healthy
+        required: false
 
   worker-outbound-controlled:
     environment:
@@ -88,3 +127,22 @@ services:
         condition: service_healthy
       production-activation-preflight:
         condition: service_completed_successfully
+
+  worker-background-controlled:
+    environment:
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+      production-activation-preflight:
+        condition: service_completed_successfully
+      clamav-controlled:
+        condition: service_healthy
+        required: false
+
+volumes:
+  clamav-database:
