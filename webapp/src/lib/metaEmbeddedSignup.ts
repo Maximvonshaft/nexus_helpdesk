@@ -32,10 +32,6 @@ declare global {
 
 const SDK_ID = 'meta-facebook-jssdk'
 const SDK_SRC = 'https://connect.facebook.net/en_US/sdk.js'
-const META_MESSAGE_ORIGINS = new Set([
-  'https://www.facebook.com',
-  'https://web.facebook.com',
-])
 
 let sdkPromise: Promise<FacebookSdk> | null = null
 
@@ -99,6 +95,7 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
     script.async = true
     script.defer = true
     script.crossOrigin = 'anonymous'
+    script.referrerPolicy = 'origin'
     script.onerror = () => {
       window.clearTimeout(timeout)
       sdkPromise = null
@@ -121,7 +118,9 @@ function waitForSignupFinish(expiresAt: string): Promise<EmbeddedSignupFinish> {
     }, timeoutMs)
 
     const listener = (event: MessageEvent) => {
-      if (!META_MESSAGE_ORIGINS.has(event.origin)) return
+      const trustedOrigin = event.origin === 'https://www.facebook.com'
+        || event.origin === 'https://web.facebook.com'
+      if (!trustedOrigin || event.source === null || event.source === window) return
       const payload = parseMetaMessage(event.data)
       if (!payload || payload.type !== 'WA_EMBEDDED_SIGNUP') return
       if (payload.event === 'CANCEL') {
