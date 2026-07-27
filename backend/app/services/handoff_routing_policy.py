@@ -386,7 +386,32 @@ def classify_candidate_exhaustion(
     return ("waiting", "eligible_candidate_available", "human_support", None)
 
 
-def routing_projection(request_row: WebchatHandoffRequest) -> dict[str, Any]:
+def routing_projection(
+    request_row: WebchatHandoffRequest,
+) -> dict[str, Any]:
+    policy_projection: dict[str, Any] = {
+        "priority": None,
+        "risk_level": None,
+        "scenario_key": None,
+        "scenario_assignment_revision": None,
+        "required_capabilities": [],
+    }
+    try:
+        policy = request_policy(request_row)
+    except HandoffRoutingPolicyError:
+        policy = None
+    if policy is not None:
+        policy_projection = {
+            "priority": policy.priority,
+            "risk_level": policy.risk_level,
+            "scenario_key": policy.scenario_key,
+            "scenario_assignment_revision": (
+                policy.scenario_assignment_revision
+            ),
+            "required_capabilities": sorted(
+                policy.required_capabilities
+            ),
+        }
     return {
         "generation": request_row.routing_generation,
         "outcome": request_row.routing_outcome,
@@ -404,6 +429,7 @@ def routing_projection(request_row: WebchatHandoffRequest) -> dict[str, Any]:
         ),
         "policy_sha256": request_row.routing_policy_sha256,
         "fallback_action": request_row.routing_fallback_action,
+        **policy_projection,
     }
 
 
