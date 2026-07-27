@@ -15,9 +15,6 @@ from app.services.background_job_transaction_boundary import (  # noqa: E402
     dispatch_pending_background_jobs,
     dispatch_pending_webchat_ai_reply_jobs,
 )
-from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
-    dispatch_pending_messages,
-)
 from app.services.observability import (  # noqa: E402
     configure_logging,
     log_event,
@@ -25,8 +22,14 @@ from app.services.observability import (  # noqa: E402
     record_worker_poll,
     record_worker_result,
 )
+from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
+    dispatch_pending_messages,
+)
 from app.services.queue_health import collect_queue_health  # noqa: E402
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
+from app.services.whatsapp_media_worker import (  # noqa: E402
+    dispatch_pending_whatsapp_media,
+)
 from app.settings import get_settings  # noqa: E402
 
 LOGGER = logging.getLogger(__name__)
@@ -69,7 +72,18 @@ def _run_background(worker_id: str) -> int:
                 "processed",
                 len(jobs),
             )
-        return len(jobs)
+        media_ids = dispatch_pending_whatsapp_media(
+            db,
+            worker_id=worker_id,
+        )
+        if media_ids:
+            record_worker_result(
+                worker_id,
+                "whatsapp_media",
+                "processed",
+                len(media_ids),
+            )
+        return len(jobs) + len(media_ids)
 
 
 def _webchat_ai_reconciler_interval_seconds() -> int:
