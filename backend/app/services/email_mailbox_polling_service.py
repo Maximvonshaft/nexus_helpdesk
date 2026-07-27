@@ -13,7 +13,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..enums import JobStatus, TicketStatus
-from ..models import BackgroundJob, Market, OutboundEmailAccount, Ticket
+from ..models import (
+    BackgroundJob,
+    Market,
+    OutboundEmailAccount,
+    Ticket,
+    TicketOutboundMessage,
+)
 from ..models_channel_intake import (
     CustomerIdentityBinding,
     EmailIntakeQuarantine,
@@ -191,28 +197,115 @@ def _account_tenant_id(db: Session, account: OutboundEmailAccount) -> int:
     return int(_account_market(db, account).tenant_id)
 
 
+def _bound_customer_id(
+    db: Session,
+    *,
+    tenant_id: int,
+    from_address: str,
+) -> int | None:
+    normalized = normalize_email(from_address)
+    if not normalized:
+        return None
+    row = (
+        db.query(CustomerIdentityBinding.customer_id)
+        .filter(
+            CustomerIdentityBinding.tenant_id == tenant_id,
+            CustomerIdentityBinding.identity_type == "email",
+            CustomerIdentityBinding.normalized_value == normalized,
+        )
+        .first()
+    )
+    return int(row[0]) if row is not None else None
+
+
 def _find_open_ticket_by_sender(
     db: Session,
     account: OutboundEmailAccount,
     from_address: str,
 ) -> Ticket | None:
     tenant_id = _account_tenant_id(db, account)
-    normalized = normalize_email(from_address)
-    if not normalized:
-        return None
-    customer_ids = select(CustomerIdentityBinding.customer_id).where(
-        CustomerIdentityBinding.tenant_id == tenant_id,
-        CustomerIdentityBinding.identity_type == "email",
-        CustomerIdentityBinding.normalized_value == normalized,
+    customer_id = _bound_customer_id(
+        db,
+        tenant_id=tenant_id,
+        from_address=from_address,
     )
+    if customer_id is None:
+        return None
     return (
         db.query(Ticket)
         .filter(
             Ticket.tenant_id == tenant_id,
-            Ticket.customer_id.in_(customer_ids),
+            Ticket.customer_id == customer_id,
             Ticket.status.notin_([TicketStatus.closed, TicketStatus.canceled]),
         )
         .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
+        .first()
+    )
+
+
+def _reference_tokens(message: ParsedMailboxMessage) -> set[str]:
+    values: set[str] = set()
+    if message.in_reply_to:
+        values.add(message.in_reply_to)
+    if message.references:
+        values.update(
+            token
+            for token in str(message.references).split()
+            if normalize_mailbox_header_id(token) == token
+        )
+    return values
+
+
+def _ticket_from_issued_reference(
+    db: Session,
+    *,
+    tenant_id: int,
+    message: ParsedMailboxMessage,
+) -> Ticket | None:
+    references = _reference_tokens(message)
+    if not references:
+        return None
+    rows = (
+        db.query(Ticket)
+        .join(
+            TicketOutboundMessage,
+            TicketOutboundMessage.ticket_id == Ticket.id,
+        )
+        .filter(
+            Ticket.tenant_id == tenant_id,
+            or_(
+                TicketOutboundMessage.mailbox_message_id.in_(references),
+                TicketOutboundMessage.mailbox_thread_id.in_(references),
+            ),
+        )
+        .order_by(Ticket.id.asc())
+        .limit(2)
+        .all()
+    )
+    if len(rows) != 1:
+        return None
+    return rows[0]
+
+
+def _hinted_ticket(
+    db: Session,
+    *,
+    tenant_id: int,
+    message: ParsedMailboxMessage,
+) -> Ticket | None:
+    ticket_id = _extract_ticket_id(
+        [
+            message.references,
+            message.in_reply_to,
+            message.subject,
+            message.body[:1000],
+        ]
+    )
+    if ticket_id is None:
+        return None
+    return (
+        db.query(Ticket)
+        .filter(Ticket.id == ticket_id, Ticket.tenant_id == tenant_id)
         .first()
     )
 
@@ -222,21 +315,41 @@ def _resolve_ticket(
     account: OutboundEmailAccount,
     message: ParsedMailboxMessage,
 ) -> Ticket | None:
+    """Resolve inbound Email without treating caller-controlled Ticket text as authority.
+
+    An exact In-Reply-To/References value previously issued by Nexus is the
+    thread authority. A known sender that is already bound to another Customer
+    cannot use that thread to cross into a different Customer. Without issued
+    thread evidence, Subject/Body Ticket references are only hints and require
+    the sender to be bound to the hinted Ticket Customer.
+    """
+
     tenant_id = _account_tenant_id(db, account)
-    ticket_id = _extract_ticket_id(
-        [
-            message.references,
-            message.in_reply_to,
-            message.message_id,
-            message.subject,
-            message.body[:1000],
-        ]
+    bound_customer_id = _bound_customer_id(
+        db,
+        tenant_id=tenant_id,
+        from_address=message.from_address,
     )
-    if ticket_id is not None:
+    issued_ticket = _ticket_from_issued_reference(
+        db,
+        tenant_id=tenant_id,
+        message=message,
+    )
+    if issued_ticket is not None:
+        if (
+            bound_customer_id is not None
+            and issued_ticket.customer_id != bound_customer_id
+        ):
+            return None
+        return issued_ticket
+
+    hinted = _hinted_ticket(db, tenant_id=tenant_id, message=message)
+    if hinted is not None:
         return (
-            db.query(Ticket)
-            .filter(Ticket.id == ticket_id, Ticket.tenant_id == tenant_id)
-            .first()
+            hinted
+            if bound_customer_id is not None
+            and hinted.customer_id == bound_customer_id
+            else None
         )
     return _find_open_ticket_by_sender(db, account, message.from_address)
 
@@ -287,6 +400,22 @@ def _provider_message_id(account: OutboundEmailAccount, uid: str) -> str:
     return f"imap:{account.id}:{uid}"[:255]
 
 
+def _quarantine_reason(message: ParsedMailboxMessage) -> str:
+    return (
+        "ticket_authority_mismatch"
+        if _extract_ticket_id(
+            [
+                message.references,
+                message.in_reply_to,
+                message.subject,
+                message.body[:1000],
+            ]
+        )
+        is not None
+        else "ticket_not_resolved"
+    )
+
+
 def _quarantine_unmatched_message(
     db: Session,
     *,
@@ -320,7 +449,7 @@ def _quarantine_unmatched_message(
         in_reply_to=message.in_reply_to,
         received_at=message.received_at,
         status="pending_intake",
-        reason_code="ticket_not_resolved",
+        reason_code=_quarantine_reason(message),
         created_at=utc_now(),
         updated_at=utc_now(),
     )
