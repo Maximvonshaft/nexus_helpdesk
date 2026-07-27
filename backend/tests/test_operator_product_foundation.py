@@ -7,7 +7,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/helpdesk_suite_operator_foundation.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/helpdesk_suite_operator_foundation.db",
+)
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +21,13 @@ from app.api import lookups as lookups_api  # noqa: E402
 from app.auth_service import hash_password  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import UserRole  # noqa: E402
-from app.models import Market, MarketBulletin, Team, User  # noqa: E402
+from app.models import (  # noqa: E402
+    Market,
+    MarketBulletin,
+    Team,
+    Tenant,
+    User,
+)
 from scripts import init_dev_db  # noqa: E402
 
 
@@ -47,14 +56,44 @@ def db_session(tmp_path):
         engine.dispose()
 
 
-def _team(db_session, name="Support"):
-    row = Team(name=name, team_type="support")
+def _tenant(db_session) -> Tenant:
+    row = Tenant(
+        tenant_key="operator-foundation",
+        display_name="Operator Foundation",
+        is_active=True,
+    )
     db_session.add(row)
     db_session.flush()
     return row
 
 
-def _user(db_session, username, role, team):
+def _ownership(tenant: Tenant) -> dict[str, object]:
+    return {
+        "tenant_id": tenant.id,
+        "tenant_assignment_source": "fixture",
+        "tenant_assignment_version": "operator-foundation-test-v1",
+    }
+
+
+def _team(
+    db_session,
+    *,
+    tenant: Tenant,
+    market: Market,
+    name: str = "Support",
+) -> Team:
+    row = Team(
+        name=name,
+        team_type="support",
+        market_id=market.id,
+        **_ownership(tenant),
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def _user(db_session, username, role, team, *, tenant: Tenant):
     row = User(
         username=username,
         display_name=username.title(),
@@ -63,6 +102,7 @@ def _user(db_session, username, role, team):
         role=role,
         team_id=team.id,
         is_active=True,
+        **_ownership(tenant),
     )
     db_session.add(row)
     db_session.flush()
@@ -70,11 +110,24 @@ def _user(db_session, username, role, team):
 
 
 def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
-    team = _team(db_session)
-    agent = _user(db_session, "operator_agent", UserRole.agent, team)
-    market = Market(code="PH", name="Philippines", country_code="PH")
+    tenant = _tenant(db_session)
+    market = Market(
+        code="PH",
+        name="Philippines",
+        country_code="PH",
+        is_active=True,
+        **_ownership(tenant),
+    )
     db_session.add(market)
     db_session.flush()
+    team = _team(db_session, tenant=tenant, market=market)
+    agent = _user(
+        db_session,
+        "operator_agent",
+        UserRole.agent,
+        team,
+        tenant=tenant,
+    )
     db_session.add(
         MarketBulletin(
             market_id=market.id,
@@ -101,14 +154,32 @@ def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
 
 def test_capabilities_are_available_through_one_authenticated_product_shell():
     router = (ROOT.parent / "webapp/src/router.tsx").read_text(encoding="utf-8")
-    shell = (ROOT.parent / "webapp/src/app/AppShell.tsx").read_text(encoding="utf-8")
-    workspace = (ROOT.parent / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx").read_text(encoding="utf-8")
-    knowledge = (ROOT.parent / "webapp/src/features/knowledge/KnowledgePage.tsx").read_text(encoding="utf-8")
-    channels = (ROOT.parent / "webapp/src/features/channels/ChannelsPage.tsx").read_text(encoding="utf-8")
-    runtime = (ROOT.parent / "webapp/src/features/runtime/RuntimePage.tsx").read_text(encoding="utf-8")
-    support_api = (ROOT.parent / "webapp/src/lib/supportApi.ts").read_text(encoding="utf-8")
+    shell = (ROOT.parent / "webapp/src/app/AppShell.tsx").read_text(
+        encoding="utf-8"
+    )
+    workspace = (
+        ROOT.parent
+        / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx"
+    ).read_text(encoding="utf-8")
+    knowledge = (
+        ROOT.parent / "webapp/src/features/knowledge/KnowledgePage.tsx"
+    ).read_text(encoding="utf-8")
+    channels = (
+        ROOT.parent / "webapp/src/features/channels/ChannelsPage.tsx"
+    ).read_text(encoding="utf-8")
+    runtime = (
+        ROOT.parent / "webapp/src/features/runtime/RuntimePage.tsx"
+    ).read_text(encoding="utf-8")
+    support_api = (ROOT.parent / "webapp/src/lib/supportApi.ts").read_text(
+        encoding="utf-8"
+    )
 
-    for route_name in ("WorkspaceRoute", "KnowledgeRoute", "ChannelsRoute", "RuntimeRoute"):
+    for route_name in (
+        "WorkspaceRoute",
+        "KnowledgeRoute",
+        "ChannelsRoute",
+        "RuntimeRoute",
+    ):
         assert route_name in router
     assert "AppNavigation" in shell
     assert "WorkspaceQueuePane" in workspace
@@ -121,8 +192,13 @@ def test_capabilities_are_available_through_one_authenticated_product_shell():
 
 
 def test_operator_surfaces_hide_internal_session_and_account_identifiers():
-    workspace = (ROOT.parent / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx").read_text(encoding="utf-8")
-    channels = (ROOT.parent / "webapp/src/features/channels/ChannelsPage.tsx").read_text(encoding="utf-8")
+    workspace = (
+        ROOT.parent
+        / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx"
+    ).read_text(encoding="utf-8")
+    channels = (
+        ROOT.parent / "webapp/src/features/channels/ChannelsPage.tsx"
+    ).read_text(encoding="utf-8")
 
     assert "会话编号" not in workspace
     assert "session_key" not in workspace
@@ -131,7 +207,10 @@ def test_operator_surfaces_hide_internal_session_and_account_identifiers():
     assert ">wa-primary-private<" not in channels
 
 
-def test_init_dev_db_seeds_committed_demo_ticket_and_bulletin(tmp_path, monkeypatch):
+def test_init_dev_db_seeds_committed_demo_ticket_and_bulletin(
+    tmp_path,
+    monkeypatch,
+):
     db_file = tmp_path / "seed.db"
     engine = create_engine(
         f"sqlite:///{db_file}",
