@@ -17,6 +17,7 @@ from app.db import Base
 from app.enums import (
     ConversationState,
     MessageStatus,
+    NoteVisibility,
     SourceChannel,
     TicketPriority,
     TicketSource,
@@ -28,6 +29,7 @@ from app.models import (
     Customer,
     Tenant,
     Ticket,
+    TicketAttachment,
     TicketOutboundMessage,
     WhatsAppInboundMessage,
 )
@@ -173,7 +175,19 @@ def _seed(db_session):
         delivery_status="read",
         sent_at=now,
     )
-    db_session.add_all([outbound, media_outbound])
+    attachment = TicketAttachment(
+        ticket_id=ticket.id,
+        uploaded_by=None,
+        file_name="uat.png",
+        storage_key="uat.png",
+        file_path=None,
+        file_url=None,
+        mime_type="image/png",
+        file_size=128,
+        visibility=NoteVisibility.external,
+        created_at=now,
+    )
+    db_session.add_all([outbound, media_outbound, attachment])
     db_session.flush()
     text_part = WhatsAppOutboundPart(
         tenant_id=tenant.id,
@@ -193,6 +207,7 @@ def _seed(db_session):
         tenant_id=tenant.id,
         connection_id=connection.id,
         outbound_message_id=media_outbound.id,
+        attachment_id=attachment.id,
         sequence=0,
         part_type="media",
         media_kind="image",
@@ -221,7 +236,7 @@ def _seed(db_session):
         storage_status="available",
         scan_status="clean",
         storage_key="uat.png",
-        ticket_attachment_id=1,
+        ticket_attachment_id=attachment.id,
         downloaded_at=now,
         scanned_at=now,
         available_at=now,
