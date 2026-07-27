@@ -18,6 +18,7 @@ from ..api.admin_whatsapp import router as admin_whatsapp_router
 from ..api.admin_whatsapp_embedded_signup import (
     router as admin_whatsapp_embedded_signup_router,
 )
+from ..api.admin_whatsapp_uat import router as admin_whatsapp_uat_router
 from ..api.agent_control import router as agent_control_router
 from ..api.agent_runtime_operations import router as agent_runtime_operations_router
 from ..api.auth import router as auth_router
@@ -115,6 +116,10 @@ def register_api_routers(app: FastAPI) -> None:
     app.include_router(admin_whatsapp_router, dependencies=admin_scope_dependencies)
     app.include_router(
         admin_whatsapp_embedded_signup_router,
+        dependencies=admin_scope_dependencies,
+    )
+    app.include_router(
+        admin_whatsapp_uat_router,
         dependencies=admin_scope_dependencies,
     )
 
