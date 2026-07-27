@@ -15,7 +15,8 @@ WORKSPACE_CONVERSATION = ROOT / "webapp" / "src" / "features" / "operator-worksp
 WORKSPACE_CASE = ROOT / "webapp" / "src" / "features" / "operator-workspace" / "OperatorWorkspaceCase.tsx"
 WEBCALL_PAGE = ROOT / "webapp" / "src" / "features" / "webcall" / "WebCallPage.tsx"
 VOICE_ENTRY = ROOT / "backend" / "app" / "static" / "webchat" / "voice-entry.js"
-WIDGET_JS = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
+WIDGET_LOADER = ROOT / "backend" / "app" / "static" / "webchat" / "widget.js"
+WIDGET_RUNTIME = ROOT / "backend" / "app" / "static" / "webchat" / "widget-runtime.js"
 RESIDUE_GATE = ROOT / "scripts" / "ci" / "check_telephony_authority_residue.py"
 
 
@@ -46,20 +47,22 @@ def test_widget_opens_one_livekit_room_path_and_old_pcm_path_is_absent():
     webchat_route = WEBCHAT_ROUTE.read_text(encoding="utf-8")
     workspace = WORKSPACE.read_text(encoding="utf-8")
     conversation = WORKSPACE_CONVERSATION.read_text(encoding="utf-8")
-    widget = WIDGET_JS.read_text(encoding="utf-8")
+    loader = WIDGET_LOADER.read_text(encoding="utf-8")
+    runtime = WIDGET_RUNTIME.read_text(encoding="utf-8")
     webcall = WEBCALL_PAGE.read_text(encoding="utf-8")
 
     assert "WebchatCompatibilityRedirect" in webchat_route
     assert "operatorWorkspaceApi.reply" in conversation
     assert "暂无客户沟通" in conversation
     assert "回复和接手处理暂不可用" in conversation
-    assert "livekit-room" in widget
-    assert "/voice/sessions" in widget
-    assert "/webcall/" in widget
+    assert "/webchat/widget-runtime.js" in loader
+    assert "/webcall/" in loader
+    assert "livekit-room" in runtime
+    assert "/voice/sessions" in runtime
     assert "LiveKit" in webcall
-    assert "/webchat/live/ws" not in widget
-    assert "AudioWorklet" not in widget
-    assert "LIVE_VOICE_UPSTREAM" not in widget
+    assert "/webchat/live/ws" not in runtime
+    assert "AudioWorklet" not in runtime
+    assert "LIVE_VOICE_UPSTREAM" not in runtime
     assert "visitor_token" not in workspace
     assert "LIVEKIT_API_SECRET" not in workspace
 
@@ -80,15 +83,17 @@ def test_voice_evidence_uses_canonical_case_and_transcript_storage_without_secre
     assert "history.replaceState" in webcall
 
 
-def test_voice_entry_delegates_to_consolidated_widget():
+def test_voice_entry_delegates_to_consolidated_runtime():
     entry = VOICE_ENTRY.read_text(encoding="utf-8")
-    widget = WIDGET_JS.read_text(encoding="utf-8")
+    loader = WIDGET_LOADER.read_text(encoding="utf-8")
+    runtime = WIDGET_RUNTIME.read_text(encoding="utf-8")
 
     assert "/webchat/widget.js" in entry
     assert "window.__NEXUSDESK_WEBCHAT_LOADED__" in entry
     assert "data-live-voice-mode" in entry
-    assert "startLiveVoice" in widget
-    assert "stopLiveVoice" in widget
+    assert "/webchat/widget-runtime.js" in loader
+    assert "startLiveVoice" in runtime
+    assert "stopLiveVoice" in runtime
 
 
 def test_retired_telephony_paths_are_permanently_gated():
