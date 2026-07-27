@@ -78,7 +78,11 @@ export function IncomingVoiceCallProvider({
     queryKey: INCOMING_QUERY_KEY,
     queryFn: () => telephonyApi.incomingOffers(10),
     enabled: canViewQueue,
-    refetchInterval: () => (typeof document === 'undefined' || document.visibilityState === 'visible' ? 2_000 : 15_000),
+    refetchInterval: () => (
+      typeof document === 'undefined' || document.visibilityState === 'visible'
+        ? 2_000
+        : 15_000
+    ),
     refetchIntervalInBackground: false,
     retry: false,
   })
@@ -86,11 +90,16 @@ export function IncomingVoiceCallProvider({
   const currentVoiceSessionId = current?.voice_session_id ?? null
   const currentVisitorLabel = current?.visitor_label || '电话客户'
   const refetchOffers = offers.refetch
-  const seconds = useMemo(() => (current ? remainingSeconds(current, now) : 0), [current, now])
+  const seconds = useMemo(
+    () => (current ? remainingSeconds(current, now) : 0),
+    [current, now],
+  )
 
   useEffect(() => {
     announcedThresholds.current = new Set()
-    setAnnouncement(currentVoiceSessionId ? `新的语音来电，客户 ${currentVisitorLabel}。` : '')
+    setAnnouncement(
+      currentVoiceSessionId ? `新的语音来电，客户 ${currentVisitorLabel}。` : '',
+    )
   }, [currentVisitorLabel, currentVoiceSessionId])
 
   useEffect(() => {
@@ -103,11 +112,16 @@ export function IncomingVoiceCallProvider({
   useEffect(() => {
     if (!currentVoiceSessionId) return
     for (const threshold of [10, 5, 0]) {
-      if (seconds !== threshold || announcedThresholds.current.has(threshold)) continue
+      if (
+        seconds !== threshold
+        || announcedThresholds.current.has(threshold)
+      ) continue
       announcedThresholds.current.add(threshold)
-      setAnnouncement(threshold > 0
-        ? `语音来电将在 ${threshold} 秒后轮转。`
-        : '当前语音来电已失效，正在检查下一通来电。')
+      setAnnouncement(
+        threshold > 0
+          ? `语音来电将在 ${threshold} 秒后轮转。`
+          : '当前语音来电已失效，正在检查下一通来电。',
+      )
     }
     if (seconds <= 0) void refetchOffers()
   }, [currentVoiceSessionId, refetchOffers, seconds])
@@ -123,7 +137,7 @@ export function IncomingVoiceCallProvider({
     },
   })
 
-  const accept = () => {
+  const openCall = () => {
     if (!canAccept || !current) return
     sessionStorage.setItem(
       `${INCOMING_VOICE_CONTEXT_PREFIX}${current.voice_session_id}`,
@@ -142,7 +156,14 @@ export function IncomingVoiceCallProvider({
   return (
     <IncomingVoiceRuntimeContext.Provider value={value}>
       {children}
-      <Box className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</Box>
+      <Box
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {announcement}
+      </Box>
       {current ? (
         <Dialog
           open={canAct}
@@ -159,8 +180,15 @@ export function IncomingVoiceCallProvider({
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
               <PhoneInTalkRoundedIcon color="error" aria-hidden="true" />
               <Box>
-                <Typography component="span" variant="h3">新的语音来电</Typography>
-                <Typography component="div" variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+                <Typography component="span" variant="h3">
+                  新的语音来电
+                </Typography>
+                <Typography
+                  component="div"
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mt: 0.25 }}
+                >
                   该来电仅分配给当前坐席
                 </Typography>
               </Box>
@@ -170,20 +198,34 @@ export function IncomingVoiceCallProvider({
             <DialogContentText id="incoming-voice-description" component="div">
               <Stack spacing={1.25}>
                 <Box>
-                  <Typography variant="caption" color="text.secondary">客户</Typography>
-                  <Typography variant="subtitle1">{currentVisitorLabel}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    客户
+                  </Typography>
+                  <Typography variant="subtitle1">
+                    {currentVisitorLabel}
+                  </Typography>
                 </Box>
                 {current.ticket_no || current.ticket_title ? (
                   <Box>
-                    <Typography variant="caption" color="text.secondary">关联工单</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      关联工单
+                    </Typography>
                     <Typography variant="body2">
-                      {[current.ticket_no, current.ticket_title].filter(Boolean).join(' · ')}
+                      {[current.ticket_no, current.ticket_title]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </Typography>
                   </Box>
                 ) : (
-                  <Alert severity="info" variant="outlined">当前为实时会话，无需先创建工单。</Alert>
+                  <Alert severity="info" variant="outlined">
+                    当前为实时会话，无需先创建工单。
+                  </Alert>
                 )}
-                <Typography variant="body2" color={seconds <= 5 ? 'error.main' : 'text.secondary'} aria-hidden="true">
+                <Typography
+                  variant="body2"
+                  color={seconds <= 5 ? 'error.main' : 'text.secondary'}
+                  aria-hidden="true"
+                >
                   接听机会将在 {seconds} 秒后轮转给下一位坐席。
                 </Typography>
                 {(offers.data?.items.length ?? 0) > 1 ? (
@@ -191,7 +233,9 @@ export function IncomingVoiceCallProvider({
                     当前还有 {(offers.data?.items.length ?? 1) - 1} 个来电等待处理。
                   </Typography>
                 ) : null}
-                {reject.isError ? <Alert severity="error">拒绝来电失败，请重试。</Alert> : null}
+                {reject.isError ? (
+                  <Alert severity="error">拒绝来电失败，请重试。</Alert>
+                ) : null}
               </Stack>
             </DialogContentText>
           </DialogContent>
@@ -200,7 +244,11 @@ export function IncomingVoiceCallProvider({
               <Button
                 color="inherit"
                 variant="outlined"
-                startIcon={reject.isPending ? <CircularProgress size={16} /> : <PhoneDisabledRoundedIcon />}
+                startIcon={
+                  reject.isPending
+                    ? <CircularProgress size={16} />
+                    : <PhoneDisabledRoundedIcon />
+                }
                 disabled={reject.isPending || seconds <= 0}
                 onClick={() => reject.mutate()}
               >
@@ -213,9 +261,9 @@ export function IncomingVoiceCallProvider({
                 variant="contained"
                 startIcon={<PhoneInTalkRoundedIcon />}
                 disabled={reject.isPending || seconds <= 0}
-                onClick={accept}
+                onClick={openCall}
               >
-                接听通话
+                打开通话
               </Button>
             ) : null}
           </DialogActions>
@@ -227,7 +275,9 @@ export function IncomingVoiceCallProvider({
 
 export function IncomingVoiceCallControl() {
   const runtime = useContext(IncomingVoiceRuntimeContext)
-  if (!runtime) throw new Error('IncomingVoiceCallControl requires IncomingVoiceCallProvider')
+  if (!runtime) {
+    throw new Error('IncomingVoiceCallControl requires IncomingVoiceCallProvider')
+  }
   if (!runtime.enabled) return null
   if (runtime.isError) {
     return (
@@ -245,7 +295,11 @@ export function IncomingVoiceCallControl() {
           flexShrink: 0,
         }}
       >
-        <PhoneDisabledRoundedIcon color="warning" fontSize="small" aria-hidden="true" />
+        <PhoneDisabledRoundedIcon
+          color="warning"
+          fontSize="small"
+          aria-hidden="true"
+        />
       </Box>
     )
   }
