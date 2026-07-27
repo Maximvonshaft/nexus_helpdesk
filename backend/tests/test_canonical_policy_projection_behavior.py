@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/canonical_policy_projection_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/canonical_policy_projection_tests.db",
+)
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import Base
 from app.enums import UserRole
 from app.model_registry import register_all_models
-from app.models import User, UserCapabilityOverride
+from app.models import Tenant, User, UserCapabilityOverride
 from app.operator_models import OperatorQueueScopeGrant
 from app.services.operator_queue_scope import (
     authorize_operator_scope,
@@ -42,7 +45,13 @@ def db_session(tmp_path):
         connect_args={"check_same_thread": False},
         future=True,
     )
-    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True, expire_on_commit=False)
+    Session = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+        future=True,
+        expire_on_commit=False,
+    )
     Base.metadata.create_all(engine)
     session = Session()
     try:
@@ -53,7 +62,29 @@ def db_session(tmp_path):
         engine.dispose()
 
 
-def _user(db, *, username: str, role: UserRole) -> User:
+def _tenant(db, key: str = TENANT) -> Tenant:
+    normalized = str(key).strip().lower()
+    row = db.query(Tenant).filter(Tenant.tenant_key == normalized).first()
+    if row is not None:
+        return row
+    row = Tenant(
+        tenant_key=normalized,
+        display_name=normalized.title(),
+        is_active=True,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _user(
+    db,
+    *,
+    username: str,
+    role: UserRole,
+    tenant_key: str = TENANT,
+) -> User:
+    tenant = _tenant(db, tenant_key)
     row = User(
         username=username,
         display_name=username,
@@ -61,6 +92,9 @@ def _user(db, *, username: str, role: UserRole) -> User:
         password_hash="x",
         role=role,
         is_active=True,
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="canonical-policy-projection-test-v1",
     )
     db.add(row)
     db.flush()
@@ -78,7 +112,7 @@ def _grant(
 ) -> OperatorQueueScopeGrant:
     row = OperatorQueueScopeGrant(
         user_id=user.id,
-        tenant_key=tenant,
+        tenant_key=str(tenant).strip().lower(),
         country_code=country,
         channel_key=channel,
         enabled=enabled,
@@ -89,7 +123,14 @@ def _grant(
     return row
 
 
-def _authorize(db, user: User, *, tenant: str = TENANT, country: str = COUNTRY, channel: str = CHANNEL):
+def _authorize(
+    db,
+    user: User,
+    *,
+    tenant: str = TENANT,
+    country: str = COUNTRY,
+    channel: str = CHANNEL,
+):
     return authorize_operator_scope(
         db,
         current_user=user,
@@ -100,44 +141,68 @@ def _authorize(db, user: User, *, tenant: str = TENANT, country: str = COUNTRY, 
 
 
 def test_admin_without_active_grant_cannot_bypass_normal_queue_scope(db_session) -> None:
-    admin = _user(db_session, username="admin-no-grant", role=UserRole.admin)
-
+    admin = _user(
+        db_session,
+        username="admin-no-grant",
+        role=UserRole.admin,
+    )
     with pytest.raises(HTTPException) as exc:
         _authorize(db_session, admin)
-
     assert exc.value.status_code == 403
     assert exc.value.detail == "operator_queue_scope_not_granted"
 
 
 @pytest.mark.parametrize(
     "role",
-    [UserRole.admin, UserRole.manager, UserRole.lead, UserRole.agent, UserRole.auditor],
+    [
+        UserRole.admin,
+        UserRole.manager,
+        UserRole.lead,
+        UserRole.agent,
+        UserRole.auditor,
+    ],
 )
-def test_normal_queue_authority_is_capability_plus_active_grant_not_role(db_session, role: UserRole) -> None:
-    user = _user(db_session, username=f"granted-{role.value}", role=role)
+def test_normal_queue_authority_is_capability_plus_active_grant_not_role(
+    db_session,
+    role: UserRole,
+) -> None:
+    user = _user(
+        db_session,
+        username=f"granted-{role.value}",
+        role=role,
+    )
     grant = _grant(db_session, user=user)
-
     tenant, country, channel, resolved = _authorize(db_session, user)
-
     assert (tenant, country, channel) == (TENANT, COUNTRY, CHANNEL)
     assert resolved.id == grant.id
 
 
 def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> None:
-    user = _user(db_session, username="scope-owner", role=UserRole.manager)
-    other = _user(db_session, username="scope-other", role=UserRole.manager)
+    user = _user(
+        db_session,
+        username="scope-owner",
+        role=UserRole.manager,
+    )
+    other = _user(
+        db_session,
+        username="scope-other",
+        role=UserRole.manager,
+    )
     disabled = _grant(db_session, user=user, enabled=False)
     _grant(db_session, user=other)
-
     with pytest.raises(HTTPException) as disabled_exc:
         _authorize(db_session, user)
     assert disabled_exc.value.detail == "operator_queue_scope_not_granted"
 
     disabled.enabled = True
     db_session.flush()
+    _tenant(db_session, "tenant-other")
     with pytest.raises(HTTPException) as wrong_tenant:
         _authorize(db_session, user, tenant="tenant-other")
-    assert wrong_tenant.value.detail == "operator_queue_scope_not_granted"
+    assert (
+        wrong_tenant.value.detail
+        == "operator_queue_cross_tenant_grant_forbidden"
+    )
 
     with pytest.raises(HTTPException) as wrong_channel:
         _authorize(db_session, user, channel="email")
@@ -145,20 +210,29 @@ def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> N
 
 
 def test_grant_country_is_authoritative_without_team_or_role_inference(db_session) -> None:
-    user = _user(db_session, username="country-grant", role=UserRole.agent)
+    user = _user(
+        db_session,
+        username="country-grant",
+        role=UserRole.agent,
+    )
     grant = _grant(db_session, user=user, country="CH")
-
-    tenant, country, channel, resolved = _authorize(db_session, user, country="CH")
-
+    tenant, country, channel, resolved = _authorize(
+        db_session,
+        user,
+        country="CH",
+    )
     assert (tenant, country, channel) == (TENANT, "CH", CHANNEL)
     assert resolved.id == grant.id
 
 
 def test_capability_override_changes_scope_cursor_authority_fingerprint(db_session) -> None:
-    user = _user(db_session, username="fingerprint-user", role=UserRole.manager)
+    user = _user(
+        db_session,
+        username="fingerprint-user",
+        role=UserRole.manager,
+    )
     grant = _grant(db_session, user=user)
     before = scope_grant_version(grant, current_user=user)
-
     db_session.add(
         UserCapabilityOverride(
             user_id=user.id,
@@ -168,46 +242,58 @@ def test_capability_override_changes_scope_cursor_authority_fingerprint(db_sessi
     )
     db_session.flush()
     after = scope_grant_version(grant, current_user=user)
-
     assert before != after
 
 
 def test_team_relationship_changes_scope_cursor_authority_fingerprint(db_session) -> None:
-    user = _user(db_session, username="team-fingerprint-user", role=UserRole.agent)
+    user = _user(
+        db_session,
+        username="team-fingerprint-user",
+        role=UserRole.agent,
+    )
     grant = _grant(db_session, user=user)
     user.team_id = 101
     before = scope_grant_version(grant, current_user=user)
-
     user.team_id = 202
     after = scope_grant_version(grant, current_user=user)
-
     assert before != after
 
 
 def test_current_scope_projection_contains_only_active_current_user_grants(db_session) -> None:
-    user = _user(db_session, username="projection-user", role=UserRole.auditor)
-    other = _user(db_session, username="projection-other", role=UserRole.auditor)
-    _grant(db_session, user=user, tenant="tenant-z", country="CH", channel="email")
-    _grant(db_session, user=user, tenant="tenant-a", country="ME", channel="webchat")
-    _grant(db_session, user=user, tenant="tenant-disabled", enabled=False)
-    _grant(db_session, user=other, tenant="tenant-other")
+    user = _user(
+        db_session,
+        username="projection-user",
+        role=UserRole.auditor,
+    )
+    other = _user(
+        db_session,
+        username="projection-other",
+        role=UserRole.auditor,
+    )
+    _grant(db_session, user=user, country="CH", channel="email")
+    _grant(db_session, user=user, country="ME", channel="webchat")
+    _grant(db_session, user=user, country="DE", enabled=False)
+    _grant(db_session, user=other, country="FR")
 
     result = list_current_scope_grants(db_session, current_user=user)
 
     assert result == {
         "items": [
             {
-                "tenant_key": "tenant-z",
+                "tenant_key": TENANT,
                 "tenant_hash": result["items"][0]["tenant_hash"],
                 "country_code": "CH",
                 "channel_key": "email",
             },
             {
-                "tenant_key": "tenant-a",
+                "tenant_key": TENANT,
                 "tenant_hash": result["items"][1]["tenant_hash"],
                 "country_code": "ME",
                 "channel_key": "webchat",
             },
         ]
     }
-    assert all(item["tenant_key"] not in {"tenant-disabled", "tenant-other"} for item in result["items"])
+    assert all(
+        item["country_code"] not in {"DE", "FR"}
+        for item in result["items"]
+    )
