@@ -41,6 +41,10 @@ def get_whatsapp_runtime_settings() -> WhatsAppRuntimeSettings:
     if enabled and not sidecar_url.startswith(("http://", "https://")):
         raise RuntimeError("WHATSAPP_BAILEYS_SIDECAR_URL must be an http(s) URL")
 
+    # Baileys transport credentials are intentionally optional at the global
+    # runtime layer. A Meta-only deployment must be fully valid without a
+    # sidecar, and a Baileys operation fails closed at its adapter boundary when
+    # its secrets are absent. This keeps both transports independently usable.
     sidecar_token = _secret(
         value_env="WHATSAPP_BAILEYS_SIDECAR_TOKEN",
         file_env="WHATSAPP_BAILEYS_SIDECAR_TOKEN_FILE",
@@ -64,19 +68,6 @@ def get_whatsapp_runtime_settings() -> WhatsAppRuntimeSettings:
     )
     if meta_webhook_public_url and not meta_webhook_public_url.startswith("https://"):
         raise RuntimeError("WHATSAPP_META_WEBHOOK_PUBLIC_URL must use HTTPS")
-
-    if enabled:
-        missing = []
-        if not sidecar_token:
-            missing.append("WHATSAPP_BAILEYS_SIDECAR_TOKEN_FILE")
-        if not connector_key:
-            missing.append("WHATSAPP_CONNECTOR_KEY_FILE")
-        if not connector_hmac_secret:
-            missing.append("WHATSAPP_CONNECTOR_HMAC_SECRET_FILE")
-        if missing:
-            raise RuntimeError(
-                "WhatsApp runtime secrets missing: " + ",".join(missing)
-            )
 
     return WhatsAppRuntimeSettings(
         enabled=enabled,
