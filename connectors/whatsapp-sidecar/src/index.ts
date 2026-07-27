@@ -18,8 +18,13 @@ async function reconcileOnce(): Promise<void> {
   try {
     const desired = await registry.backend.fetchDesiredAccounts();
     await registry.reconcile(desired.accounts);
+    registry.recordAuthoritySuccess();
   } catch (error) {
-    logger.warn({ error }, "whatsapp_desired_state_reconciliation_failed");
+    registry.recordAuthorityFailure(error);
+    logger.warn(
+      { error_code: registry.readiness().last_authority_error_code },
+      "whatsapp_desired_state_reconciliation_failed"
+    );
   } finally {
     reconcileRunning = false;
   }
@@ -31,7 +36,10 @@ async function drainCallbacksOnce(): Promise<void> {
   try {
     await registry.backend.flushCallbacks();
   } catch (error) {
-    logger.warn({ error }, "whatsapp_callback_outbox_drain_failed");
+    logger.warn(
+      { error_name: error instanceof Error ? error.name : "UnknownError" },
+      "whatsapp_callback_outbox_drain_failed"
+    );
   } finally {
     callbackDrainRunning = false;
   }
@@ -60,10 +68,16 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(callbackTimer);
   logger.info({ signal }, "whatsapp_sidecar_stopping");
   await registry.reconcile([]).catch((error) => {
-    logger.warn({ error }, "whatsapp_sidecar_listener_shutdown_failed");
+    logger.warn(
+      { error_name: error instanceof Error ? error.name : "UnknownError" },
+      "whatsapp_sidecar_listener_shutdown_failed"
+    );
   });
   await registry.backend.flushCallbacks().catch((error) => {
-    logger.warn({ error }, "whatsapp_sidecar_final_callback_flush_failed");
+    logger.warn(
+      { error_name: error instanceof Error ? error.name : "UnknownError" },
+      "whatsapp_sidecar_final_callback_flush_failed"
+    );
   });
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 }
