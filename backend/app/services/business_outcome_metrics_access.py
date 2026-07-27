@@ -16,6 +16,10 @@ from .permissions import (
     CAP_USER_MANAGE,
     resolve_capabilities,
 )
+from .processing_purpose_enforcement import (
+    PURPOSE_ANALYTICS,
+    restricted_customer_ids,
+)
 from .scope_permissions import has_global_case_visibility
 from .tenant_authority import resolve_actor_tenant_id
 
@@ -47,6 +51,18 @@ def build_business_outcome_metrics_for_user(
             detail="control_tower_requires_tenant_authority",
         )
     visible = db.query(Ticket).filter(Ticket.tenant_id == tenant_id)
+    restricted_ids = restricted_customer_ids(
+        db,
+        tenant_id=tenant_id,
+        purpose=PURPOSE_ANALYTICS,
+    )
+    if restricted_ids:
+        visible = visible.filter(
+            or_(
+                Ticket.customer_id.is_(None),
+                Ticket.customer_id.notin_(restricted_ids),
+            )
+        )
     if not has_global_case_visibility(current_user, db):
         visible = visible.filter(
             or_(
