@@ -5,6 +5,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ..processing_purpose_enforcement import (
+    PURPOSE_PROVIDER_TOOL_EXECUTION,
+    ensure_ticket_processing_allowed_fresh,
+)
 from ..tool_governance import record_tool_call
 from .client import SpeedafMcpClient, SpeedafMcpClientError
 from .redactor import redact_mapping, safe_caller_payload, safe_waybill_payload
@@ -52,7 +56,9 @@ class SpeedafActionService:
 
     This layer is intentionally backend-only and should be called from
     background jobs or explicit backend confirmation flows, never directly from
-    LLM output.
+    LLM output. Every Provider effect re-reads the latest committed privacy
+    restriction before network I/O so enqueue-time authorization cannot become a
+    stale bypass.
     """
 
     def __init__(
@@ -69,6 +75,12 @@ class SpeedafActionService:
         self.webchat_conversation_id = webchat_conversation_id
         self.background_job_id = background_job_id
         self.request_id = request_id
+
+    def _ensure_processing_allowed(self) -> None:
+        ensure_ticket_processing_allowed_fresh(
+            ticket_id=self.ticket_id,
+            purpose=PURPOSE_PROVIDER_TOOL_EXECUTION,
+        )
 
     def create_work_order(
         self,
@@ -88,6 +100,7 @@ class SpeedafActionService:
             "description": description[:WORK_ORDER_DESCRIPTION_MAX_LENGTH],
             "callerID": caller_id,
         }
+        self._ensure_processing_allowed()
         started = time.monotonic()
         try:
             response = self.client.post(WORK_ORDER_CREATE_PATH, payload)
@@ -111,9 +124,18 @@ class SpeedafActionService:
                 safe_payload=safe_payload,
             )
         data = response.data if isinstance(response.data, dict) else {}
-        external_id = str(data.get("workOrderCode") or data.get("workOrderId") or data.get("id") or "").strip() or None
+        external_id = str(
+            data.get("workOrderCode")
+            or data.get("workOrderId")
+            or data.get("id")
+            or ""
+        ).strip() or None
         safe_payload = {
-            "request": {**safe_waybill_payload(waybill_code), **safe_caller_payload(caller_id), "workOrderType": work_order_type},
+            "request": {
+                **safe_waybill_payload(waybill_code),
+                **safe_caller_payload(caller_id),
+                "workOrderType": work_order_type,
+            },
             "response": response.safe_summary.get("response"),
         }
         self._record_action_audit(
@@ -123,18 +145,43 @@ class SpeedafActionService:
             status="success",
             elapsed_ms=int((time.monotonic() - started) * 1000),
         )
-        return SpeedafWorkOrderResult(ok=True, status="created", external_id=external_id, safe_payload=safe_payload)
+        return SpeedafWorkOrderResult(
+            ok=True,
+            status="created",
+            external_id=external_id,
+            safe_payload=safe_payload,
+        )
 
-    def cancel_order(self, *, waybill_code: str, reason_code: str, caller_id: str) -> SpeedafActionResult:
+    def cancel_order(
+        self,
+        *,
+        waybill_code: str,
+        reason_code: str,
+        caller_id: str,
+    ) -> SpeedafActionResult:
         if not _enabled("SPEEDAF_CANCEL_ENABLED", False):
             raise SpeedafActionDisabled("speedaf_cancel_disabled")
-        payload = {"waybillCode": waybill_code, "reasonCode": reason_code, "callerID": caller_id}
+        payload = {
+            "waybillCode": waybill_code,
+            "reasonCode": reason_code,
+            "callerID": caller_id,
+        }
         return self._post_action("cancel_order", ORDER_CANCEL_PATH, payload)
 
-    def submit_update_address_flow(self, *, waybill_code: str, whatsapp_phone: str, caller_id: str) -> SpeedafActionResult:
+    def submit_update_address_flow(
+        self,
+        *,
+        waybill_code: str,
+        whatsapp_phone: str,
+        caller_id: str,
+    ) -> SpeedafActionResult:
         if not _enabled("SPEEDAF_UPDATE_ADDRESS_ENABLED", False):
             raise SpeedafActionDisabled("speedaf_update_address_disabled")
-        payload = {"waybillCode": waybill_code, "whatsAppPhone": whatsapp_phone, "callerID": caller_id}
+        payload = {
+            "waybillCode": waybill_code,
+            "whatsAppPhone": whatsapp_phone,
+            "callerID": caller_id,
+        }
         return self._post_action("update_address_flow", UPDATE_ADDRESS_PATH, payload)
 
     def send_voice_callback(self, payload: dict[str, Any]) -> SpeedafActionResult:
@@ -142,16 +189,52 @@ class SpeedafActionService:
             raise SpeedafActionDisabled("speedaf_voice_callback_disabled")
         return self._post_action("voice_callback", VOICE_CALLBACK_PATH, payload)
 
-    def _post_action(self, action_type: str, path: str, payload: dict[str, Any]) -> SpeedafActionResult:
+    def _post_action(
+        self,
+        action_type: str,
+        path: str,
+        payload: dict[str, Any],
+    ) -> SpeedafActionResult:
+        self._ensure_processing_allowed()
         started = time.monotonic()
         try:
             response = self.client.post(path, payload)
         except SpeedafMcpClientError as exc:
-            self._record_action_audit(action_type=action_type, payload=payload, output_payload=exc.safe_payload, status="failed", error_code=exc.error.code, error_message=exc.error.message, elapsed_ms=int((time.monotonic() - started) * 1000))
-            return SpeedafActionResult(ok=False, action_type=action_type, status="failed", error_code=exc.error.code, error_message=exc.error.message, retryable=exc.error.retryable, safe_payload=exc.safe_payload)
-        safe_payload = {"request": redact_mapping(payload), "response": response.safe_summary.get("response")}
-        self._record_action_audit(action_type=action_type, payload=payload, output_payload=safe_payload, status="success", elapsed_ms=int((time.monotonic() - started) * 1000))
-        return SpeedafActionResult(ok=True, action_type=action_type, status="success", safe_payload=safe_payload)
+            self._record_action_audit(
+                action_type=action_type,
+                payload=payload,
+                output_payload=exc.safe_payload,
+                status="failed",
+                error_code=exc.error.code,
+                error_message=exc.error.message,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+            return SpeedafActionResult(
+                ok=False,
+                action_type=action_type,
+                status="failed",
+                error_code=exc.error.code,
+                error_message=exc.error.message,
+                retryable=exc.error.retryable,
+                safe_payload=exc.safe_payload,
+            )
+        safe_payload = {
+            "request": redact_mapping(payload),
+            "response": response.safe_summary.get("response"),
+        }
+        self._record_action_audit(
+            action_type=action_type,
+            payload=payload,
+            output_payload=safe_payload,
+            status="success",
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+        return SpeedafActionResult(
+            ok=True,
+            action_type=action_type,
+            status="success",
+            safe_payload=safe_payload,
+        )
 
     def _record_action_audit(
         self,
@@ -164,7 +247,10 @@ class SpeedafActionService:
         error_message: str | None = None,
         elapsed_ms: int | None = None,
     ) -> None:
-        tool_name = ACTION_TOOL_NAMES.get(action_type, f"speedaf.{action_type}")
+        tool_name = ACTION_TOOL_NAMES.get(
+            action_type,
+            f"speedaf.{action_type}",
+        )
         record_tool_call(
             tool_name=tool_name,
             provider="speedaf_mcp",
