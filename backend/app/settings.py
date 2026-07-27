@@ -21,7 +21,6 @@ class Settings:
         "worker-outbound",
         "worker-background",
         "worker-webchat-ai",
-        "worker-handoff-snapshot",
         "legacy-worker",
         "runtime-warmer",
     }
@@ -166,39 +165,6 @@ class Settings:
         self.outbound_provider = (
             os.getenv("OUTBOUND_PROVIDER", "disabled").strip().lower()
             or "disabled"
-        )
-        self.whatsapp_native_enabled = _env_bool(
-            "WHATSAPP_NATIVE_ENABLED",
-            False,
-        )
-        self.whatsapp_dispatch_mode = (
-            os.getenv("WHATSAPP_DISPATCH_MODE", "disabled")
-            .strip()
-            .lower()
-            or "disabled"
-        )
-        self.whatsapp_sidecar_url = os.getenv(
-            "WHATSAPP_SIDECAR_URL",
-            "http://127.0.0.1:18793",
-        ).strip().rstrip("/")
-        self.whatsapp_sidecar_token = (
-            os.getenv("WHATSAPP_SIDECAR_TOKEN", "").strip() or None
-        )
-        self.whatsapp_sidecar_timeout_seconds = int(
-            os.getenv("WHATSAPP_SIDECAR_TIMEOUT_SECONDS", "8")
-        )
-        self.whatsapp_connector_key = (
-            os.getenv("WHATSAPP_CONNECTOR_KEY", "").strip() or None
-        )
-        self.whatsapp_connector_hmac_secret = (
-            os.getenv("WHATSAPP_CONNECTOR_HMAC_SECRET", "").strip()
-            or None
-        )
-        self.whatsapp_connector_timestamp_tolerance_seconds = int(
-            os.getenv(
-                "WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS",
-                "300",
-            )
         )
         self.outbound_email_production_pilot_enabled = _env_bool(
             "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED",
@@ -654,19 +620,6 @@ class Settings:
                 "OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS must be between 1 "
                 "and 168"
             )
-        if self.whatsapp_dispatch_mode not in {"disabled", "native_sidecar"}:
-            raise RuntimeError(
-                "WHATSAPP_DISPATCH_MODE must be disabled or native_sidecar"
-            )
-        if not 1 <= self.whatsapp_sidecar_timeout_seconds <= 60:
-            raise RuntimeError(
-                "WHATSAPP_SIDECAR_TIMEOUT_SECONDS must be between 1 and 60"
-            )
-        if not 30 <= self.whatsapp_connector_timestamp_tolerance_seconds <= 3600:
-            raise RuntimeError(
-                "WHATSAPP_CONNECTOR_TIMESTAMP_TOLERANCE_SECONDS must be "
-                "between 30 and 3600"
-            )
         if not 5 <= self.email_mailbox_sync_interval_seconds <= 3600:
             raise RuntimeError(
                 "EMAIL_MAILBOX_SYNC_INTERVAL_SECONDS must be between 5 and 3600"
@@ -711,37 +664,12 @@ class Settings:
             )
         if self.storage_backend not in {"local", "s3"}:
             raise RuntimeError("STORAGE_BACKEND must be local or s3")
-        if self.whatsapp_dispatch_mode == "native_sidecar":
-            if not self.whatsapp_native_enabled:
-                raise RuntimeError(
-                    "WHATSAPP_NATIVE_ENABLED=true is required when "
-                    "WHATSAPP_DISPATCH_MODE=native_sidecar"
-                )
-            if not self.whatsapp_sidecar_url.startswith(
-                ("http://", "https://")
-            ):
-                raise RuntimeError(
-                    "WHATSAPP_SIDECAR_URL must be an http(s) URL"
-                )
-            if not self.whatsapp_sidecar_token:
-                raise RuntimeError(
-                    "WHATSAPP_SIDECAR_TOKEN is required when "
-                    "WHATSAPP_DISPATCH_MODE=native_sidecar"
-                )
-            if not self.whatsapp_connector_key:
-                raise RuntimeError(
-                    "WHATSAPP_CONNECTOR_KEY is required when "
-                    "WHATSAPP_DISPATCH_MODE=native_sidecar"
-                )
-            if not self.whatsapp_connector_hmac_secret:
-                raise RuntimeError(
-                    "WHATSAPP_CONNECTOR_HMAC_SECRET is required when "
-                    "WHATSAPP_DISPATCH_MODE=native_sidecar"
-                )
 
         if self.is_http_process:
             if not self.jwt_secret_key:
-                raise RuntimeError("SECRET_KEY must be set for the production Web process")
+                raise RuntimeError(
+                    "SECRET_KEY must be set for the production Web process"
+                )
             weak_secrets = {
                 "change-me",
                 "changeme",
@@ -771,8 +699,9 @@ class Settings:
                 token = (self.metrics_token or "").strip()
                 if len(token) < 32 or token.lower() in weak_secrets:
                     raise RuntimeError(
-                        "METRICS_TOKEN must be a non-placeholder secret of at least 32 characters "
-                        "for the production Web process when METRICS_ENABLED=true"
+                        "METRICS_TOKEN must be a non-placeholder secret of at "
+                        "least 32 characters for the production Web process "
+                        "when METRICS_ENABLED=true"
                     )
             if self.webchat_allow_legacy_token_transport:
                 raise RuntimeError(
