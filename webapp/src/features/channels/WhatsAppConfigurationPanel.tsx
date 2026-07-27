@@ -254,7 +254,7 @@ function WhatsAppConnectionCard({ connection, onChanged }: { connection: WhatsAp
     },
   })
 
-  const facts = useMemo(() => [
+  const facts = useMemo<Array<[string, string]>>(() => [
     ['传输', transportLabel(connection.transport)],
     ['运行状态', sanitizeDisplayText(connection.observed_state)],
     ['认证状态', sanitizeDisplayText(connection.authentication_state)],
