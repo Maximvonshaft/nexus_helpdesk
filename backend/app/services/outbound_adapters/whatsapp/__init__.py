@@ -5,20 +5,20 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ...enums import MessageStatus, SourceChannel
-from ...models import ChannelAccount, Ticket, TicketOutboundMessage
-from ...models_whatsapp import WhatsAppConnection
-from ...utils.time import utc_now
-from ..secret_crypto import SecretCryptoService
-from ..whatsapp_baileys_sidecar import (
+from app.enums import MessageStatus, SourceChannel
+from app.models import ChannelAccount, Ticket, TicketOutboundMessage
+from app.models_whatsapp import WhatsAppConnection
+from app.services.secret_crypto import SecretCryptoService
+from app.services.whatsapp_baileys_sidecar import (
     BaileysSidecarError,
     send_baileys_text,
 )
-from ..whatsapp_meta_cloud import (
+from app.services.whatsapp_meta_cloud import (
     MetaCloudTransportError,
     send_meta_cloud_text,
 )
-from ..whatsapp_runtime_settings import get_whatsapp_runtime_settings
+from app.services.whatsapp_runtime_settings import get_whatsapp_runtime_settings
+from app.utils.time import utc_now
 
 
 @dataclass(frozen=True)
@@ -161,15 +161,16 @@ def dispatch_whatsapp_outbound(
             ticket=ticket,
         )
     except ValueError as exc:
+        code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_route_resolution_failed"
         return _failed(
-            str(exc),
-            str(exc),
+            code,
+            code,
             {
                 "adapter": "whatsapp",
                 "channel": SourceChannel.whatsapp.value,
                 "idempotency_key": idempotency_key,
             },
-            retryable=str(exc) == "verified_whatsapp_connection_missing",
+            retryable=code == "verified_whatsapp_connection_missing",
         )
 
     connection = (
@@ -230,9 +231,10 @@ def dispatch_whatsapp_outbound(
             retryable=exc.retryable,
         )
     except (RuntimeError, ValueError) as exc:
+        code = exc.args[0] if exc.args and isinstance(exc.args[0], str) else "whatsapp_dispatch_failed"
         return _failed(
-            str(exc),
-            str(exc),
+            code,
+            code,
             context,
             retryable=False,
         )
