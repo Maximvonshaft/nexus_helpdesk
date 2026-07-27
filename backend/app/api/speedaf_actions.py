@@ -27,7 +27,7 @@ from ..services.permissions import (
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
 from ..services.speedaf.status_map import is_auto_work_order_type_allowed
-from ..services.ticket_scenario_assignment_service import require_scenario_action_allowed
+from ..services.scenario_assignment_service import require_scenario_action_allowed
 from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets", "speedaf"])
