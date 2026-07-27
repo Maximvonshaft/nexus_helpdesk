@@ -72,15 +72,33 @@ def _crypto() -> SecretCryptoService:
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+            detail="whatsapp_secret_runtime_unavailable",
         ) from exc
 
 
+def _safe_code(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code[:120]
+    if exc.args and isinstance(exc.args[0], str):
+        value = exc.args[0]
+        if value and all(char.isalnum() or char in "_.:-," for char in value):
+            return value[:120]
+    return "whatsapp_operation_failed"
+
+
 def _http_error(exc: Exception) -> HTTPException:
+    code = _safe_code(exc)
     if isinstance(exc, WhatsAppActivationError):
-        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": code, "retryable": False},
+        )
     if isinstance(exc, WhatsAppConnectionError):
-        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": code, "retryable": False},
+        )
     if isinstance(exc, (BaileysSidecarError, MetaCloudTransportError)):
         return HTTPException(
             status_code=(
@@ -88,15 +106,11 @@ def _http_error(exc: Exception) -> HTTPException:
                 if exc.retryable
                 else status.HTTP_400_BAD_REQUEST
             ),
-            detail={
-                "error_code": exc.code,
-                "message": exc.message,
-                "retryable": exc.retryable,
-            },
+            detail={"error_code": exc.code, "retryable": exc.retryable},
         )
     return HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="whatsapp_operation_failed",
+        detail={"error_code": "whatsapp_operation_failed", "retryable": False},
     )
 
 
@@ -212,7 +226,7 @@ def _validate_market(
     if active_market_for_actor(db, tenant_id, market_id) is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Market not found or inactive",
+            detail="market_not_found_or_inactive",
         )
 
 
@@ -233,10 +247,9 @@ def _probe(connection: WhatsAppConnection) -> dict[str, Any]:
             "status",
             method="GET",
         ).as_dict()
-    access_token, _app_secret, _verify_token = _meta_secrets(connection)
     return probe_meta_cloud_connection(
         connection,
-        access_token=access_token,
+        access_token=_meta_secrets(connection)[0],
     ).as_dict()
 
 
@@ -282,7 +295,7 @@ def create_whatsapp_connection(
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Channel account already exists",
+            detail="channel_account_already_exists",
         )
     transport = normalize_whatsapp_transport(payload.transport)
     crypto = _crypto() if transport == META_CLOUD_API_TRANSPORT else None
@@ -373,7 +386,7 @@ def update_whatsapp_connection(
     connection = _connection(db, connection_id)
     tenant_id = _tenant_id(db, current_user)
     if connection.tenant_id != tenant_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")
     data = payload.model_dump(exclude_unset=True)
     target_market = data.get("market_id", connection.channel_account.market_id)
     _validate_market(db, tenant_id=tenant_id, market_id=target_market)
@@ -395,30 +408,26 @@ def update_whatsapp_connection(
         ):
             if field in data:
                 setattr(connection, field, data[field])
-        if "access_token" in data:
-            if not crypto:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="access_token applies only to Meta Cloud API",
-                )
-            connection.access_token_encrypted = crypto.encrypt(data["access_token"])
-            connection.access_token_fingerprint = crypto.fingerprint(data["access_token"])
-        if "app_secret" in data:
-            if not crypto:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="app_secret applies only to Meta Cloud API",
-                )
-            connection.app_secret_encrypted = crypto.encrypt(data["app_secret"])
-        if "verify_token" in data:
-            if not crypto:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="verify_token applies only to Meta Cloud API",
-                )
-            connection.verify_token_encrypted = crypto.encrypt(data["verify_token"])
+        for secret_field, model_field in (
+            ("access_token", "access_token_encrypted"),
+            ("app_secret", "app_secret_encrypted"),
+            ("verify_token", "verify_token_encrypted"),
+        ):
+            if secret_field in data:
+                if not crypto:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{secret_field}_meta_only",
+                    )
+                setattr(connection, model_field, crypto.encrypt(data[secret_field]))
+                if secret_field == "access_token":
+                    connection.access_token_fingerprint = crypto.fingerprint(
+                        data[secret_field]
+                    )
         connection.updated_by = current_user.id
         connection.desired_generation += 1
+        connection.desired_state = "disabled"
+        connection.channel_account.is_active = False
         reset_verification(connection)
         validate_whatsapp_connection_configuration(connection)
         db.flush()
@@ -446,54 +455,77 @@ def start_whatsapp_binding(
     try:
         with managed_session(db):
             before = connection_audit_snapshot(connection)
+            connection.desired_state = "binding"
+            connection.channel_account.is_active = False
             connection.desired_generation += 1
+            connection.updated_by = current_user.id
             reset_verification(connection)
-            if connection.transport == BAILEYS_SIDECAR_TRANSPORT:
-                snapshot = call_baileys_account_action(
-                    connection,
-                    "start",
-                    method="POST",
-                )
-                connection.session_generation = max(
-                    connection.session_generation,
-                    snapshot.generation,
-                )
-                apply_observed_snapshot(connection, snapshot.as_dict())
-                qr_status = snapshot.qr_status
-                qr_data_url = snapshot.qr_data_url
-            else:
-                access_token, _app_secret, verify_token = _meta_secrets(connection)
-                settings = get_whatsapp_runtime_settings()
-                callback_url = (
-                    f"{settings.meta_webhook_public_url.rstrip('/')}/"
-                    f"api/integrations/whatsapp/meta/{connection.id}/webhook"
-                    if settings.meta_webhook_public_url
-                    else None
-                )
-                subscribe_meta_waba(
-                    connection,
-                    access_token=access_token,
-                    callback_url=callback_url,
-                    verify_token=verify_token if callback_url else None,
-                )
-                snapshot = probe_meta_cloud_connection(
-                    connection,
-                    access_token=access_token,
-                )
-                apply_observed_snapshot(connection, snapshot.as_dict())
-                qr_status = None
-                qr_data_url = None
             db.flush()
             log_admin_audit(
                 db,
                 actor_id=current_user.id,
-                action="whatsapp_connection.binding_start",
+                action="whatsapp_connection.binding_requested",
                 target_type="whatsapp_connection",
                 target_id=connection.id,
                 old_value=before,
                 new_value=connection_audit_snapshot(connection),
             )
+        if connection.transport == BAILEYS_SIDECAR_TRANSPORT:
+            snapshot = call_baileys_account_action(
+                connection,
+                "start",
+                method="POST",
+            )
+            qr_status = snapshot.qr_status
+            qr_data_url = snapshot.qr_data_url
+        else:
+            access_token, _app_secret, verify_token = _meta_secrets(connection)
+            settings = get_whatsapp_runtime_settings()
+            callback_url = (
+                f"{settings.meta_webhook_public_url.rstrip('/')}/"
+                f"api/integrations/whatsapp/meta/{connection.id}/webhook"
+                if settings.meta_webhook_public_url
+                else None
+            )
+            subscribe_meta_waba(
+                connection,
+                access_token=access_token,
+                callback_url=callback_url,
+                verify_token=verify_token if callback_url else None,
+            )
+            snapshot = probe_meta_cloud_connection(
+                connection,
+                access_token=access_token,
+            )
+            qr_status = None
+            qr_data_url = None
+        with managed_session(db):
+            before_observed = connection_audit_snapshot(connection)
+            if connection.transport == BAILEYS_SIDECAR_TRANSPORT:
+                connection.session_generation = max(
+                    connection.session_generation,
+                    snapshot.generation,
+                )
+                apply_observed_snapshot(connection, snapshot.as_dict())
+            else:
+                apply_observed_snapshot(connection, snapshot.as_dict())
+            db.flush()
+            log_admin_audit(
+                db,
+                actor_id=current_user.id,
+                action="whatsapp_connection.binding_observed",
+                target_type="whatsapp_connection",
+                target_id=connection.id,
+                old_value=before_observed,
+                new_value=connection_audit_snapshot(connection),
+            )
     except Exception as exc:
+        with managed_session(db):
+            connection.last_error_code = _safe_code(exc)
+            connection.last_error_message = _safe_code(exc)
+            connection.last_probe_status = "failed"
+            connection.last_probe_at = utc_now()
+            db.flush()
         raise _http_error(exc) from exc
     return _binding_status(
         connection,
@@ -514,7 +546,7 @@ def get_whatsapp_binding_qr(
     if connection.transport != BAILEYS_SIDECAR_TRANSPORT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="QR binding applies only to Baileys linked-device transport",
+            detail="baileys_qr_required",
         )
     try:
         snapshot = call_baileys_account_action(
@@ -548,7 +580,7 @@ def request_whatsapp_pairing_code(
     if connection.transport != BAILEYS_SIDECAR_TRANSPORT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Pairing code applies only to Baileys linked-device transport",
+            detail="baileys_pairing_code_required",
         )
     try:
         result = request_baileys_pairing_code(
@@ -569,14 +601,16 @@ def logout_whatsapp_connection(
     ensure_can_manage_channel_accounts(current_user, db)
     connection = _connection(db, connection_id)
     try:
+        snapshot = None
+        if connection.transport == BAILEYS_SIDECAR_TRANSPORT:
+            snapshot = call_baileys_account_action(
+                connection,
+                "logout",
+                method="POST",
+            )
         with managed_session(db):
             before = connection_audit_snapshot(connection)
-            if connection.transport == BAILEYS_SIDECAR_TRANSPORT:
-                snapshot = call_baileys_account_action(
-                    connection,
-                    "logout",
-                    method="POST",
-                )
+            if snapshot is not None:
                 apply_observed_snapshot(connection, snapshot.as_dict())
                 connection.session_generation += 1
             else:
@@ -648,8 +682,8 @@ def probe_whatsapp_connection(
         with managed_session(db):
             connection.last_probe_at = utc_now()
             connection.last_probe_status = "failed"
-            connection.last_error_code = getattr(exc, "code", type(exc).__name__)
-            connection.last_error_message = getattr(exc, "message", str(exc))[:1000]
+            connection.last_error_code = _safe_code(exc)
+            connection.last_error_message = _safe_code(exc)
             db.flush()
         raise _http_error(exc) from exc
     return _binding_status(connection)
@@ -700,7 +734,7 @@ def subscribe_whatsapp_meta_webhook(
     if connection.transport != META_CLOUD_API_TRANSPORT:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Meta subscription applies only to Meta Cloud API transport",
+            detail="meta_transport_required",
         )
     try:
         access_token, _app_secret, verify_token = _meta_secrets(connection)
