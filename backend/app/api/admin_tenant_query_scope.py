@@ -46,7 +46,9 @@ _ADMIN_TENANT_KEY: ContextVar[str | None | object] = ContextVar(
     default=_UNSET,
 )
 _EMAIL_ACCOUNT_COLLECTION = "/api/admin/outbound-email/accounts"
-_EMAIL_ACCOUNT_TARGET = re.compile(r"^/api/admin/outbound-email/accounts/\d+(?:/.*)?$")
+_EMAIL_ACCOUNT_TARGET = re.compile(
+    r"^/api/admin/outbound-email/accounts/\d+(?:/.*)?$"
+)
 
 
 def _tenant_expression(column, tenant_id: int | None):
@@ -67,6 +69,16 @@ def _tenant_key_scope(tenant_key: str | None, column):
     return column == tenant_key if tenant_key is not None else false()
 
 
+def _background_job_scope(tenant_id: int | None):
+    if tenant_id is None:
+        return (
+            BackgroundJobScope.scope_type == "platform"
+        ) & BackgroundJobScope.tenant_id.is_(None)
+    return (
+        BackgroundJobScope.scope_type == "tenant"
+    ) & (BackgroundJobScope.tenant_id == tenant_id)
+
+
 @event.listens_for(Session, "do_orm_execute")
 def _apply_admin_tenant_criteria(execute_state) -> None:  # noqa: ANN001
     tenant_id = _ADMIN_TENANT_ID.get()
@@ -80,19 +92,26 @@ def _apply_admin_tenant_criteria(execute_state) -> None:  # noqa: ANN001
     assert tenant_id is None or isinstance(tenant_id, int)
     assert tenant_key is None or isinstance(tenant_key, str)
 
-    user_ids = select(User.id).where(_tenant_expression(User.tenant_id, tenant_id))
-    market_ids = select(Market.id).where(_tenant_expression(Market.tenant_id, tenant_id))
-    ticket_ids = select(Ticket.id).where(_tenant_expression(Ticket.tenant_id, tenant_id))
+    user_ids = select(User.id).where(
+        _tenant_expression(User.tenant_id, tenant_id)
+    )
+    market_ids = select(Market.id).where(
+        _tenant_expression(Market.tenant_id, tenant_id)
+    )
+    ticket_ids = select(Ticket.id).where(
+        _tenant_expression(Ticket.tenant_id, tenant_id)
+    )
     conversation_ids = select(WebchatConversation.id).where(
         _tenant_key_scope(tenant_key, WebchatConversation.tenant_key)
     )
-    job_ids = select(BackgroundJobScope.job_id).where(
-        BackgroundJobScope.scope_type == "tenant",
-        _tenant_expression(BackgroundJobScope.tenant_id, tenant_id),
-    )
+    job_scope = _background_job_scope(tenant_id)
+    job_ids = select(BackgroundJobScope.job_id).where(job_scope)
 
     email_account_scope = OutboundEmailAccount.market_id.in_(market_ids)
-    channel_account_scope = _tenant_expression(ChannelAccount.tenant_id, tenant_id)
+    channel_account_scope = _tenant_expression(
+        ChannelAccount.tenant_id,
+        tenant_id,
+    )
     bulletin_scope = MarketBulletin.market_id.in_(market_ids)
     ai_config_scope = AIConfigResource.market_id.in_(market_ids)
     if tenant_id is None:
@@ -100,14 +119,22 @@ def _apply_admin_tenant_criteria(execute_state) -> None:  # noqa: ANN001
             OutboundEmailAccount.market_id.is_(None),
             email_account_scope,
         )
-        bulletin_scope = or_(MarketBulletin.market_id.is_(None), bulletin_scope)
-        ai_config_scope = or_(AIConfigResource.market_id.is_(None), ai_config_scope)
+        bulletin_scope = or_(
+            MarketBulletin.market_id.is_(None),
+            bulletin_scope,
+        )
+        ai_config_scope = or_(
+            AIConfigResource.market_id.is_(None),
+            ai_config_scope,
+        )
 
     operator_task_scope = or_(
         OperatorTask.ticket_id.in_(ticket_ids),
         OperatorTask.webchat_conversation_id.in_(conversation_ids),
     )
-    handoff_scope = WebchatHandoffRequest.conversation_id.in_(conversation_ids)
+    handoff_scope = WebchatHandoffRequest.conversation_id.in_(
+        conversation_ids
+    )
     ai_config_ids = select(AIConfigResource.id).where(ai_config_scope)
 
     execute_state.statement = execute_state.statement.options(
@@ -183,12 +210,15 @@ def _apply_admin_tenant_criteria(execute_state) -> None:  # noqa: ANN001
         ),
         with_loader_criteria(
             OperatorQueueScopeGrant,
-            _tenant_key_scope(tenant_key, OperatorQueueScopeGrant.tenant_key),
+            _tenant_key_scope(
+                tenant_key,
+                OperatorQueueScopeGrant.tenant_key,
+            ),
             include_aliases=True,
         ),
         with_loader_criteria(
             BackgroundJobScope,
-            _tenant_expression(BackgroundJobScope.tenant_id, tenant_id),
+            job_scope,
             include_aliases=True,
         ),
         with_loader_criteria(
@@ -218,9 +248,13 @@ def _stamp_tenant_owned(resource: Any, tenant_id: int | None) -> None:
         return
     resource.tenant_id = tenant_id
     if hasattr(resource, "tenant_assignment_source"):
-        resource.tenant_assignment_source = RUNTIME_TENANT_ASSIGNMENT_SOURCE
+        resource.tenant_assignment_source = (
+            RUNTIME_TENANT_ASSIGNMENT_SOURCE
+        )
     if hasattr(resource, "tenant_assignment_version"):
-        resource.tenant_assignment_version = RUNTIME_TENANT_ASSIGNMENT_VERSION
+        resource.tenant_assignment_version = (
+            RUNTIME_TENANT_ASSIGNMENT_VERSION
+        )
 
 
 def _require_market(
@@ -238,7 +272,11 @@ def _require_market(
             )
         return None
     market = session.get(Market, int(market_id))
-    if market is None or market.tenant_id != tenant_id or not market.is_active:
+    if (
+        market is None
+        or market.tenant_id != tenant_id
+        or not market.is_active
+    ):
         raise _scope_error(
             f"{resource_name} Market is missing, inactive or outside the authenticated Tenant"
         )
@@ -256,7 +294,9 @@ def _validate_admin_write(
     if isinstance(resource, User) and resource.team_id is not None:
         team = session.get(Team, int(resource.team_id))
         if team is None or team.tenant_id != tenant_id:
-            raise _scope_error("User Team is outside the authenticated Tenant")
+            raise _scope_error(
+                "User Team is outside the authenticated Tenant"
+            )
 
     if isinstance(resource, Team):
         _require_market(
@@ -363,7 +403,11 @@ async def enforce_admin_tenant_query_scope(
     """
 
     tenant_id = actor_tenant_id(db, current_user)
-    tenant_key = tenant_key_for_id(db, tenant_id) if tenant_id is not None else None
+    tenant_key = (
+        tenant_key_for_id(db, tenant_id)
+        if tenant_id is not None
+        else None
+    )
     if _is_email_account_write(request):
         payload = await _payload(request)
         market_present = "market_id" in payload
@@ -372,17 +416,25 @@ async def enforce_admin_tenant_query_scope(
             request.method.upper() == "POST"
             and request.url.path == _EMAIL_ACCOUNT_COLLECTION
         )
-        if creating_account and tenant_id is not None and not market_present:
+        if (
+            creating_account
+            and tenant_id is not None
+            and not market_present
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="market_id is required for a tenant-bound email account",
+                detail=(
+                    "market_id is required for a tenant-bound email account"
+                ),
             )
         if market_present:
             if market_id is None:
                 if tenant_id is not None:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="market_id is required for a tenant-bound email account",
+                        detail=(
+                            "market_id is required for a tenant-bound email account"
+                        ),
                     )
             else:
                 try:
@@ -392,13 +444,23 @@ async def enforce_admin_tenant_query_scope(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Invalid market_id",
                     ) from exc
-                if active_market_for_actor(db, tenant_id, normalized_market_id) is None:
+                if (
+                    active_market_for_actor(
+                        db,
+                        tenant_id,
+                        normalized_market_id,
+                    )
+                    is None
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Market not found or inactive",
                     )
 
-    tenant_id_token, tenant_key_token = _set_scope(tenant_id, tenant_key)
+    tenant_id_token, tenant_key_token = _set_scope(
+        tenant_id,
+        tenant_key,
+    )
     try:
         yield
     finally:
