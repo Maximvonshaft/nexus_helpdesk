@@ -37,8 +37,14 @@ test('mobile Drawer exposes live controls while their runtimes remain mounted wh
   let agentStateReads = 0
   page.on('request', (request) => {
     const url = new URL(request.url())
-    if (request.method() === 'GET' && url.pathname === '/api/webchat/admin/voice/sessions') voicePolls += 1
-    if (request.method() === 'GET' && url.pathname === '/api/operator/agent-state') agentStateReads += 1
+    if (
+      request.method() === 'GET'
+      && url.pathname === '/api/webchat/admin/voice/sessions'
+    ) voicePolls += 1
+    if (
+      request.method() === 'GET'
+      && url.pathname === '/api/operator/agent-state'
+    ) agentStateReads += 1
   })
   await mockResponsiveConsole(page)
   await page.goto('/workspace')
@@ -105,7 +111,7 @@ test('incoming voice dialog remains active with the mobile Drawer closed', async
   const dialog = page.getByRole('dialog', { name: '新的语音来电' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Mobile caller')).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '接听通话' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '打开通话' })).toBeVisible()
   await expect(dialog.locator('[aria-live="polite"]')).toHaveCount(0)
 })
 
@@ -130,5 +136,7 @@ test('200 percent text enlargement preserves navigation and required actions', a
 
   await expect(page.getByRole('button', { name: '打开主导航' })).toBeVisible()
   await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expect.poll(
+    () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true)
 })
