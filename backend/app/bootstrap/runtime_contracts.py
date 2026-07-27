@@ -4,6 +4,9 @@ from ..services.background_job_scope import install_background_job_scope_events
 from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
 )
+from ..services.scenario_assignment_events import (
+    install_ticket_scenario_assignment_events,
+)
 
 _INSTALLED = False
 
@@ -16,4 +19,5 @@ def register_runtime_contracts() -> None:
         return
     install_background_job_scope_events()
     install_processing_purpose_events()
+    install_ticket_scenario_assignment_events()
     _INSTALLED = True
