@@ -310,6 +310,154 @@ def _rebuild_sla_after_reclassification(
     }
 
 
+def _refresh_handoff_after_reclassification(
+    db: Session,
+    *,
+    ticket: Ticket,
+    actor_id: int | None,
+    now: datetime,
+) -> dict[str, Any] | None:
+    from ..operator_models import OperatorTask
+    from ..voice_models import VoiceRoutingOffer, WebchatVoiceSession
+    from ..webchat_models import WebchatConversation, WebchatHandoffRequest
+    from .handoff_routing_policy import (
+        build_handoff_routing_policy,
+        persist_handoff_routing_policy,
+        routing_projection,
+        start_next_routing_generation,
+    )
+    from .operator_queue import HANDOFF_PROJECTION_SOURCE
+    from .webchat_ai_turn_service import safe_write_webchat_event
+
+    request_query = db.query(WebchatHandoffRequest).filter(
+        WebchatHandoffRequest.ticket_id == ticket.id,
+        WebchatHandoffRequest.status.in_(["requested", "accepted"]),
+    )
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        request_query = request_query.with_for_update()
+    request_row = request_query.order_by(WebchatHandoffRequest.id.desc()).first()
+    if request_row is None:
+        return None
+    conversation = db.get(WebchatConversation, request_row.conversation_id)
+    if conversation is None:
+        raise TicketScenarioAssignmentError("scenario_handoff_conversation_missing")
+    active_voice = (
+        db.query(WebchatVoiceSession)
+        .filter(
+            WebchatVoiceSession.handoff_request_id == request_row.id,
+            WebchatVoiceSession.status.in_(["accepted", "active"]),
+        )
+        .first()
+    )
+    if active_voice is not None:
+        raise TicketScenarioAssignmentError(
+            "scenario_reclassification_blocked_by_active_voice"
+        )
+
+    previous_agent_id = request_row.assigned_agent_id
+    old_generation = request_row.routing_generation
+    request_row.status = "requested"
+    request_row.assigned_agent_id = None
+    request_row.accepted_by_user_id = None
+    request_row.released_at = now
+    request_row.decision_note = "scenario_reclassified"
+    request_row.lock_version += 1
+    start_next_routing_generation(
+        request_row,
+        reason_code="scenario_reclassified",
+    )
+    policy = build_handoff_routing_policy(
+        db,
+        conversation=conversation,
+        ticket=ticket,
+    )
+    persist_handoff_routing_policy(request_row, policy)
+
+    db.query(VoiceRoutingOffer).filter(
+        VoiceRoutingOffer.handoff_request_id == request_row.id,
+        VoiceRoutingOffer.status == "offered",
+    ).update(
+        {
+            VoiceRoutingOffer.status: "cancelled",
+            VoiceRoutingOffer.cancelled_at: now,
+            VoiceRoutingOffer.decline_reason: "scenario_reclassified",
+            VoiceRoutingOffer.updated_at: now,
+        },
+        synchronize_session=False,
+    )
+    conversation.current_handoff_request_id = request_row.id
+    conversation.handoff_status = "requested"
+    conversation.active_agent_id = None
+    conversation.ai_suspended = True
+    conversation.ai_suspended_at = conversation.ai_suspended_at or now
+    conversation.ai_suspended_by = actor_id
+    conversation.ai_suspended_reason = "scenario_reclassified"
+    conversation.takeover_mode = None
+    conversation.updated_at = now
+
+    task = (
+        db.query(OperatorTask)
+        .filter(
+            OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
+            OperatorTask.source_id == str(request_row.id),
+            OperatorTask.task_type == "handoff",
+            OperatorTask.status.notin_(
+                [
+                    "resolved",
+                    "dropped",
+                    "replayed",
+                    "replay_failed",
+                    "cancelled",
+                ]
+            ),
+        )
+        .order_by(OperatorTask.id.desc())
+        .first()
+    )
+    if task is not None:
+        task.status = "pending"
+        task.assignee_id = None
+        task.priority = policy.priority
+        task.source_version = request_row.lock_version
+        task.reason_code = "scenario_reclassified"
+        task.updated_at = now
+
+    transition = {
+        "handoff_request_id": request_row.id,
+        "previous_agent_id": previous_agent_id,
+        "old_routing_generation": old_generation,
+        "new_routing_generation": request_row.routing_generation,
+        "routing": routing_projection(request_row),
+    }
+    safe_write_webchat_event(
+        db,
+        conversation_id=conversation.id,
+        ticket_id=ticket.id,
+        event_type="handoff.scenario_reclassified",
+        payload=transition,
+    )
+    db.flush()
+
+    # Re-enter the same canonical routing command; no second reassignment path.
+    from .agent_routing_service import request_handoff
+
+    request_handoff(
+        db,
+        conversation=conversation,
+        source=request_row.source,
+        trigger_type=request_row.trigger_type,
+        reason_code=request_row.reason_code,
+        reason_text=request_row.reason_text,
+        recommended_agent_action=request_row.recommended_agent_action,
+        requested_by_actor_type="system",
+        requested_by_user_id=actor_id,
+    )
+    transition["routing"] = routing_projection(request_row)
+    transition["status"] = request_row.status
+    transition["assigned_agent_id"] = request_row.assigned_agent_id
+    return transition
+
+
 def assign_ticket_scenario(
     db: Session,
     *,
@@ -330,6 +478,7 @@ def assign_ticket_scenario(
     existing = db.get(TicketScenarioAssignment, ticket.id)
     old_payload: dict[str, Any] | None = None
     sla_transition: dict[str, Any] | None = None
+    handoff_transition: dict[str, Any] | None = None
     if existing is None:
         assignment = TicketScenarioAssignment(
             ticket_id=ticket.id,
@@ -393,6 +542,12 @@ def assign_ticket_scenario(
                 actor_id=actor_id,
             ),
         }
+        handoff_transition = _refresh_handoff_after_reclassification(
+            db,
+            ticket=ticket,
+            actor_id=actor_id,
+            now=now,
+        )
 
     db.flush()
     event_payload = {
@@ -406,6 +561,7 @@ def assign_ticket_scenario(
         "assignment_reason": assignment.assignment_reason,
         "old_assignment": old_payload,
         "sla_transition": sla_transition,
+        "handoff_transition": handoff_transition,
         "contains_payloads": False,
     }
     db.add(
