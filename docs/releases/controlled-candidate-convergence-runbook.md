@@ -104,7 +104,7 @@ Start from `deploy/.env.controlled.example` or the local-PostgreSQL example.
 
 Replace every placeholder with a real value. Required host facts include:
 
-- six distinct PostgreSQL service identities;
+- five distinct PostgreSQL service identities;
 - application signing and metrics secrets;
 - approved public origins and proxy addresses;
 - uploads and backup paths;
@@ -142,9 +142,13 @@ docker compose \
   --env-file deploy/.env.controlled \
   -f deploy/docker-compose.controlled.yml \
   up -d migrate-controlled app-controlled \
-    worker-background-controlled worker-webchat-ai-controlled \
-    worker-handoff-snapshot-controlled
+    worker-outbound-controlled worker-background-controlled \
+    worker-webchat-ai-controlled
 ```
+
+Handoff snapshots are durable BackgroundJobs and are consumed only by
+`worker-background-controlled`; there is no dedicated Snapshot process, queue,
+service identity or database role.
 
 Verify:
 
