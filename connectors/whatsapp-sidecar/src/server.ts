@@ -165,11 +165,10 @@ export function createSidecarServer(
         return;
       }
       if (req.method === "GET" && url.pathname === "/readyz") {
-        sendJson(res, 200, {
-          status: "ready",
-          mode: config.mode,
-          desired_accounts: registry.desiredAccountCount(),
-          pending_callbacks: registry.backend.pendingCallbacks()
+        const readiness = registry.readiness();
+        sendJson(res, readiness.ready ? 200 : 503, {
+          ...readiness,
+          mode: config.mode
         });
         return;
       }
