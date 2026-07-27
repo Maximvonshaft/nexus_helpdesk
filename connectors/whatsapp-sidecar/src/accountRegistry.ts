@@ -8,6 +8,7 @@ import type {
   DesiredAccount,
   PairingCodeRequest,
   PairingCodeResult,
+  SendMediaRequest,
   SendRequest,
   SendResult,
   SidecarConfig,
@@ -29,6 +30,7 @@ export class AccountRegistry {
             new SessionStore(config.sessionRoot),
             logger,
             async (message) => this.backend.postInbound(message),
+            async (media) => this.backend.postMedia(media),
             async (accountId, snapshot) => this.backend.postStatus(accountId, snapshot),
             config
           )
@@ -75,17 +77,17 @@ export class AccountRegistry {
 
   async send(accountId: string, request: SendRequest): Promise<SendResult> {
     const result = await this.connector.send(accountId, request);
-    await this.backend.postDelivery(accountId, {
-      account_id: accountId,
-      idempotency_key: request.idempotency_key,
-      provider_message_id: result.provider_message_id || null,
-      status: result.status,
-      sent_at: result.sent_at || null,
-      error_code: result.error_code || null,
-      error_message: result.error_message || null,
-      retryable: result.retryable ?? null,
-      metadata: request.metadata || {}
-    });
+    await this.postDelivery(accountId, request, result);
+    return result;
+  }
+
+  async sendMedia(
+    accountId: string,
+    request: SendMediaRequest,
+    content: Buffer
+  ): Promise<SendResult> {
+    const result = await this.connector.sendMedia(accountId, request, content);
+    await this.postDelivery(accountId, request, result);
     return result;
   }
 
@@ -120,5 +122,23 @@ export class AccountRegistry {
 
   desiredAccountCount(): number {
     return this.desiredAccounts.size;
+  }
+
+  private async postDelivery(
+    accountId: string,
+    request: SendRequest | SendMediaRequest,
+    result: SendResult
+  ): Promise<void> {
+    await this.backend.postDelivery(accountId, {
+      account_id: accountId,
+      idempotency_key: request.idempotency_key,
+      provider_message_id: result.provider_message_id || null,
+      status: result.status,
+      sent_at: result.sent_at || null,
+      error_code: result.error_code || null,
+      error_message: result.error_message || null,
+      retryable: result.retryable ?? null,
+      metadata: request.metadata || {}
+    });
   }
 }
