@@ -51,6 +51,7 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_sla_runtime",
     "app.models_privacy_runtime",
     "app.models_job_scope",
+    "app.models_channel_intake",
 )
 
 # There are currently no optional production model plugins. Future plugins must
@@ -80,6 +81,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_sla_runtime": "ticket_sla_targets",
     "app.models_privacy_runtime": "data_processing_restrictions",
     "app.models_job_scope": "background_job_scopes",
+    "app.models_channel_intake": "customer_identity_bindings",
 }
 
 
