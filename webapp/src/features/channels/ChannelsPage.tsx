@@ -35,6 +35,7 @@ import { supportApi } from '@/lib/supportApi'
 import { channelPresentation, healthPresentation } from '@/lib/supportStatus'
 import type { ChannelOnboardingTask } from '@/lib/channelControlTypes'
 import type { ChannelAccount } from '@/lib/types'
+import { MetaEmbeddedSignupPanel } from './MetaEmbeddedSignupPanel'
 import { TelephonyConfigurationPanel } from './TelephonyConfigurationPanel'
 import { WhatsAppConfigurationPanel } from './WhatsAppConfigurationPanel'
 
@@ -212,6 +213,7 @@ export function ChannelsPage() {
         </OperatorTechnicalDisclosure>
       </Paper>
 
+      <MetaEmbeddedSignupPanel />
       <WhatsAppConfigurationPanel />
       <TelephonyConfigurationPanel accounts={activeAccounts} />
 
