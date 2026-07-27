@@ -16,6 +16,7 @@ os.environ.setdefault(
     "sqlite:////tmp/audit-838-r4-p0.db",
 )
 
+from app.api.operator_agent_state import _managed_operator
 from app.db import Base
 from app.enums import (
     JobStatus,
@@ -51,8 +52,8 @@ from app.services.email_mailbox_polling_service import (
     _resolve_ticket,
     poll_imap_account,
 )
+from app.services.secret_crypto import SecretCryptoService
 from app.services.whatsapp_native_inbound import ingest_whatsapp_native_inbound
-from app.api.operator_agent_state import _managed_operator
 
 register_all_models()
 install_background_job_scope_events()
@@ -153,7 +154,11 @@ def _org(db, tenant: Tenant, suffix: str):
 
 def test_unresolved_and_missing_scope_jobs_are_never_claimed(db_session):
     tenant = _tenant(db_session, "r4-worker")
-    _market, _team, _user, _customer, ticket = _org(db_session, tenant, "WORKER")
+    _market, _team, _user, _customer, ticket = _org(
+        db_session,
+        tenant,
+        "WORKER",
+    )
     executable = BackgroundJob(
         queue_name="speedaf_work_order",
         job_type="speedaf.work_order.create",
@@ -204,7 +209,9 @@ def test_execution_revalidates_scope_against_current_resource_ownership(db_sessi
     tenant_a = _tenant(db_session, "r4-scope-a")
     tenant_b = _tenant(db_session, "r4-scope-b")
     _market_a, _team_a, _user_a, _customer_a, ticket_a = _org(
-        db_session, tenant_a, "SA"
+        db_session,
+        tenant_a,
+        "SA",
     )
     _org(db_session, tenant_b, "SB")
     job = BackgroundJob(
@@ -262,7 +269,11 @@ def test_customer_identity_is_atomic_and_tenant_scoped(db_session):
 
 def test_native_whatsapp_uses_account_tenant_and_conversation_first(db_session):
     tenant = _tenant(db_session, "r4-whatsapp")
-    market, _team, _user, _customer, _ticket = _org(db_session, tenant, "WA")
+    market, _team, _user, _customer, _ticket = _org(
+        db_session,
+        tenant,
+        "WA",
+    )
     account = ChannelAccount(
         provider=SourceChannel.whatsapp.value,
         account_id="r4-wa-account",
@@ -309,10 +320,14 @@ def test_imap_resolution_cannot_cross_tenant(db_session):
     tenant_a = _tenant(db_session, "r4-email-a")
     tenant_b = _tenant(db_session, "r4-email-b")
     market_a, _team_a, user_a, _customer_a, _ticket_a = _org(
-        db_session, tenant_a, "EA"
+        db_session,
+        tenant_a,
+        "EA",
     )
     _market_b, _team_b, _user_b, customer_b, ticket_b = _org(
-        db_session, tenant_b, "EB"
+        db_session,
+        tenant_b,
+        "EB",
     )
     customer_b.email = "customer@example.com"
     customer_b.email_normalized = "customer@example.com"
@@ -321,6 +336,9 @@ def test_imap_resolution_cannot_cross_tenant(db_session):
         host="smtp.invalid.test",
         port=587,
         username="support-a",
+        password_encrypted=SecretCryptoService.outbound_email().encrypt(
+            "smtp-a-secret"
+        ),
         from_address="support-a@example.com",
         security_mode="starttls",
         is_active=True,
@@ -358,12 +376,19 @@ def test_unmatched_imap_message_is_durably_quarantined_before_cursor_advances(
     db_session,
 ):
     tenant = _tenant(db_session, "r4-email-quarantine")
-    market, _team, user, _customer, _ticket = _org(db_session, tenant, "EQ")
+    market, _team, user, _customer, _ticket = _org(
+        db_session,
+        tenant,
+        "EQ",
+    )
     account = OutboundEmailAccount(
         display_name="Quarantine mailbox",
         host="smtp.invalid.test",
         port=587,
         username="support-q",
+        password_encrypted=SecretCryptoService.outbound_email().encrypt(
+            "smtp-q-secret"
+        ),
         from_address="support-q@example.com",
         security_mode="starttls",
         is_active=True,
@@ -421,10 +446,14 @@ def test_managed_operator_lookup_is_tenant_scoped(db_session):
     tenant_a = _tenant(db_session, "r4-operator-a")
     tenant_b = _tenant(db_session, "r4-operator-b")
     _market_a, _team_a, user_a, _customer_a, _ticket_a = _org(
-        db_session, tenant_a, "OA"
+        db_session,
+        tenant_a,
+        "OA",
     )
     _market_b, _team_b, user_b, _customer_b, _ticket_b = _org(
-        db_session, tenant_b, "OB"
+        db_session,
+        tenant_b,
+        "OB",
     )
 
     with pytest.raises(HTTPException) as exc:
