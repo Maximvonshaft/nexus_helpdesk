@@ -23,18 +23,24 @@ _TRANSPORTS = ("meta_cloud_api", "baileys_sidecar")
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
-_FULL_PHONE = re.compile(r"(?<![A-Za-z0-9])\+?[0-9][0-9 ()-]{7,}[0-9](?![A-Za-z0-9])")
+_PLUS_PHONE = re.compile(r"\+[0-9][0-9 ()-]{7,}[0-9]")
+_PLAIN_PHONE = re.compile(r"(?<![0-9])[0-9]{8,16}(?![0-9])")
 _FORBIDDEN_KEYS = {
     "access_token",
     "app_secret",
     "password",
+    "phone",
+    "phone_number",
     "qr",
     "qr_data_url",
+    "recipient_phone",
     "secret",
+    "sender_phone",
+    "target_phone",
     "token",
-    "phone_number",
     "webhook_verify_token",
 }
+_FREE_TEXT_KEYS = {"description", "message", "note", "operator_note", "text"}
 
 
 class EvidenceError(ValueError):
@@ -197,13 +203,15 @@ def _transport_evidence(
     ):
         if restart.get(field) is not True:
             raise EvidenceError(f"{transport}_restart_{field}_unproven")
-    if _nonnegative_int(
+    restart_desired_generation = _nonnegative_int(
         restart.get("desired_generation"),
         f"{transport}_restart_desired_generation_invalid",
-    ) != _nonnegative_int(
+    )
+    restart_observed_generation = _nonnegative_int(
         restart.get("observed_generation"),
         f"{transport}_restart_observed_generation_invalid",
-    ):
+    )
+    if restart_desired_generation != restart_observed_generation:
         raise EvidenceError(f"{transport}_restart_generation_mismatch")
 
     media = value.get("media")
@@ -231,8 +239,8 @@ def _transport_evidence(
             "credentials_persisted": True,
             "listener_active": True,
             "reconnected_without_reauthentication": True,
-            "desired_generation": int(restart["desired_generation"]),
-            "observed_generation": int(restart["observed_generation"]),
+            "desired_generation": restart_desired_generation,
+            "observed_generation": restart_observed_generation,
         },
         "media": media,
     }
@@ -314,20 +322,40 @@ def _media_evidence(transport: str, value: Any) -> dict[str, Any]:
     }
 
 
-def _reject_forbidden_material(value: Any, *, path: str = "root") -> None:
+def _reject_forbidden_material(
+    value: Any,
+    *,
+    path: str = "root",
+    field_name: str | None = None,
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).strip().lower()
-            if normalized in _FORBIDDEN_KEYS or normalized.endswith("_secret") or normalized.endswith("_token"):
+            if (
+                normalized in _FORBIDDEN_KEYS
+                or normalized.endswith("_secret")
+                or normalized.endswith("_token")
+            ):
                 raise EvidenceError(f"forbidden_evidence_field:{path}.{normalized}")
-            _reject_forbidden_material(item, path=f"{path}.{normalized}")
+            _reject_forbidden_material(
+                item,
+                path=f"{path}.{normalized}",
+                field_name=normalized,
+            )
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _reject_forbidden_material(item, path=f"{path}[{index}]")
+            _reject_forbidden_material(
+                item,
+                path=f"{path}[{index}]",
+                field_name=field_name,
+            )
         return
-    if isinstance(value, str) and _FULL_PHONE.search(value):
-        raise EvidenceError(f"full_phone_number_forbidden:{path}")
+    if isinstance(value, str):
+        if _PLUS_PHONE.search(value):
+            raise EvidenceError(f"full_phone_number_forbidden:{path}")
+        if field_name in _FREE_TEXT_KEYS and _PLAIN_PHONE.search(value):
+            raise EvidenceError(f"full_phone_number_forbidden:{path}")
 
 
 def _mapping(value: Any, code: str) -> dict[str, Any]:
@@ -373,7 +401,7 @@ def _digest(value: Any, code: str) -> str:
     normalized = str(value or "").strip().lower()
     if not _SHA256.fullmatch(normalized):
         raise EvidenceError(code)
-    return normalized.removeprefix("sha256:")
+    return "sha256:" + normalized.removeprefix("sha256:")
 
 
 def _timestamp(value: Any, code: str) -> str:
