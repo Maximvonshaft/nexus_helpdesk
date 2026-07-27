@@ -314,32 +314,6 @@ services:
       app-controlled:
         condition: service_healthy
 
-  worker-handoff-snapshot-controlled:
-    <<: *controlled_app
-    restart: unless-stopped
-    environment:
-      <<: *controlled_environment
-      NEXUS_PROCESS_ROLE: worker-handoff-snapshot
-      NEXUS_WORKER_ID: worker-handoff-snapshot-controlled
-      NEXUS_WORKER_QUEUE: handoff-snapshot
-      DATABASE_URL: ${DATABASE_URL_HANDOFF:?set Handoff Worker PostgreSQL URL}
-      METRICS_ENABLED: "false"
-      DB_POOL_SIZE: ${DB_POOL_SIZE_HANDOFF:-2}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW_HANDOFF:-1}
-    volumes:
-      - prometheus-multiproc:/var/run/nexus-prometheus
-    command:
-      - python
-      - scripts/run_worker_supervised.py
-      - --worker-id
-      - worker-handoff-snapshot-controlled
-      - --queue
-      - handoff-snapshot
-    healthcheck: *worker_healthcheck
-    depends_on:
-      app-controlled:
-        condition: service_healthy
-
 networks:
   controlled:
     driver: bridge
