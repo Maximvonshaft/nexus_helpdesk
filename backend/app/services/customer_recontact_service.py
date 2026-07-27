@@ -19,10 +19,88 @@ _TERMINAL_TICKET_STATUSES = frozenset(
 
 
 @dataclass(frozen=True)
+class TicketRecontactResult:
+    ticket_reopened: bool
+    closure_receipt_invalidated: bool
+
+
+@dataclass(frozen=True)
 class CustomerRecontactResult:
     conversation_reopened: bool
     ticket_reopened: bool
     closure_receipt_invalidated: bool
+
+
+def reopen_ticket_from_customer_message(
+    db: Session,
+    *,
+    ticket: Ticket | None,
+    source: str,
+    external_message_id: str,
+    actor_id: int | None = None,
+) -> TicketRecontactResult:
+    """Restore Case responsibility and invalidate stale closure evidence once.
+
+    Every channel adapter calls this command instead of directly mutating a
+    terminal Ticket. The transition is idempotent for an already-open Ticket and
+    keeps closure evidence, reopen count and lifecycle state in one authority.
+    """
+
+    if ticket is None or ticket.status not in _TERMINAL_TICKET_STATUSES:
+        return TicketRecontactResult(
+            ticket_reopened=False,
+            closure_receipt_invalidated=False,
+        )
+
+    now = utc_now()
+    source_value = str(source or "channel_intake").strip()[:80] or "channel_intake"
+    message_identity = str(external_message_id or "").strip()[:180]
+    invalidation = invalidate_latest_closure_receipt(
+        db,
+        ticket_id=ticket.id,
+        actor_id=actor_id,
+        reason=(
+            f"Customer recontact via {source_value}; message identity "
+            f"{message_identity or 'unavailable'}"
+        ),
+    )
+    receipt_invalidated = invalidation is not None
+    previous_status = ticket.status.value
+    ticket.status = TicketStatus.pending_assignment
+    ticket.reopen_count = int(ticket.reopen_count or 0) + 1
+    ticket.closed_at = None
+    ticket.resolved_at = None
+    ticket.resolution_summary = None
+    ticket.conversation_state = ConversationState.reopened_by_customer
+    ticket.updated_at = now
+    if invalidation is None:
+        db.add(
+            TicketEvent(
+                ticket_id=ticket.id,
+                actor_id=actor_id,
+                event_type=EventType.reopened,
+                field_name="customer_recontact",
+                old_value=previous_status,
+                new_value=TicketStatus.pending_assignment.value,
+                note=f"Customer recontact received via {source_value}",
+                payload_json=json.dumps(
+                    {
+                        "schema": "nexus.customer-recontact.v1",
+                        "source": source_value,
+                        "external_message_id": message_identity or None,
+                        "closure_receipt_invalidated": False,
+                        "contains_payloads": False,
+                    },
+                    sort_keys=True,
+                ),
+                created_at=now,
+            )
+        )
+    db.flush()
+    return TicketRecontactResult(
+        ticket_reopened=True,
+        closure_receipt_invalidated=receipt_invalidated,
+    )
 
 
 def reopen_from_customer_message(
@@ -34,17 +112,11 @@ def reopen_from_customer_message(
     source: str,
     external_message_id: str,
 ) -> CustomerRecontactResult:
-    """Apply the sole customer-recontact transition in one transaction.
-
-    Adapters may persist a channel receipt, but they may not directly mutate Case
-    or Conversation lifecycle state. This command restores responsibility,
-    invalidates any prior closure receipt and emits the canonical audit event.
-    """
+    """Apply the sole Conversation + Case customer-recontact transition."""
 
     now = utc_now()
     source_value = str(source or "channel_intake").strip()[:80] or "channel_intake"
     message_identity = str(external_message_id or "").strip()[:180]
-
     conversation_reopened = bool(
         conversation.status != "open"
         or control.closed_at is not None
@@ -60,51 +132,14 @@ def reopen_from_customer_message(
         control.closure_note = None
         control.updated_at = now
 
-    ticket_reopened = bool(ticket is not None and ticket.status in _TERMINAL_TICKET_STATUSES)
-    receipt_invalidated = False
-    if ticket_reopened and ticket is not None:
-        invalidation = invalidate_latest_closure_receipt(
-            db,
-            ticket_id=ticket.id,
-            actor_id=None,
-            reason=(
-                f"Customer recontact via {source_value}; message identity "
-                f"{message_identity or 'unavailable'}"
-            ),
-        )
-        receipt_invalidated = invalidation is not None
-        ticket.status = TicketStatus.pending_assignment
-        ticket.reopen_count = int(ticket.reopen_count or 0) + 1
-        ticket.closed_at = None
-        ticket.resolved_at = None
-        ticket.resolution_summary = None
-        ticket.conversation_state = ConversationState.reopened_by_customer
-        ticket.updated_at = now
-        if invalidation is None:
-            db.add(
-                TicketEvent(
-                    ticket_id=ticket.id,
-                    actor_id=None,
-                    event_type=EventType.reopened,
-                    field_name="customer_recontact",
-                    old_value="terminal",
-                    new_value=TicketStatus.pending_assignment.value,
-                    note=f"Customer recontact received via {source_value}",
-                    payload_json=json.dumps(
-                        {
-                            "schema": "nexus.customer-recontact.v1",
-                            "source": source_value,
-                            "external_message_id": message_identity or None,
-                            "closure_receipt_invalidated": False,
-                            "contains_payloads": False,
-                        },
-                        sort_keys=True,
-                    ),
-                    created_at=now,
-                )
-            )
-
-    if conversation_reopened or ticket_reopened:
+    ticket_result = reopen_ticket_from_customer_message(
+        db,
+        ticket=ticket,
+        source=source_value,
+        external_message_id=message_identity,
+        actor_id=None,
+    )
+    if conversation_reopened or ticket_result.ticket_reopened:
         safe_write_webchat_event(
             db,
             conversation_id=conversation.id,
@@ -113,16 +148,23 @@ def reopen_from_customer_message(
             payload={
                 "source": source_value,
                 "external_message_id": message_identity or None,
-                "ticket_reopened": ticket_reopened,
-                "closure_receipt_invalidated": receipt_invalidated,
+                "ticket_reopened": ticket_result.ticket_reopened,
+                "closure_receipt_invalidated": (
+                    ticket_result.closure_receipt_invalidated
+                ),
             },
         )
     db.flush()
     return CustomerRecontactResult(
         conversation_reopened=conversation_reopened,
-        ticket_reopened=ticket_reopened,
-        closure_receipt_invalidated=receipt_invalidated,
+        ticket_reopened=ticket_result.ticket_reopened,
+        closure_receipt_invalidated=ticket_result.closure_receipt_invalidated,
     )
 
 
-__all__ = ["CustomerRecontactResult", "reopen_from_customer_message"]
+__all__ = [
+    "CustomerRecontactResult",
+    "TicketRecontactResult",
+    "reopen_from_customer_message",
+    "reopen_ticket_from_customer_message",
+]
