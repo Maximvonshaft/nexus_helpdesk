@@ -1,11 +1,23 @@
+import { createHash } from "node:crypto";
 import type { Logger } from "pino";
-import { DurableCallbackOutbox, type CallbackEnvelope } from "./callbackOutbox.js";
+import {
+  DurableCallbackOutbox,
+  type CallbackEnvelope,
+  type CallbackKind
+} from "./callbackOutbox.js";
 import { connectorHeaders } from "./security.js";
+import { assertSafeAccountId } from "./sessionStore.js";
 import type {
   DesiredAccountResponse,
   NormalizedInboundMessage,
   SidecarConfig
 } from "./types.js";
+
+const CALLBACK_PATHS: Record<CallbackKind, string> = {
+  inbound: "/api/integrations/whatsapp/baileys/inbound",
+  status: "/api/integrations/whatsapp/baileys/status",
+  delivery: "/api/integrations/whatsapp/baileys/delivery"
+};
 
 export class BackendClient {
   private readonly outbox: DurableCallbackOutbox;
@@ -15,30 +27,35 @@ export class BackendClient {
     private readonly logger: Logger,
     outbox?: DurableCallbackOutbox
   ) {
-    this.outbox = outbox ?? new DurableCallbackOutbox(config.callbackSpoolRoot, logger);
+    this.outbox = outbox ?? new DurableCallbackOutbox(
+      config.callbackSpoolRoot,
+      logger,
+      config.connectorHmacSecret
+    );
   }
 
   async postInbound(message: NormalizedInboundMessage): Promise<void> {
     this.outbox.enqueue({
-      path: "/api/integrations/whatsapp/baileys/inbound",
+      kind: "inbound",
       accountId: message.account_id,
-      payload: message,
-      dedupeKey: undefined
+      payload: message
     });
     await this.flushCallbacks();
   }
 
   async postStatus(accountId: string, payload: unknown): Promise<void> {
+    const safeAccountId = assertSafeAccountId(accountId);
     this.outbox.enqueue({
-      path: "/api/integrations/whatsapp/baileys/status",
-      accountId,
+      kind: "status",
+      accountId: safeAccountId,
       payload,
-      dedupeKey: `status:${accountId}`
+      dedupeKey: `status:${safeAccountId}`
     });
     await this.flushCallbacks();
   }
 
   async postDelivery(accountId: string, payload: unknown): Promise<void> {
+    const safeAccountId = assertSafeAccountId(accountId);
     const value = payload as {
       idempotency_key?: unknown;
       provider_message_id?: unknown;
@@ -47,12 +64,12 @@ export class BackendClient {
     const identity =
       String(value.idempotency_key || "").trim() ||
       String(value.provider_message_id || "").trim() ||
-      cryptoSafePayloadIdentity(payload);
+      payloadIdentity(payload);
     this.outbox.enqueue({
-      path: "/api/integrations/whatsapp/baileys/delivery",
-      accountId,
+      kind: "delivery",
+      accountId: safeAccountId,
       payload,
-      dedupeKey: `delivery:${accountId}:${identity}:${String(value.status || "")}`
+      dedupeKey: `delivery:${safeAccountId}:${identity}:${String(value.status || "")}`
     });
     await this.flushCallbacks();
   }
@@ -84,7 +101,9 @@ export class BackendClient {
   }
 
   private async sendEnvelope(envelope: CallbackEnvelope): Promise<void> {
-    await this.postDirect(envelope.path, envelope.account_id, envelope.payload);
+    const path = CALLBACK_PATHS[envelope.kind];
+    const accountId = assertSafeAccountId(envelope.account_id);
+    await this.postDirect(path, accountId, envelope.payload);
   }
 
   private async postDirect(
@@ -120,12 +139,8 @@ export class BackendClient {
   }
 }
 
-function cryptoSafePayloadIdentity(payload: unknown): string {
-  const serialized = JSON.stringify(payload);
-  let hash = 2166136261;
-  for (let index = 0; index < serialized.length; index += 1) {
-    hash ^= serialized.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+function payloadIdentity(payload: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
 }
