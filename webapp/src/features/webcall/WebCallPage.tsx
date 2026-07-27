@@ -39,7 +39,9 @@ function readVisitorBootstrap(): VisitorBootstrap | null {
   const raw = window.location.hash.replace(/^#/, '')
   if (!raw) return null
   try {
-    const decoded = decodeURIComponent(escape(window.atob(raw.replace(/-/g, '+').replace(/_/g, '/'))))
+    const decoded = decodeURIComponent(
+      escape(window.atob(raw.replace(/-/g, '+').replace(/_/g, '/'))),
+    )
     const parsed = JSON.parse(decoded) as VisitorBootstrap
     window.history.replaceState(null, '', window.location.pathname)
     return parsed.role === 'visitor' ? parsed : null
@@ -49,7 +51,20 @@ function readVisitorBootstrap(): VisitorBootstrap | null {
 }
 
 function dtmfCode(digit: string) {
-  const map: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '*': 10, '#': 11 }
+  const map: Record<string, number> = {
+    '0': 0,
+    '1': 1,
+    '2': 2,
+    '3': 3,
+    '4': 4,
+    '5': 5,
+    '6': 6,
+    '7': 7,
+    '8': 8,
+    '9': 9,
+    '*': 10,
+    '#': 11,
+  }
   return map[digit]
 }
 
@@ -72,13 +87,16 @@ function providerPhase(command: VoiceCommandRead) {
 export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const roomRef = useRef<Room | null>(null)
   const [bootstrap] = useState(readVisitorBootstrap)
-  const [status, setStatus] = useState('正在建立安全语音连接…')
+  const [status, setStatus] = useState(
+    '准备加入安全语音通话。麦克风将在你确认后启用。',
+  )
   const [error, setError] = useState<string | null>(null)
   const [muted, setMuted] = useState(false)
   const [held, setHeld] = useState(false)
   const [consulting, setConsulting] = useState(false)
   const [digits, setDigits] = useState('')
   const [connected, setConnected] = useState(false)
+  const [joining, setJoining] = useState(false)
   const [transferTarget, setTransferTarget] = useState('')
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
 
@@ -87,9 +105,13 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     const deadline = Date.now() + COMMAND_POLL_TIMEOUT_MS
     while (true) {
       if (current.status === 'succeeded') return current
-      if (current.status === 'failed' || current.status === 'cancelled') throw commandFailure(current)
+      if (current.status === 'failed' || current.status === 'cancelled') {
+        throw commandFailure(current)
+      }
       if (Date.now() >= deadline) {
-        throw new Error('通话操作的 Provider 状态确认超时。系统不会将未确认操作显示为成功，请在通话记录中核对后重试。')
+        throw new Error(
+          '通话操作的 Provider 状态确认超时。系统不会将未确认操作显示为成功，请在通话记录中核对后重试。',
+        )
       }
       await sleep(COMMAND_POLL_INTERVAL_MS)
       try {
@@ -118,6 +140,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     let active = true
     const room = new Room({ adaptiveStream: true, dynacast: true })
     roomRef.current = room
+
     const attach = (track: RemoteTrack) => {
       if (track.kind !== Track.Kind.Audio) return
       const element = track.attach()
@@ -125,44 +148,66 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
       element.setAttribute('data-livekit-remote-audio', 'true')
       document.body.appendChild(element)
     }
-    room.on(RoomEvent.TrackSubscribed, attach)
-    room.on(RoomEvent.Disconnected, () => {
-      if (active) {
-        setConnected(false)
-        setStatus('通话已断开')
-      }
-    })
-
-    const start = async () => {
-      try {
-        const session = bootstrap || await supportApi.acceptVoiceSession(voiceSessionId)
-        if (!session.livekit_url || !session.participant_token) throw new Error('LiveKit 会话凭证不可用')
-        await room.connect(session.livekit_url, session.participant_token)
-        await room.localParticipant.setMicrophoneEnabled(true, {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        })
-        if (!active) return
-        setConnected(true)
-        setStatus(bootstrap ? 'AI/客服语音已连接' : '客户语音已接通')
-      } catch (cause) {
-        if (!active) return
-        setError(cause instanceof Error ? cause.message : '语音连接失败')
-        setStatus('连接失败')
-      }
+    const disconnected = () => {
+      if (!active) return
+      setConnected(false)
+      setStatus('通话已断开')
     }
-    void start()
+
+    room.on(RoomEvent.TrackSubscribed, attach)
+    room.on(RoomEvent.Disconnected, disconnected)
+
     return () => {
       active = false
-      room.disconnect()
-      document.querySelectorAll('[data-livekit-remote-audio=true]').forEach((element) => element.remove())
+      void room.disconnect()
+      document
+        .querySelectorAll('[data-livekit-remote-audio=true]')
+        .forEach((element) => element.remove())
       roomRef.current = null
     }
-  }, [bootstrap, voiceSessionId])
+  }, [])
 
-  const setLocalMicrophoneState = async (nextMuted: boolean, nextHeld: boolean) => {
-    await roomRef.current?.localParticipant.setMicrophoneEnabled(!(nextMuted || nextHeld))
+  const joinCall = useCallback(async () => {
+    if (joining || connected) return
+    const room = roomRef.current
+    if (!room) {
+      setError('语音客户端尚未准备完成')
+      return
+    }
+
+    setJoining(true)
+    setError(null)
+    setStatus('正在申请通话凭证并连接安全语音房间…')
+    try {
+      const session = bootstrap || await supportApi.acceptVoiceSession(voiceSessionId)
+      if (!session.livekit_url || !session.participant_token) {
+        throw new Error('LiveKit 会话凭证不可用')
+      }
+      await room.connect(session.livekit_url, session.participant_token)
+      await room.localParticipant.setMicrophoneEnabled(true, {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      })
+      setConnected(true)
+      setStatus(bootstrap ? 'AI/客服语音已连接' : '客户语音已接通')
+    } catch (cause) {
+      await Promise.resolve(room.disconnect()).catch(() => undefined)
+      setConnected(false)
+      setError(cause instanceof Error ? cause.message : '语音连接失败')
+      setStatus('连接失败，可检查麦克风权限后重试')
+    } finally {
+      setJoining(false)
+    }
+  }, [bootstrap, connected, joining, voiceSessionId])
+
+  const setLocalMicrophoneState = async (
+    nextMuted: boolean,
+    nextHeld: boolean,
+  ) => {
+    await roomRef.current?.localParticipant.setMicrophoneEnabled(
+      !(nextMuted || nextHeld),
+    )
   }
 
   const toggleMute = async () => {
@@ -182,7 +227,11 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     const action = next ? 'hold' : 'resume'
     setError(null)
     setPendingAction(action)
-    setStatus(next ? '正在等待 Provider 确认保持状态…' : '正在等待 Provider 确认恢复状态…')
+    setStatus(
+      next
+        ? '正在等待 Provider 确认保持状态…'
+        : '正在等待 Provider 确认恢复状态…',
+    )
     try {
       await setLocalMicrophoneState(muted, true)
       const result = await recordAction(action)
@@ -229,16 +278,24 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
     if (!target) return
     setPendingAction(action)
     setError(null)
-    setStatus(action === 'cold_transfer' ? '正在执行直接转接…' : '正在呼叫咨询目标，客户保持中…')
+    setStatus(
+      action === 'cold_transfer'
+        ? '正在执行直接转接…'
+        : '正在呼叫咨询目标，客户保持中…',
+    )
     try {
       const result = await recordAction(action, { target })
       if (!result) throw new Error('转接命令不可用')
       if (action === 'warm_transfer') {
-        if (providerPhase(result) !== 'consulting') throw new Error('咨询线路未得到 Provider 确认')
+        if (providerPhase(result) !== 'consulting') {
+          throw new Error('咨询线路未得到 Provider 确认')
+        }
         setConsulting(true)
         setHeld(true)
         await setLocalMicrophoneState(muted, false)
-        setStatus('咨询线路已接通。客户仍保持中，请完成说明后选择完成转接或取消咨询。')
+        setStatus(
+          '咨询线路已接通。客户仍保持中，请完成说明后选择完成转接或取消咨询。',
+        )
       } else {
         setStatus('Provider 已确认直接转接')
       }
@@ -254,7 +311,11 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const finishConsultation = async (action: ConsultationAction) => {
     setPendingAction(action)
     setError(null)
-    setStatus(action === 'warm_transfer_complete' ? '正在完成咨询转接…' : '正在取消咨询并恢复客户通话…')
+    setStatus(
+      action === 'warm_transfer_complete'
+        ? '正在完成咨询转接…'
+        : '正在取消咨询并恢复客户通话…',
+    )
     try {
       const result = await recordAction(action)
       if (!result) throw new Error('咨询控制命令不可用')
@@ -273,7 +334,11 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '咨询操作失败')
-      setStatus(consulting ? '咨询状态未改变，请核对 Provider 状态后重试' : '当前通话状态未改变')
+      setStatus(
+        consulting
+          ? '咨询状态未改变，请核对 Provider 状态后重试'
+          : '当前通话状态未改变',
+      )
     } finally {
       setPendingAction(null)
     }
@@ -282,7 +347,7 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
   const endCall = async () => {
     setError(null)
     setPendingAction(bootstrap ? 'visitor_hangup' : 'hangup')
-    setStatus('正在结束通话…')
+    setStatus(connected ? '正在结束通话…' : '正在取消通话…')
     try {
       if (bootstrap) {
         await supportApi.endPublicVoiceSession(
@@ -297,102 +362,228 @@ export function WebCallPage({ voiceSessionId }: { voiceSessionId: string }) {
       }
       await roomRef.current?.disconnect()
       setConnected(false)
-      setStatus('通话已结束')
+      setStatus(connected ? '通话已结束' : '通话已取消')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '挂断失败')
-      setStatus('挂断未完成，当前通话保持连接')
+      setStatus(
+        connected ? '挂断未完成，当前通话保持连接' : '取消未完成，请重试',
+      )
     } finally {
       setPendingAction(null)
     }
   }
 
   const commandBusy = pendingAction !== null
+  const interactionBusy = joining || commandBusy
 
   return (
-    <Box component="main" sx={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', p: 2, bgcolor: 'background.default' }}>
-      <Paper variant="outlined" sx={{ width: 'min(640px, 100%)', p: { xs: 2, sm: 3 } }}>
+    <Box
+      component="main"
+      sx={{
+        minHeight: '100dvh',
+        display: 'grid',
+        placeItems: 'center',
+        p: 2,
+        bgcolor: 'background.default',
+      }}
+    >
+      <Paper
+        variant="outlined"
+        sx={{ width: 'min(640px, 100%)', p: { xs: 2, sm: 3 } }}
+      >
         <Stack spacing={2.5} sx={{ alignItems: 'stretch' }}>
           <Box>
-            <Typography component="h1" variant="h2">Nexus Live Voice</Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>{status}</Typography>
+            <Typography component="h1" variant="h2">
+              Nexus Live Voice
+            </Typography>
+            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+              {status}
+            </Typography>
           </Box>
-          {(!connected && !error) || commandBusy ? <CircularProgress size={28} /> : null}
+
+          {interactionBusy ? <CircularProgress size={28} /> : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
-          {consulting ? <Alert severity="warning">客户目前处于保持状态，只有完成或取消咨询后才能恢复正常通话。</Alert> : null}
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <Button variant={muted ? 'contained' : 'outlined'} startIcon={muted ? <MicOffRoundedIcon /> : <MicRoundedIcon />} disabled={!connected || commandBusy} onClick={() => void toggleMute()}>
-              {muted ? '取消静音' : '静音'}
-            </Button>
-            {!bootstrap && !consulting ? (
-              <Button variant={held ? 'contained' : 'outlined'} startIcon={held ? <PlayArrowRoundedIcon /> : <PauseRoundedIcon />} disabled={!connected || commandBusy} onClick={() => void toggleHold()}>
-                {pendingAction === 'hold' || pendingAction === 'resume' ? '确认中…' : held ? '恢复通话' : '保持'}
-              </Button>
-            ) : null}
-            <Button color="error" variant="contained" startIcon={<CallEndRoundedIcon />} disabled={!connected || commandBusy} onClick={() => void endCall()}>
-              {pendingAction === 'hangup' || pendingAction === 'visitor_hangup' ? '结束中…' : '结束'}
-            </Button>
-          </Stack>
-          <Stack direction="row" spacing={1}>
-            <TextField fullWidth label="DTMF" value={digits} disabled={commandBusy} slotProps={{ htmlInput: { pattern: '[0-9*#]*', maxLength: 32 } }} onChange={(event) => setDigits(event.target.value.replace(/[^0-9*#]/g, ''))} />
-            <Button variant="outlined" startIcon={<DialpadRoundedIcon />} disabled={!connected || !digits || commandBusy} onClick={() => void sendDigits()}>{pendingAction === 'keypad' ? '发送中…' : '发送'}</Button>
-          </Stack>
-          {!bootstrap ? (
-            <Stack spacing={1}>
-              <Typography component="h2" variant="h4">转接通话</Typography>
-              {!consulting ? (
-                <>
-                  <TextField
-                    fullWidth
-                    label="目标坐席、队列或电话号码"
-                    value={transferTarget}
-                    disabled={commandBusy}
-                    helperText="内部目标使用系统身份；外部目标使用完整电话号码。咨询线路建立不等于转接完成。"
-                    slotProps={{ htmlInput: { maxLength: 240 } }}
-                    onChange={(event) => setTransferTarget(event.target.value)}
-                  />
-                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                    <Button
-                      variant="outlined"
-                      startIcon={<PhoneForwardedRoundedIcon />}
-                      disabled={!connected || !transferTarget.trim() || commandBusy}
-                      onClick={() => void transferCall('cold_transfer')}
-                    >
-                      {pendingAction === 'cold_transfer' ? '执行中…' : '直接转接'}
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      startIcon={<SwapCallsRoundedIcon />}
-                      disabled={!connected || !transferTarget.trim() || commandBusy}
-                      onClick={() => void transferCall('warm_transfer')}
-                    >
-                      {pendingAction === 'warm_transfer' ? '呼叫中…' : '开始咨询'}
-                    </Button>
-                  </Stack>
-                </>
-              ) : (
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                  <Button
-                    variant="contained"
-                    startIcon={<PhoneForwardedRoundedIcon />}
-                    disabled={!connected || commandBusy}
-                    onClick={() => void finishConsultation('warm_transfer_complete')}
-                  >
-                    {pendingAction === 'warm_transfer_complete' ? '完成中…' : '完成转接'}
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    color="inherit"
-                    startIcon={<SwapCallsRoundedIcon />}
-                    disabled={!connected || commandBusy}
-                    onClick={() => void finishConsultation('warm_transfer_cancel')}
-                  >
-                    {pendingAction === 'warm_transfer_cancel' ? '取消中…' : '取消咨询'}
-                  </Button>
-                </Stack>
-              )}
-            </Stack>
+          {consulting ? (
+            <Alert severity="warning">
+              客户目前处于保持状态，只有完成或取消咨询后才能恢复正常通话。
+            </Alert>
           ) : null}
-          <Alert severity="info" variant="outlined">请勿在通话中披露密码、支付验证码或其他高敏感凭证。</Alert>
+
+          {!connected ? (
+            <Stack spacing={1.5}>
+              <Alert severity="info" variant="outlined">
+                页面打开不会访问麦克风。只有点击下方按钮后，系统才会请求麦克风权限并连接 LiveKit。
+              </Alert>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button
+                  variant="contained"
+                  startIcon={<MicRoundedIcon />}
+                  disabled={interactionBusy}
+                  onClick={() => void joinCall()}
+                >
+                  {joining
+                    ? '正在加入…'
+                    : bootstrap
+                      ? '加入通话'
+                      : '接听并加入'}
+                </Button>
+                {bootstrap ? (
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    startIcon={<CallEndRoundedIcon />}
+                    disabled={interactionBusy}
+                    onClick={() => void endCall()}
+                  >
+                    {pendingAction === 'visitor_hangup' ? '取消中…' : '取消通话'}
+                  </Button>
+                ) : null}
+              </Stack>
+            </Stack>
+          ) : (
+            <>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button
+                  variant={muted ? 'contained' : 'outlined'}
+                  startIcon={muted ? <MicOffRoundedIcon /> : <MicRoundedIcon />}
+                  disabled={interactionBusy}
+                  onClick={() => void toggleMute()}
+                >
+                  {muted ? '取消静音' : '静音'}
+                </Button>
+                {!bootstrap && !consulting ? (
+                  <Button
+                    variant={held ? 'contained' : 'outlined'}
+                    startIcon={held ? <PlayArrowRoundedIcon /> : <PauseRoundedIcon />}
+                    disabled={interactionBusy}
+                    onClick={() => void toggleHold()}
+                  >
+                    {pendingAction === 'hold' || pendingAction === 'resume'
+                      ? '确认中…'
+                      : held
+                        ? '恢复通话'
+                        : '保持'}
+                  </Button>
+                ) : null}
+                <Button
+                  color="error"
+                  variant="contained"
+                  startIcon={<CallEndRoundedIcon />}
+                  disabled={interactionBusy}
+                  onClick={() => void endCall()}
+                >
+                  {pendingAction === 'hangup'
+                    || pendingAction === 'visitor_hangup'
+                    ? '结束中…'
+                    : '结束'}
+                </Button>
+              </Stack>
+
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  fullWidth
+                  label="DTMF"
+                  value={digits}
+                  disabled={interactionBusy}
+                  slotProps={{
+                    htmlInput: { pattern: '[0-9*#]*', maxLength: 32 },
+                  }}
+                  onChange={(event) => {
+                    setDigits(event.target.value.replace(/[^0-9*#]/g, ''))
+                  }}
+                />
+                <Button
+                  variant="outlined"
+                  startIcon={<DialpadRoundedIcon />}
+                  disabled={!digits || interactionBusy}
+                  onClick={() => void sendDigits()}
+                >
+                  {pendingAction === 'keypad' ? '发送中…' : '发送'}
+                </Button>
+              </Stack>
+
+              {!bootstrap ? (
+                <Stack spacing={1}>
+                  <Typography component="h2" variant="h4">
+                    转接通话
+                  </Typography>
+                  {!consulting ? (
+                    <>
+                      <TextField
+                        fullWidth
+                        label="目标坐席、队列或电话号码"
+                        value={transferTarget}
+                        disabled={interactionBusy}
+                        helperText="内部目标使用系统身份；外部目标使用完整电话号码。咨询线路建立不等于转接完成。"
+                        slotProps={{ htmlInput: { maxLength: 240 } }}
+                        onChange={(event) => setTransferTarget(event.target.value)}
+                      />
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={1}
+                      >
+                        <Button
+                          variant="outlined"
+                          startIcon={<PhoneForwardedRoundedIcon />}
+                          disabled={!transferTarget.trim() || interactionBusy}
+                          onClick={() => void transferCall('cold_transfer')}
+                        >
+                          {pendingAction === 'cold_transfer'
+                            ? '执行中…'
+                            : '直接转接'}
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<SwapCallsRoundedIcon />}
+                          disabled={!transferTarget.trim() || interactionBusy}
+                          onClick={() => void transferCall('warm_transfer')}
+                        >
+                          {pendingAction === 'warm_transfer'
+                            ? '呼叫中…'
+                            : '开始咨询'}
+                        </Button>
+                      </Stack>
+                    </>
+                  ) : (
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1}
+                    >
+                      <Button
+                        variant="contained"
+                        startIcon={<PhoneForwardedRoundedIcon />}
+                        disabled={interactionBusy}
+                        onClick={() => {
+                          void finishConsultation('warm_transfer_complete')
+                        }}
+                      >
+                        {pendingAction === 'warm_transfer_complete'
+                          ? '完成中…'
+                          : '完成转接'}
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        color="inherit"
+                        startIcon={<SwapCallsRoundedIcon />}
+                        disabled={interactionBusy}
+                        onClick={() => {
+                          void finishConsultation('warm_transfer_cancel')
+                        }}
+                      >
+                        {pendingAction === 'warm_transfer_cancel'
+                          ? '取消中…'
+                          : '取消咨询'}
+                      </Button>
+                    </Stack>
+                  )}
+                </Stack>
+              ) : null}
+            </>
+          )}
+
+          <Alert severity="info" variant="outlined">
+            请勿在通话中披露密码、支付验证码或其他高敏感凭证。
+          </Alert>
         </Stack>
       </Paper>
     </Box>
