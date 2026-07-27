@@ -48,9 +48,12 @@ def _required_evidence_keys(
     outbound = configuration.get("outbound") or {}
     if isinstance(outbound, Mapping) and outbound.get("enabled"):
         required.append("OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL")
+    whatsapp = configuration.get("whatsapp") or {}
+    if isinstance(whatsapp, Mapping) and whatsapp.get("enabled"):
+        required.append("WHATSAPP_PRODUCTION_E2E_EVIDENCE_URL")
     if configuration.get("operations_mode") not in {None, "", "disabled"}:
         required.append("OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL")
-    return tuple(required)
+    return tuple(dict.fromkeys(required))
 
 
 def _candidate_binding(
@@ -173,6 +176,7 @@ def finalize_release_readiness(
     }
     telephony = dict(collectors.get("telephony") or {})
     outbound = dict(configuration.get("outbound") or {})
+    whatsapp = dict(configuration.get("whatsapp") or {})
 
     payload.update(
         {
@@ -196,6 +200,18 @@ def finalize_release_readiness(
                 production_authorized
                 and outbound.get("enabled")
                 and outbound.get("provider") != "disabled"
+            ),
+            "whatsapp_enablement_authorized": bool(
+                production_authorized
+                and whatsapp.get("enabled")
+                and outbound.get("enabled")
+                and outbound.get("provider") != "disabled"
+            ),
+            "whatsapp_media_enablement_authorized": bool(
+                production_authorized
+                and whatsapp.get("enabled")
+                and whatsapp.get("media_enabled")
+                and whatsapp.get("media_scanner") == "clamav"
             ),
             "operations_enablement_authorized": bool(
                 production_authorized
