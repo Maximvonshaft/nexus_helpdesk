@@ -20,7 +20,7 @@ from .data_subject_action_service import (
 PURPOSE_PROVIDER_TOOL_EXECUTION = "provider_tool_execution"
 PURPOSE_ANALYTICS = "analytics"
 PURPOSE_AUTOMATIC_OUTBOUND = "automatic_outbound"
-_EXTERNAL_CHANNELS = frozenset(
+_CUSTOMER_DELIVERY_CHANNELS = frozenset(
     {
         SourceChannel.email.value,
         SourceChannel.whatsapp.value,
@@ -35,8 +35,14 @@ def _purpose_is_blocked(row: DataProcessingRestriction, purpose: str) -> bool:
     normalized = str(purpose or "").strip().lower()
     if not normalized:
         return True
-    allowed = {str(item).strip().lower() for item in (row.allowed_purposes_json or [])}
-    blocked = {str(item).strip().lower() for item in (row.blocked_purposes_json or [])}
+    allowed = {
+        str(item).strip().lower()
+        for item in (row.allowed_purposes_json or [])
+    }
+    blocked = {
+        str(item).strip().lower()
+        for item in (row.blocked_purposes_json or [])
+    }
     return normalized in blocked or normalized not in allowed
 
 
@@ -96,7 +102,12 @@ def ensure_ticket_processing_allowed_fresh(
 
     if ticket_id is None:
         return
-    with Session(bind=engine, autoflush=False, expire_on_commit=False, future=True) as db:
+    with Session(
+        bind=engine,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    ) as db:
         ensure_ticket_processing_allowed(
             db,
             ticket_id=ticket_id,
@@ -134,7 +145,11 @@ def _active_restriction_for_customer(
             for item in (allowed_raw or [])
         }
         if normalized in blocked or normalized not in allowed:
-            return int(restriction_id), list(blocked_raw or []), list(allowed_raw or [])
+            return (
+                int(restriction_id),
+                list(blocked_raw or []),
+                list(allowed_raw or []),
+            )
     return None
 
 
@@ -149,14 +164,18 @@ def _automatic_outbound(target: TicketOutboundMessage) -> bool:
     if provider_status.startswith("privacy_handoff"):
         return False
     return (
-        _channel_value(target) in _EXTERNAL_CHANNELS
+        _channel_value(target) in _CUSTOMER_DELIVERY_CHANNELS
         and target.created_by is None
         and origin not in {"human_agent", "human"}
     )
 
 
 def _outbound_requires_guard(target: TicketOutboundMessage) -> bool:
-    status = target.status.value if hasattr(target.status, "value") else str(target.status)
+    status = (
+        target.status.value
+        if hasattr(target.status, "value")
+        else str(target.status)
+    )
     return status in {
         MessageStatus.pending.value,
         MessageStatus.sent.value,
@@ -211,14 +230,20 @@ def _cancel_pending_restricted_effects(
                 TicketOutboundMessage.ticket_id.in_(ticket_ids),
                 TicketOutboundMessage.status == MessageStatus.pending,
                 TicketOutboundMessage.created_by.is_(None),
-                TicketOutboundMessage.channel.in_(tuple(_EXTERNAL_CHANNELS)),
+                TicketOutboundMessage.channel.in_(
+                    tuple(_CUSTOMER_DELIVERY_CHANNELS)
+                ),
             )
             .values(
                 status=MessageStatus.dead,
                 provider_status="dead:data_processing_restricted",
                 failure_code="data_processing_restricted",
-                failure_reason="Automatic outbound blocked by active processing restriction",
-                error_message="Automatic outbound blocked by active processing restriction",
+                failure_reason=(
+                    "Automatic outbound blocked by active processing restriction"
+                ),
+                error_message=(
+                    "Automatic outbound blocked by active processing restriction"
+                ),
                 next_retry_at=None,
                 locked_at=None,
                 locked_by=None,
@@ -228,7 +253,8 @@ def _cancel_pending_restricted_effects(
     blocked_job_purposes = tuple(
         purpose
         for purpose in blocked
-        if purpose in {
+        if purpose
+        in {
             "automated_ai",
             PURPOSE_PROVIDER_TOOL_EXECUTION,
             PURPOSE_AUTOMATIC_OUTBOUND,
@@ -262,8 +288,16 @@ def install_processing_purpose_events() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    event.listen(TicketOutboundMessage, "before_insert", _guard_outbound_effect)
-    event.listen(TicketOutboundMessage, "before_update", _guard_outbound_effect)
+    event.listen(
+        TicketOutboundMessage,
+        "before_insert",
+        _guard_outbound_effect,
+    )
+    event.listen(
+        TicketOutboundMessage,
+        "before_update",
+        _guard_outbound_effect,
+    )
     event.listen(
         DataProcessingRestriction,
         "after_insert",
