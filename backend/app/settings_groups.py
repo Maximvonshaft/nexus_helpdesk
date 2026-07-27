@@ -34,8 +34,6 @@ class StorageCapabilitySettings:
 class OutboundCapabilitySettings:
     enabled: bool
     provider: str
-    whatsapp_native_enabled: bool
-    whatsapp_dispatch_mode: str
     email_mailbox_sync_enabled: bool
 
 
@@ -67,7 +65,12 @@ def _scheme(value: str) -> str:
 
 
 def capability_groups(settings: Any) -> dict[str, Any]:
-    """Return typed, secret-free capability ownership groups."""
+    """Return typed, secret-free capability ownership groups.
+
+    WhatsApp is intentionally absent: its complete transport and credential
+    authority lives in `whatsapp_runtime_settings`, not generic application
+    settings or outbound capability projection.
+    """
 
     human_call_enabled = bool(
         getattr(settings, "webchat_human_call_enabled", False)
@@ -93,14 +96,16 @@ def capability_groups(settings: Any) -> dict[str, Any]:
             upload_root=str(Path(settings.upload_root)),
             s3_bucket_configured=bool(settings.s3_bucket),
             s3_endpoint_configured=bool(settings.s3_endpoint_url),
-            s3_credentials_configured=bool(settings.s3_access_key and settings.s3_secret_key),
+            s3_credentials_configured=bool(
+                settings.s3_access_key and settings.s3_secret_key
+            ),
         ),
         "outbound": OutboundCapabilitySettings(
             enabled=bool(settings.enable_outbound_dispatch),
             provider=settings.outbound_provider,
-            whatsapp_native_enabled=bool(settings.whatsapp_native_enabled),
-            whatsapp_dispatch_mode=settings.whatsapp_dispatch_mode,
-            email_mailbox_sync_enabled=bool(settings.email_mailbox_sync_enabled),
+            email_mailbox_sync_enabled=bool(
+                settings.email_mailbox_sync_enabled
+            ),
         ),
         "provider": ProviderCapabilitySettings(
             runtime_enabled=bool(settings.provider_runtime_enabled),
@@ -111,7 +116,9 @@ def capability_groups(settings: Any) -> dict[str, Any]:
         "webchat": WebchatCapabilitySettings(
             allowed_origin_count=len(settings.webchat_allowed_origins),
             allow_no_origin=bool(settings.webchat_allow_no_origin),
-            legacy_token_transport=bool(settings.webchat_allow_legacy_token_transport),
+            legacy_token_transport=bool(
+                settings.webchat_allow_legacy_token_transport
+            ),
             websocket_enabled=bool(settings.webchat_ws_enabled),
             websocket_broker=settings.webchat_ws_broker,
         ),
@@ -128,6 +135,9 @@ def effective_safe_config(settings: Any) -> dict[str, Any]:
         "app_env": settings.app_env,
         "process_role": settings.process_role,
         "app_version": settings.app_version,
-        "groups": {name: asdict(group) for name, group in capability_groups(settings).items()},
+        "groups": {
+            name: asdict(group)
+            for name, group in capability_groups(settings).items()
+        },
         "contains_secret_values": False,
     }
