@@ -112,10 +112,6 @@ class ControlledServerPreflightTests(unittest.TestCase):
                 environment={"DATABASE_URL": "${DATABASE_URL_WEBCHAT_AI:?required}"},
                 command=["python", "scripts/run_worker.py", "--queue", "webchat-ai"],
             ),
-            "worker-handoff-snapshot-controlled": self._service(
-                environment={"DATABASE_URL": "${DATABASE_URL_HANDOFF:?required}"},
-                command=["python", "scripts/run_worker.py", "--queue", "handoff-snapshot"],
-            ),
         }
         return yaml.safe_dump(
             {"services": services, "networks": {"controlled": {"driver": "bridge"}}},
@@ -193,6 +189,7 @@ class ControlledServerPreflightTests(unittest.TestCase):
             payload = self._validate(env_path, compose_path, manifest_path)
         self.assertEqual(payload["status"], "pass")
         self.assertEqual(set(payload["database_roles"]), set(MODULE.DATABASE_ROLE_KEYS))
+        self.assertNotIn("handoff", payload["database_roles"])
         self.assertEqual(
             len({row["username"] for row in payload["database_roles"].values()}),
             len(MODULE.DATABASE_ROLE_KEYS),
@@ -232,7 +229,10 @@ class ControlledServerPreflightTests(unittest.TestCase):
             document = yaml.safe_load(self._compose())
             document["services"]["app-controlled"]["env_file"] = ".env.controlled"
             compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
-            with self.assertRaisesRegex(MODULE.PreflightError, "compose_shared_env_file_forbidden"):
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_shared_env_file_forbidden",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
             document = yaml.safe_load(self._compose())
@@ -240,6 +240,32 @@ class ControlledServerPreflightTests(unittest.TestCase):
             compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
             with self.assertRaisesRegex(MODULE.PreflightError, "compose_service_missing"):
                 self._validate(env_path, compose_path, manifest_path)
+
+    def test_rejects_retired_snapshot_service_or_database_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            document = yaml.safe_load(self._compose())
+            document["services"]["worker-handoff-snapshot-controlled"] = self._service(
+                environment={"DATABASE_URL": "${DATABASE_URL_HANDOFF:?required}"},
+                command=["python", "scripts/run_worker.py", "--queue", "handoff-snapshot"],
+            )
+            compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_service_unexpected|compose_retired_execution_path",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
+        self._assert_env_failure(
+            lambda values: values.update(
+                DATABASE_URL_HANDOFF=(
+                    "postgresql+psycopg://retired:retired-pass"
+                    "@10.2.64.2:5432/nexusdesk"
+                )
+            ),
+            "disabled_capability_credential_forbidden:DATABASE_URL_HANDOFF",
+        )
 
     def test_rejects_generic_duplicate_or_wrong_port_database_authority(self) -> None:
         self._assert_env_failure(
@@ -258,7 +284,9 @@ class ControlledServerPreflightTests(unittest.TestCase):
         )
         self._assert_env_failure(
             lambda values: values.update(
-                DATABASE_URL_OUTBOUND=values["DATABASE_URL_OUTBOUND"].replace(":5432/", ":6432/")
+                DATABASE_URL_OUTBOUND=values["DATABASE_URL_OUTBOUND"].replace(
+                    ":5432/", ":6432/"
+                )
             ),
             "database_port_mismatch:DATABASE_URL_OUTBOUND",
         )
