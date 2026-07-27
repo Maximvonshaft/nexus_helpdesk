@@ -61,11 +61,10 @@ def tenant_scope_hash(tenant_key: str) -> str:
 
 def _actor_scope(db: Session, current_user) -> ActorTenantQueryScope:
     try:
-        return actor_tenant_query_scope(
-            db,
-            current_user,
-            require_bound_tenant=True,
-        )
+        # In production enforce mode resolve_actor_tenant_id rejects an unbound
+        # principal. In shadow mode this resolves only the isolated default
+        # migration domain and never grants platform-global visibility.
+        return actor_tenant_query_scope(db, current_user)
     except TenantQueryScopeError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -175,8 +174,6 @@ def serialize_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, object]:
 
 
 def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str]:
-    """Return the exact scope only to the user who owns the active grant."""
-
     return {
         "tenant_key": row.tenant_key,
         "tenant_hash": tenant_scope_hash(row.tenant_key),
@@ -190,8 +187,6 @@ def list_current_scope_grants(
     *,
     current_user,
 ) -> dict[str, object]:
-    """Project only current-user grants inside the actor's immutable Tenant."""
-
     ensure_capability(
         current_user,
         CAP_OPERATOR_QUEUE_READ,
@@ -352,3 +347,17 @@ def delete_scope_grant(
     )
     db.delete(row)
     db.flush()
+
+
+__all__ = [
+    "active_scope_grant",
+    "authorize_operator_scope",
+    "delete_scope_grant",
+    "list_current_scope_grants",
+    "normalize_operator_scope",
+    "scope_grant_version",
+    "serialize_current_scope_grant",
+    "serialize_scope_grant",
+    "tenant_scope_hash",
+    "upsert_scope_grant",
+]
