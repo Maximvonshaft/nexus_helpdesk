@@ -42,17 +42,11 @@ def test_worker_queue_isolation(monkeypatch):
     )
     monkeypatch.setattr(
         run_worker,
-        "_run_handoff_snapshot",
-        lambda worker_id: calls.append("handoff-snapshot") or 1,
-    )
-    monkeypatch.setattr(
-        run_worker,
         "_run_webchat_ai",
         lambda worker_id: calls.append("webchat-ai") or 1,
     )
 
     expectations = {
-        "handoff-snapshot": ["handoff-snapshot"],
         "outbound": ["outbound"],
         "background": ["background"],
         "webchat-ai": ["webchat-ai"],
@@ -64,10 +58,16 @@ def test_worker_queue_isolation(monkeypatch):
         assert calls == expected
         assert processed == len(expected)
 
-    calls.clear()
-    with pytest.raises(ValueError, match="unsupported worker queue: all"):
-        run_worker.run_queue_once("worker-test", "all")
-    assert calls == []
+    for retired_or_unsafe in ("handoff-snapshot", "all"):
+        calls.clear()
+        with pytest.raises(
+            ValueError,
+            match=f"unsupported worker queue: {retired_or_unsafe}",
+        ):
+            run_worker.run_queue_once("worker-test", retired_or_unsafe)
+        assert calls == []
+
+    assert not hasattr(run_worker, "_run_handoff_snapshot")
 
 
 def test_webchat_ai_reconciler_idle_cycle_does_not_log_info(monkeypatch):
