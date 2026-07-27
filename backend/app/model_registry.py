@@ -17,12 +17,7 @@ class ModelRegistryError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelPlugin:
-    """Explicit optional model capability.
-
-    Disabled plugins are not part of the runtime metadata contract. Enabling a
-    plugin makes both its module and representative table mandatory; missing
-    code never degrades into a silent no-op.
-    """
+    """Explicit optional model capability."""
 
     capability: str
     module_name: str
@@ -52,13 +47,10 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_privacy_runtime",
     "app.models_job_scope",
     "app.models_channel_intake",
+    "app.models_scenario_assignment",
 )
 
-# There are currently no optional production model plugins. Future plugins must
-# be declared here with an explicit capability and enabled state; do not restore
-# file-existence-based discovery.
 MODEL_PLUGINS: tuple[ModelPlugin, ...] = ()
-
 
 REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models": "tickets",
@@ -82,20 +74,17 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_privacy_runtime": "data_processing_restrictions",
     "app.models_job_scope": "background_job_scopes",
     "app.models_channel_intake": "customer_identity_bindings",
+    "app.models_scenario_assignment": "ticket_scenario_assignments",
 }
 
 
 def declared_model_modules() -> tuple[str, ...]:
-    """Return the exact model-module contract for this runtime."""
-
     return REQUIRED_MODEL_MODULES + tuple(
         plugin.module_name for plugin in MODEL_PLUGINS if plugin.enabled
     )
 
 
 def validate_model_registry() -> tuple[str, ...]:
-    """Validate registry structure before importing any model family."""
-
     modules = declared_model_modules()
     errors: list[str] = []
     duplicate_modules = sorted({name for name in modules if modules.count(name) > 1})
@@ -144,8 +133,6 @@ def validate_model_registry() -> tuple[str, ...]:
 
 
 def register_all_models() -> tuple[str, ...]:
-    """Import every required model family and every explicitly enabled plugin."""
-
     modules = validate_model_registry()
     imported: list[str] = []
     for module_name in modules:
