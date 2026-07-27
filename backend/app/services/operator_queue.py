@@ -6,17 +6,14 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, or_
+from sqlalchemy import String, and_, case, cast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import Ticket
 from ..operator_models import OperatorTask
 from ..utils.time import utc_now
-from ..webchat_models import (
-    WebchatConversation,
-    WebchatHandoffRequest,
-)
+from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .audit_service import log_admin_audit
 
 TERMINAL_STATUSES = {
@@ -67,15 +64,19 @@ class ProjectResult:
 
 
 def _safe_note(note: str | None) -> str | None:
-    if note is None:
-        return None
-    return note[:1000]
+    return note[:1000] if note is not None else None
 
 
 def _hash_preview(value: Any) -> dict[str, Any]:
     raw = "" if value is None else str(value)
-    digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return {"redacted": True, "length": len(raw), "sha256_prefix": digest}
+    digest = hashlib.sha256(
+        raw.encode("utf-8", errors="ignore")
+    ).hexdigest()[:16]
+    return {
+        "redacted": True,
+        "length": len(raw),
+        "sha256_prefix": digest,
+    }
 
 
 def _safe_error_summary(value: Any) -> dict[str, Any]:
@@ -92,7 +93,9 @@ def _safe_error_summary(value: Any) -> dict[str, Any]:
     }
 
 
-def sanitize_operator_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+def sanitize_operator_payload(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Return a bounded admin-only payload with sensitive values redacted."""
 
     if not payload:
@@ -126,14 +129,13 @@ def sanitize_operator_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
             }
         return value
 
-    return sanitize(payload)
+    result = sanitize(payload)
+    return result if isinstance(result, dict) else {}
 
 
 def _json_payload(payload: dict[str, Any] | None) -> str | None:
     safe = sanitize_operator_payload(payload)
-    if not safe:
-        return None
-    return json.dumps(safe, ensure_ascii=False, default=str)
+    return json.dumps(safe, ensure_ascii=False, default=str) if safe else None
 
 
 def _loads(value: str | None) -> dict[str, Any]:
@@ -205,7 +207,11 @@ def _find_existing_active_task(
     source_id: str | None = None,
     webchat_conversation_id: int | None = None,
 ) -> OperatorTask | None:
-    query = _active_query(db, source_type=source_type, task_type=task_type)
+    query = _active_query(
+        db,
+        source_type=source_type,
+        task_type=task_type,
+    )
     identities = []
     if source_id:
         identities.append(OperatorTask.source_id == source_id)
@@ -215,8 +221,7 @@ def _find_existing_active_task(
         )
     if not identities:
         return None
-    query = query.filter(or_(*identities))
-    return query.order_by(OperatorTask.id.desc()).first()
+    return query.filter(or_(*identities)).order_by(OperatorTask.id.desc()).first()
 
 
 def _ensure_task_mutable(row: OperatorTask) -> None:
@@ -284,7 +289,7 @@ def create_operator_task(
     payload: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> tuple[OperatorTask, bool]:
-    del note  # projections do not emit source-domain events
+    del note
     existing = _find_existing_active_task(
         db,
         source_type=source_type,
@@ -455,7 +460,9 @@ def _retire_stale_handoff_projections(db: Session) -> int:
             request_id = int(row.source_id or "")
         except ValueError:
             request_id = 0
-        request_row = db.get(WebchatHandoffRequest, request_id) if request_id else None
+        request_row = (
+            db.get(WebchatHandoffRequest, request_id) if request_id else None
+        )
         if request_row is not None and request_row.status in OPEN_HANDOFF_STATUSES:
             continue
         row.status = (
@@ -470,15 +477,63 @@ def _retire_stale_handoff_projections(db: Session) -> int:
             else "source_missing"
         )
         row.assignee_id = (
-            request_row.assigned_agent_id if request_row is not None else row.assignee_id
+            request_row.assigned_agent_id
+            if request_row is not None
+            else row.assignee_id
         )
         row.source_version = (
-            request_row.lock_version if request_row is not None else row.source_version
+            request_row.lock_version
+            if request_row is not None
+            else row.source_version
         )
-        row.resolved_at = request_row.closed_at if request_row is not None else now
+        row.resolved_at = (
+            request_row.closed_at if request_row is not None else now
+        )
         row.updated_at = now
         retired += 1
     return retired
+
+
+def _handoff_projection_candidates(db: Session, *, limit: int):
+    expected_status = case(
+        (WebchatHandoffRequest.status == "accepted", "assigned"),
+        else_="pending",
+    )
+    active_join = and_(
+        OperatorTask.source_type == HANDOFF_PROJECTION_SOURCE,
+        OperatorTask.task_type == "handoff",
+        OperatorTask.status.notin_(list(TERMINAL_STATUSES)),
+        OperatorTask.source_id == cast(WebchatHandoffRequest.id, String),
+    )
+    return (
+        db.query(WebchatHandoffRequest, WebchatConversation, Ticket)
+        .join(
+            WebchatConversation,
+            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
+        )
+        .outerjoin(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
+        .outerjoin(OperatorTask, active_join)
+        .filter(
+            WebchatHandoffRequest.status.in_(OPEN_HANDOFF_STATUSES),
+            or_(
+                OperatorTask.id.is_(None),
+                OperatorTask.source_version.is_distinct_from(
+                    WebchatHandoffRequest.lock_version
+                ),
+                OperatorTask.projection_schema != HANDOFF_PROJECTION_SCHEMA,
+                OperatorTask.status != expected_status,
+                OperatorTask.assignee_id.is_distinct_from(
+                    WebchatHandoffRequest.assigned_agent_id
+                ),
+            ),
+        )
+        .order_by(
+            WebchatHandoffRequest.requested_at.asc(),
+            WebchatHandoffRequest.id.asc(),
+        )
+        .limit(max(1, min(int(limit), 500)))
+        .all()
+    )
 
 
 def project_webchat_handoff_tasks(
@@ -488,21 +543,14 @@ def project_webchat_handoff_tasks(
     actor_id: int | None = None,
     note: str | None = None,
 ) -> ProjectResult:
-    rows = (
-        db.query(WebchatHandoffRequest, WebchatConversation, Ticket)
-        .join(
-            WebchatConversation,
-            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
-        )
-        .outerjoin(Ticket, Ticket.id == WebchatHandoffRequest.ticket_id)
-        .filter(WebchatHandoffRequest.status.in_(OPEN_HANDOFF_STATUSES))
-        .order_by(
-            WebchatHandoffRequest.requested_at.asc(),
-            WebchatHandoffRequest.id.asc(),
-        )
-        .limit(max(1, min(limit, 500)))
-        .all()
-    )
+    """Reconcile only missing or stale Handoff projections.
+
+    The anti-join prevents already-current early rows from consuming every
+    bounded batch. A missing projection remains directly discoverable regardless
+    of how many older Handoffs are already synchronized.
+    """
+
+    rows = _handoff_projection_candidates(db, limit=limit)
     result = ProjectResult()
     for request_row, conversation, ticket in rows:
         _, created = _project_handoff_request(
@@ -525,7 +573,7 @@ def project_webchat_handoff_tasks(
             new_value={
                 "source_type": HANDOFF_PROJECTION_SOURCE,
                 "created": result.created,
-                "skipped_existing": result.skipped_existing,
+                "refreshed": result.skipped_existing,
                 "retired": result.retired,
             },
             note=note,
@@ -648,12 +696,7 @@ def transition_operator_task(
     actor_id: int | None = None,
     note: str | None = None,
 ) -> OperatorTask:
-    """Transition only projection-owned administrative tasks.
-
-    Handoff rows are source-owned projections and must be changed through the
-    WebchatHandoffRequest command API. Rejecting the operation removes the former
-    reverse mutation from OperatorTask into Ticket/Conversation state.
-    """
+    """Transition only projection-owned administrative tasks."""
 
     if action not in {"assign", "resolve", "drop"}:
         raise OperatorQueueError(
@@ -717,7 +760,11 @@ def create_webchat_handoff_task(
             "handoff_projection_source_mismatch",
             "handoff projection source does not match conversation",
         )
-    ticket = db.get(Ticket, request_row.ticket_id) if request_row.ticket_id else None
+    ticket = (
+        db.get(Ticket, request_row.ticket_id)
+        if request_row.ticket_id
+        else None
+    )
     row, _ = _project_handoff_request(
         db,
         request_row=request_row,
