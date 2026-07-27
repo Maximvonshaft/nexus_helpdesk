@@ -29,7 +29,48 @@ _ROUTING_OUTCOMES = (
 )
 
 
+def _retire_mutable_scenario_sla_projections(bind) -> None:
+    """Remove only derivations created before frozen Scenario assignment existed.
+
+    TicketSLAPauseInterval remains append-only. The canonical SLA service lazily
+    reselects an approved revision from TicketScenarioAssignment and reconstructs
+    TicketSLATarget from the original Case creation time plus pause history.
+    """
+
+    bind.execute(
+        sa.text(
+            "DELETE FROM ticket_sla_targets WHERE ticket_id IN ("
+            " SELECT ticket_id FROM ticket_scenario_assignments"
+            ")"
+        )
+    )
+    bind.execute(
+        sa.text(
+            "DELETE FROM ticket_sla_assignments WHERE ticket_id IN ("
+            " SELECT ticket_id FROM ticket_scenario_assignments"
+            ")"
+        )
+    )
+    bind.execute(
+        sa.text(
+            "UPDATE tickets SET "
+            "sla_policy_id = NULL, "
+            "first_response_due_at = NULL, "
+            "resolution_due_at = NULL, "
+            "sla_paused = false, "
+            "sla_paused_at = NULL, "
+            "sla_pause_reason = NULL, "
+            "first_response_breached = false, "
+            "resolution_breached = false "
+            "WHERE id IN (SELECT ticket_id FROM ticket_scenario_assignments)"
+        )
+    )
+
+
 def upgrade() -> None:
+    bind = op.get_bind()
+    _retire_mutable_scenario_sla_projections(bind)
+
     op.add_column(
         "webchat_handoff_requests",
         sa.Column(
@@ -131,7 +172,6 @@ def upgrade() -> None:
         unique=False,
     )
 
-    bind = op.get_bind()
     bind.execute(
         sa.text(
             "UPDATE webchat_handoff_requests SET "
