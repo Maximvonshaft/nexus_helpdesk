@@ -175,7 +175,6 @@ def test_signed_customer_reply_contract_remains_independent_transport_envelope()
     payload = contract.payload_dict(body=body)
 
     assert validate_ai_reply_contract(
-        body=body,
         **contract_validation_args_from_payload(payload),
     ) is None
     assert payload["reply"]["text"] == body
