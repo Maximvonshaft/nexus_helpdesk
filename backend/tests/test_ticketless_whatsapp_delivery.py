@@ -141,7 +141,10 @@ def _fixture(db_session):
     return customer, account, connection, conversation
 
 
-def _queue_ai_message(db_session, conversation: WebchatConversation) -> tuple[WebchatMessage, object]:
+def _queue_ai_message(
+    db_session,
+    conversation: WebchatConversation,
+) -> tuple[WebchatMessage, object]:
     message = WebchatMessage(
         conversation_id=conversation.id,
         ticket_id=None,
@@ -312,7 +315,7 @@ def test_restricted_ai_delivery_is_terminal_and_never_calls_provider(
     db_session,
     monkeypatch,
 ):
-    _customer, _account, _connection, conversation = _fixture(db_session)
+    customer, _account, _connection, conversation = _fixture(db_session)
     message, job = _queue_ai_message(db_session, conversation)
     job.status = JobStatus.processing
     job.locked_by = "test-worker"
@@ -332,7 +335,11 @@ def test_restricted_ai_delivery_is_terminal_and_never_calls_provider(
         webchat_channel_delivery_service,
         "ensure_data_processing_allowed",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            DataProcessingRestricted("customer_processing_restricted")
+            DataProcessingRestricted(
+                customer_id=customer.id,
+                purpose="automated_ai",
+                restriction_id=1,
+            )
         ),
     )
     sends: list[str] = []
