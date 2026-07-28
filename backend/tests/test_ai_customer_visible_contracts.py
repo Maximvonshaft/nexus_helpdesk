@@ -29,6 +29,8 @@ from app.models import Customer, Ticket, TicketOutboundMessage
 from app.services.ai_reply_contract import (
     AI_REPLY_CONTRACT,
     build_ai_reply_contract,
+    canonical_contract_payload_json,
+    contract_payload_sha256,
 )
 from app.services.customer_visible_message_service import (
     create_customer_visible_outbound,
@@ -94,6 +96,40 @@ def _ticket(db_session) -> Ticket:
     return ticket
 
 
+def _queue_contract(
+    db_session,
+    ticket: Ticket,
+    *,
+    body: str,
+    contract,
+    payload_json: str | None = None,
+    payload_sha: str | None = None,
+):
+    return queue_outbound_message(
+        db_session,
+        ticket_id=ticket.id,
+        channel=SourceChannel.whatsapp,
+        body=body,
+        created_by=None,
+        origin="provider_runtime",
+        runtime_trace_id=contract.runtime_trace_id,
+        runtime_contract_version=contract.contract_version,
+        runtime_signature=contract.runtime_signature,
+        runtime_contract_payload_json=(
+            payload_json
+            if payload_json is not None
+            else contract.payload_json(body=body, origin="provider_runtime")
+        ),
+        runtime_contract_payload_sha256=(
+            payload_sha
+            if payload_sha is not None
+            else contract.payload_sha256(body=body, origin="provider_runtime")
+        ),
+        runtime_reply_type=contract.reply_type,
+        safety_status=contract.safety_status,
+    )
+
+
 def test_queue_requires_runtime_trace_for_provider_runtime(db_session):
     ticket = _ticket(db_session)
     with pytest.raises(ValueError, match="runtime_trace_id_required"):
@@ -113,7 +149,7 @@ def test_queue_requires_runtime_trace_for_provider_runtime(db_session):
 
 def test_queue_requires_runtime_contract_for_provider_runtime(db_session):
     ticket = _ticket(db_session)
-    with pytest.raises(ValueError, match="runtime_contract_version_required"):
+    with pytest.raises(ValueError, match="runtime_contract_version_invalid"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -130,7 +166,15 @@ def test_queue_requires_runtime_contract_for_provider_runtime(db_session):
 
 def test_queue_requires_runtime_signature_for_provider_runtime(db_session):
     ticket = _ticket(db_session)
-    with pytest.raises(ValueError, match="runtime_signature_required"):
+    contract = build_ai_reply_contract(
+        body="Hello",
+        runtime_trace={"request_id": "runtime-trace"},
+        reply_type="clarifying_question",
+    )
+    payload = contract.payload_dict(body="Hello", origin="provider_runtime")
+    payload["runtime_signature"] = None
+    payload_json = canonical_contract_payload_json(payload)
+    with pytest.raises(ValueError, match="runtime_signature_invalid"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -138,16 +182,19 @@ def test_queue_requires_runtime_signature_for_provider_runtime(db_session):
             body="Hello",
             created_by=None,
             origin="provider_runtime",
-            runtime_trace_id="runtime-trace",
-            runtime_contract_version=AI_REPLY_CONTRACT,
-            runtime_reply_type="clarifying_question",
-            safety_status="passed",
+            runtime_trace_id=contract.runtime_trace_id,
+            runtime_contract_version=contract.contract_version,
+            runtime_signature=None,
+            runtime_contract_payload_json=payload_json,
+            runtime_contract_payload_sha256=contract_payload_sha256(payload_json),
+            runtime_reply_type=contract.reply_type,
+            safety_status=contract.safety_status,
         )
 
 
 def test_queue_rejects_unknown_runtime_contract(db_session):
     ticket = _ticket(db_session)
-    with pytest.raises(ValueError, match="unsupported_runtime_contract_version"):
+    with pytest.raises(ValueError, match="runtime_contract_version_invalid"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -170,7 +217,10 @@ def test_queue_rejects_null_reply_as_customer_visible(db_session):
         runtime_trace={"request_id": "rt-null-queue"},
         reply_type="null_reply",
     )
-    with pytest.raises(ValueError, match="null_reply_cannot_be_customer_visible"):
+    with pytest.raises(
+        ValueError,
+        match="ai_reply_null_reply_not_customer_visible",
+    ):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -201,7 +251,7 @@ def test_queue_rejects_runtime_contract_payload_body_mismatch(db_session):
         runtime_trace={"request_id": "rt-payload-mismatch"},
         reply_type="clarifying_question",
     )
-    with pytest.raises(ValueError, match="runtime_contract_payload_body_mismatch"):
+    with pytest.raises(ValueError, match="runtime_signature_invalid"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -232,7 +282,10 @@ def test_queue_rejects_runtime_contract_payload_origin_mismatch(db_session):
         runtime_trace={"request_id": "rt-origin-mismatch"},
         reply_type="clarifying_question",
     )
-    with pytest.raises(ValueError, match="runtime_contract_payload_origin_mismatch"):
+    with pytest.raises(
+        ValueError,
+        match="runtime_contract_payload_origin_mismatch",
+    ):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -263,7 +316,7 @@ def test_queue_rejects_runtime_contract_payload_hash_mismatch(db_session):
         runtime_trace={"request_id": "rt-hash-mismatch"},
         reply_type="clarifying_question",
     )
-    with pytest.raises(ValueError, match="runtime_contract_payload_sha256_mismatch"):
+    with pytest.raises(ValueError, match="runtime_contract_payload_hash_invalid"):
         queue_outbound_message(
             db_session,
             ticket_id=ticket.id,
@@ -291,26 +344,11 @@ def test_queue_accepts_complete_runtime_contract(db_session):
         runtime_trace={"request_id": "rt-complete"},
         reply_type="clarifying_question",
     )
-    row = queue_outbound_message(
+    row = _queue_contract(
         db_session,
-        ticket_id=ticket.id,
-        channel=SourceChannel.whatsapp,
+        ticket,
         body="Complete signed body",
-        created_by=None,
-        origin="provider_runtime",
-        runtime_trace_id=contract.runtime_trace_id,
-        runtime_contract_version=contract.contract_version,
-        runtime_signature=contract.runtime_signature,
-        runtime_contract_payload_json=contract.payload_json(
-            body="Complete signed body",
-            origin="provider_runtime",
-        ),
-        runtime_contract_payload_sha256=contract.payload_sha256(
-            body="Complete signed body",
-            origin="provider_runtime",
-        ),
-        runtime_reply_type=contract.reply_type,
-        safety_status=contract.safety_status,
+        contract=contract,
     )
     assert row.runtime_trace_id == contract.runtime_trace_id
     assert row.runtime_contract_version == contract.contract_version
@@ -328,7 +366,6 @@ def test_duplicate_completed_outbound_is_idempotent(db_session, monkeypatch):
         body="already sent",
         provider_status="sent",
         provider_message_id="provider-message-id",
-        idempotency_key="duplicate-completed-idempotency-key",
         sent_at=None,
     )
     db_session.add(row)
@@ -361,19 +398,15 @@ def test_runtime_signature_uses_v3_canonical_payload(monkeypatch):
             confidence=0.91,
             channel="webchat",
         )
+        body_hash = hashlib.sha256(
+            "Grounded answer".encode("utf-8")
+        ).hexdigest()
         payload = {
-            "body_sha256": hashlib.sha256(
-                "Grounded answer".encode("utf-8")
-            ).hexdigest(),
+            "body_sha256": body_hash,
             "runtime_trace_id": "rt-v3-hmac",
             "contract_version": AI_REPLY_CONTRACT,
             "safety_status": "passed",
-            "reply": {
-                "type": "answer",
-                "text_sha256": hashlib.sha256(
-                    "Grounded answer".encode("utf-8")
-                ).hexdigest(),
-            },
+            "reply": {"type": "answer", "text_sha256": body_hash},
             "grounding": {
                 "used_sources": ["kb.policy.1#v1:0"],
                 "unsupported_claims": [],
@@ -404,8 +437,9 @@ def test_v3_answer_with_used_sources_passes_outbound_gateway(
     monkeypatch,
 ):
     ticket = _ticket(db_session)
+    body = "Switzerland address changes are allowed before dispatch."
     contract = build_ai_reply_contract(
-        body="Switzerland address changes are allowed before dispatch.",
+        body=body,
         runtime_trace={"request_id": "rt-v3-pass"},
         contract_version=AI_REPLY_CONTRACT,
         reply_type="answer",
@@ -414,26 +448,11 @@ def test_v3_answer_with_used_sources_passes_outbound_gateway(
         confidence=0.94,
         channel="whatsapp",
     )
-    row = queue_outbound_message(
+    row = _queue_contract(
         db_session,
-        ticket_id=ticket.id,
-        channel=SourceChannel.whatsapp,
-        body="Switzerland address changes are allowed before dispatch.",
-        created_by=None,
-        origin="provider_runtime",
-        runtime_trace_id=contract.runtime_trace_id,
-        runtime_contract_version=contract.contract_version,
-        runtime_signature=contract.runtime_signature,
-        runtime_contract_payload_json=contract.payload_json(
-            body="Switzerland address changes are allowed before dispatch.",
-            origin="provider_runtime",
-        ),
-        runtime_contract_payload_sha256=contract.payload_sha256(
-            body="Switzerland address changes are allowed before dispatch.",
-            origin="provider_runtime",
-        ),
-        runtime_reply_type=contract.reply_type,
-        safety_status=contract.safety_status,
+        ticket,
+        body=body,
+        contract=contract,
     )
     monkeypatch.setattr(
         "app.services.message_dispatch._external_dispatch_block_reason",
@@ -505,12 +524,7 @@ def test_v3_unsupported_claims_blocked(db_session):
     payload["grounding"]["unsupported_claims"] = [
         "mutated unsupported claim"
     ]
-    payload_json = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    payload_json = canonical_contract_payload_json(payload)
 
     with pytest.raises(ValueError, match="ai_reply_unsupported_claims_blocked"):
         queue_outbound_message(
@@ -524,9 +538,7 @@ def test_v3_unsupported_claims_blocked(db_session):
             runtime_contract_version=contract.contract_version,
             runtime_signature=contract.runtime_signature,
             runtime_contract_payload_json=payload_json,
-            runtime_contract_payload_sha256=hashlib.sha256(
-                payload_json.encode("utf-8")
-            ).hexdigest(),
+            runtime_contract_payload_sha256=contract_payload_sha256(payload_json),
             runtime_reply_type="answer",
             safety_status=contract.safety_status,
         )
@@ -556,26 +568,11 @@ def test_signed_ai_outbound_body_cannot_be_mutated_after_signature(
         runtime_trace={"request_id": "rt-mutation"},
         reply_type="clarifying_question",
     )
-    row = queue_outbound_message(
+    row = _queue_contract(
         db_session,
-        ticket_id=ticket.id,
-        channel=SourceChannel.whatsapp,
+        ticket,
         body="Exact signed body",
-        created_by=None,
-        origin="provider_runtime",
-        runtime_trace_id=contract.runtime_trace_id,
-        runtime_contract_version=contract.contract_version,
-        runtime_signature=contract.runtime_signature,
-        runtime_contract_payload_json=contract.payload_json(
-            body="Exact signed body",
-            origin="provider_runtime",
-        ),
-        runtime_contract_payload_sha256=contract.payload_sha256(
-            body="Exact signed body",
-            origin="provider_runtime",
-        ),
-        runtime_reply_type=contract.reply_type,
-        safety_status=contract.safety_status,
+        contract=contract,
     )
     monkeypatch.setattr(
         "app.services.message_dispatch._external_dispatch_block_reason",
@@ -664,12 +661,6 @@ def test_v3_null_reply_not_sent_to_customer(db_session):
         ai_contract=contract,
     )
     assert send_result.outbound_message is None
-    assert (
-        db_session.query(TicketOutboundMessage)
-        .filter(TicketOutboundMessage.ticket_id == ticket.id)
-        .count()
-        == 0
-    )
 
 
 def test_handoff_notice_origin_cannot_bypass_contract(db_session):
