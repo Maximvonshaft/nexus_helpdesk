@@ -8,6 +8,7 @@ import {
 } from "node:crypto";
 import {
   closeSync,
+  existsSync,
   fstatSync,
   mkdirSync,
   openSync,
@@ -96,13 +97,18 @@ export class DurableMediaDownloadOutbox {
     const mediaKind = assertMediaKind(params.mediaKind);
     const mediaType = assertMediaType(params.mediaType);
     const fileName = safeFileName(params.fileName);
+    const id = createHash("sha256")
+      .update(`${accountId}\n${externalMessageId}`)
+      .digest("hex");
+    const pendingPath = resolve(join(this.root, `${id}.download`));
+    const deadPath = resolve(join(this.root, `${id}.dead`));
+    if (existsSync(pendingPath) || existsSync(deadPath)) {
+      return id;
+    }
     const raw = Buffer.from(proto.WebMessageInfo.encode(params.rawMessage).finish());
     if (!raw.length || raw.length > MAX_MESSAGE_BYTES) {
       throw new Error("media_download_outbox_message_size_invalid");
     }
-    const id = createHash("sha256")
-      .update(`${accountId}\n${externalMessageId}`)
-      .digest("hex");
     const envelope: MediaDownloadEnvelope = {
       schema: ENVELOPE_SCHEMA,
       id,
