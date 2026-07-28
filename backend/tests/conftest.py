@@ -4,8 +4,10 @@ import hashlib
 
 import pytest
 from sqlalchemy import event, insert, select
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
+from app.db import Base
 from app.models import Market, Tenant
 from app.settings import get_settings
 from app.services import background_job_execution_scope, background_jobs
@@ -18,6 +20,62 @@ from app.services.whatsapp_media_settings import (
 from app.services.whatsapp_runtime_settings import (
     reset_whatsapp_runtime_settings_cache,
 )
+
+
+# SQLite enforces foreign keys during normal test execution. Schema teardown is
+# the sole exception: SQLAlchemy cannot topologically drop every table when
+# mutually-referencing test tables are populated. Disable the connection-local
+# PRAGMA only around metadata teardown, then prove it is restored immediately.
+_ORIGINAL_DROP_ALL = Base.metadata.drop_all
+
+
+def _drop_all_for_test_schema(
+    bind: Engine | Connection | None = None,
+    tables=None,
+    checkfirst: bool = True,
+) -> None:
+    if bind is None or bind.dialect.name != "sqlite":
+        _ORIGINAL_DROP_ALL(bind=bind, tables=tables, checkfirst=checkfirst)
+        return
+
+    if isinstance(bind, Connection):
+        connection = bind
+        owns_connection = False
+    else:
+        connection = bind.connect()
+        owns_connection = True
+    try:
+        if connection.in_transaction():
+            connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        disabled = int(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one())
+        if disabled != 0:
+            raise RuntimeError("sqlite_schema_teardown_fk_disable_failed")
+        _ORIGINAL_DROP_ALL(
+            bind=connection,
+            tables=tables,
+            checkfirst=checkfirst,
+        )
+        if connection.in_transaction():
+            connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        enabled = int(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one())
+        if enabled != 1:
+            raise RuntimeError("sqlite_schema_teardown_fk_restore_failed")
+        if connection.in_transaction():
+            connection.commit()
+    finally:
+        if connection.dialect.name == "sqlite":
+            if connection.in_transaction():
+                connection.rollback()
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+            if connection.in_transaction():
+                connection.commit()
+        if owns_connection:
+            connection.close()
+
+
+Base.metadata.drop_all = _drop_all_for_test_schema
 
 
 _LEGACY_FIXTURE_TENANTS = {
