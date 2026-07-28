@@ -42,6 +42,7 @@ def test_webchat_ws_rejects_memory_broker_in_production(monkeypatch):
     monkeypatch.setattr(Path, "exists", fake_exists)
     env = {
         "APP_ENV": "production",
+        "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
         "SECRET_KEY": "ci-value-for-webchat-ws",
         "DATABASE_URL": "postgresql+psycopg://helpdesk:helpdesk@db:5432/helpdesk",
         "ALLOWED_ORIGINS": "https://example.test",
