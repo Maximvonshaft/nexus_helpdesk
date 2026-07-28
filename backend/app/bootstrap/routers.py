@@ -158,8 +158,11 @@ def register_api_routers(app: FastAPI) -> None:
         telephony_router,
         webchat_ws_router,
         webchat_voice_router,
-        whatsapp_integration_router,
+        # Static shared WABA authority must be registered before the dynamic
+        # /meta/{connection_id}/webhook route or "webhook" can be consumed as a
+        # connection identifier by Starlette's first-match routing semantics.
         whatsapp_meta_shared_webhook_router,
+        whatsapp_integration_router,
         whatsapp_media_integration_router,
         whatsapp_media_operator_router,
         webchat_router,
