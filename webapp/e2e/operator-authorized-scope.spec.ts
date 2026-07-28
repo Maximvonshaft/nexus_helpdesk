@@ -11,11 +11,16 @@ const authUser = {
   capabilities: ['ticket.read', 'operator_queue.read'],
 }
 
-function queueResponse(country: string, channel: string) {
+function queueResponse(country: string, channel: string, queue = 'legacy') {
   return {
     items: [],
     next_cursor: null,
-    scope: { tenant_hash: '123456789abc', country_code: country, channel_key: channel },
+    scope: {
+      tenant_hash: '123456789abc',
+      country_code: country,
+      channel_key: channel,
+      queue_key: queue,
+    },
     filters: {
       state: 'active',
       source_type: null,
@@ -66,6 +71,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
           tenant_hash: '123456789abc',
           country_code: 'CH',
           channel_key: 'webchat',
+          queue_key: 'legacy',
         }],
         requires_explicit_admin_scope: false,
       })
@@ -75,6 +81,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
       expect(route.request().headers()['x-nexus-tenant']).toBe('tenant-authorized')
       expect(url.searchParams.get('country_code')).toBe('CH')
       expect(url.searchParams.get('channel_key')).toBe('webchat')
+      expect(url.searchParams.get('queue_key')).toBe('legacy')
       return json(route, queueResponse('CH', 'webchat'))
     }
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
@@ -106,12 +113,14 @@ test('switching among multiple authorized scopes remounts the workspace with the
             tenant_hash: 'aaaaaaaaaaaa',
             country_code: 'CH',
             channel_key: 'webchat',
+            queue_key: 'customer_support',
           },
           {
             tenant_key: 'tenant-me',
             tenant_hash: 'bbbbbbbbbbbb',
             country_code: 'ME',
             channel_key: 'whatsapp',
+            queue_key: 'delivery_support',
           },
         ],
         requires_explicit_admin_scope: false,
@@ -121,8 +130,9 @@ test('switching among multiple authorized scopes remounts the workspace with the
       const tenant = route.request().headers()['x-nexus-tenant'] || ''
       const country = url.searchParams.get('country_code') || ''
       const channel = url.searchParams.get('channel_key') || ''
-      seen.push(`${tenant}:${country}:${channel}`)
-      return json(route, queueResponse(country, channel))
+      const queue = url.searchParams.get('queue_key') || ''
+      seen.push(`${tenant}:${country}:${channel}:${queue}`)
+      return json(route, queueResponse(country, channel, queue))
     }
     return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
   })
@@ -131,15 +141,15 @@ test('switching among multiple authorized scopes remounts the workspace with the
   const selector = page.getByRole('combobox', { name: '工作范围' })
   await expect(selector).toBeVisible()
   await expect(selector).toHaveText('CH · WebChat')
-  await expect.poll(() => seen.includes('tenant-ch:CH:webchat')).toBe(true)
+  await expect.poll(() => seen.includes('tenant-ch:CH:webchat:customer_support')).toBe(true)
 
   await selector.click()
   await page.getByRole('option', { name: 'ME · WhatsApp' }).click()
 
   await expect(selector).toHaveText('ME · WhatsApp')
-  await expect.poll(() => seen.includes('tenant-me:ME:whatsapp')).toBe(true)
+  await expect.poll(() => seen.includes('tenant-me:ME:whatsapp:delivery_support')).toBe(true)
   await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
-  expect(seen).not.toContain('forged-stale-tenant:ZZ:unknown')
+  expect(seen).not.toContain('forged-stale-tenant:ZZ:unknown:')
 })
 
 test('an unscoped normal operator receives a clear fail-closed state instead of free-text authority fields', async ({ page }) => {
@@ -158,5 +168,31 @@ test('an unscoped normal operator receives a clear fail-closed state instead of 
   await expect(page.getByRole('heading', { name: '未分配工作范围' })).toBeVisible()
   await expect(page.getByText('请联系管理员。')).toBeVisible()
   await expect(page.locator('.operator-scope')).toHaveCount(0)
+  await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
+})
+
+test('malformed authorized scope payload fails closed without exposing a raw TypeError', async ({ page }) => {
+  await seedSession(page)
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/auth/me') return json(route, authUser)
+    if (url.pathname === '/api/admin/operator-queue/my-scopes') {
+      return json(route, {
+        items: [{
+          tenant_key: 'tenant-authorized',
+          tenant_hash: '123456789abc',
+          country_code: 'CH',
+          channel_key: 'webchat',
+        }],
+      })
+    }
+    return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
+  })
+
+  await page.goto('/workspace')
+
+  await expect(page.getByText('无法读取工作范围')).toBeVisible()
+  await expect(page.getByText('请重新加载。')).toBeVisible()
+  await expect(page.getByText(/Cannot read properties of undefined/)).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toHaveCount(0)
 })
