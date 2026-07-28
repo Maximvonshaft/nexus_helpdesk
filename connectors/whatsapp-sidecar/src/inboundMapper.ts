@@ -1,3 +1,4 @@
+import { normalizeMessageContent } from "@whiskeysockets/baileys";
 import type {
   FromMeInboundMode,
   NormalizedInboundMessage,
@@ -24,8 +25,13 @@ function phoneFromJid(jid: string | undefined | null): string | null {
   return cleaned ? `+${cleaned}` : null;
 }
 
+function normalizedContent(message: any): Record<string, any> {
+  const normalized = normalizeMessageContent(message?.message);
+  return normalized && typeof normalized === "object" ? (normalized as Record<string, any>) : {};
+}
+
 function extractText(message: any): ExtractedContent {
-  const content = message?.message || {};
+  const content = normalizedContent(message);
   const extended = content.extendedTextMessage || {};
   const context =
     extended.contextInfo ||
@@ -103,8 +109,7 @@ function extractText(message: any): ExtractedContent {
 }
 
 function messageType(message: any): string {
-  const content = message?.message || {};
-  return Object.keys(content)[0] || "unknown";
+  return Object.keys(normalizedContent(message))[0] || "unknown";
 }
 
 function isCustomerChatJid(jid: string): boolean {
