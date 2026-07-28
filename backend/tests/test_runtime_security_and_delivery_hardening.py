@@ -164,6 +164,7 @@ def test_password_hashing_rejects_non_argon2_hashes():
 def test_production_metrics_token_must_be_strong(monkeypatch):
     base = {
         "APP_ENV": "production",
+        "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
         "DATABASE_URL": "postgresql+psycopg://user:pass@localhost:5432/db",
         "SECRET_KEY": "strong-production-secret-value-with-sufficient-length",
         "ALLOWED_ORIGINS": "https://helpdesk.example",
