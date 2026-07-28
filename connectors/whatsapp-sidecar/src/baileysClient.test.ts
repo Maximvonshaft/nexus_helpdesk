@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  deliveryStatusFromMessageUpdate,
+  deliveryStatusFromReceiptUpdate,
   phoneJidFromAccountSnapshot,
   projectSelfTestInboundToPhoneJid,
   targetToWhatsAppJid
@@ -53,6 +55,27 @@ test("projects fromMe self-test inbound to the account phone JID", () => {
     (projected.raw_message as any).nexus_self_test_original_chat_jid,
     "174488096354391@lid"
   );
+});
+
+test("maps asynchronous Baileys receipts monotonically", () => {
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 2 }), null);
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 3 }), "delivered");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 4 }), "read");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: "DELIVERY_ACK" }), "delivered");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: "READ" }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({ receiptTimestamp: 1781179200 }), "delivered");
+  assert.equal(deliveryStatusFromReceiptUpdate({ readTimestamp: 1781179201 }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({ playedTimestamp: 1781179202 }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({}), null);
+});
+
+test("publishes changed generation even when the socket is already active", () => {
+  const source = readFileSync(new URL("./baileysClient.ts", import.meta.url), "utf8");
+  const guard = source.indexOf('account.generation !== previousGeneration');
+  const publish = source.indexOf('await this.emitStatus(account);', guard);
+  const earlyReturn = source.indexOf('return account.status;', guard);
+  assert.ok(guard >= 0);
+  assert.ok(publish > guard && publish < earlyReturn);
 });
 
 test("persists media retrieval before publishing the inbound callback", () => {
