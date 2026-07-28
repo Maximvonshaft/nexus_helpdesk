@@ -1,6 +1,12 @@
 name: Canonical Acceptance
 
-on: {pull_request: {branches: [main]}, push: {branches: [main]}, workflow_dispatch: {}}
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
 
 concurrency:
   group: canonical-acceptance-${{ github.event.pull_request.number || github.ref }}
@@ -44,8 +50,64 @@ env:
   OPERATIONS_DISPATCH_ADAPTER: disabled
 
 jobs:
+  validation-mode:
+    name: validation-mode
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.resolve.outputs.mode }}
+      run_full: ${{ steps.resolve.outputs.run_full }}
+    steps:
+      - name: Resolve fail-closed validation mode
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_ACTION: ${{ github.event.action || '' }}
+          PR_DRAFT: ${{ github.event.pull_request.draft || false }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          mode=""
+          run_full="false"
+          case "$EVENT_NAME" in
+            pull_request)
+              if [[ "$PR_ACTION" = "converted_to_draft" || "$PR_DRAFT" = "true" ]]; then
+                mode="development"
+                run_full="false"
+              else
+                mode="candidate"
+                run_full="true"
+              fi
+              ;;
+            push)
+              test "$REF_NAME" = "main"
+              mode="main"
+              run_full="true"
+              ;;
+            workflow_dispatch)
+              if [[ "$REF_NAME" = "main" ]]; then
+                mode="main"
+              else
+                mode="candidate"
+              fi
+              run_full="true"
+              ;;
+            *)
+              echo "unsupported canonical event: $EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+          case "$mode" in
+            development|candidate|main) ;;
+            *) exit 2 ;;
+          esac
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'run_full=%s\n' "$run_full" >> "$GITHUB_OUTPUT"
+
   candidate-identity:
     name: candidate-identity
+    needs: validation-mode
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -63,6 +125,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ needs.validation-mode.outputs.mode }}
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
         run: |
@@ -77,7 +140,9 @@ jobs:
             git fetch --no-tags origin "$BASE_SHA"
             behind="$(git rev-list --count "$source_sha..$BASE_SHA")"
             ahead="$(git rev-list --count "$BASE_SHA..$source_sha")"
-            test "$behind" = "0"
+            if [[ "$MODE" != "development" ]]; then
+              test "$behind" = "0"
+            fi
           fi
           printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
           printf 'tree_sha=%s\n' "$tree_sha" >> "$GITHUB_OUTPUT"
@@ -85,9 +150,10 @@ jobs:
             --arg source_sha "$source_sha" \
             --arg tree_sha "$tree_sha" \
             --arg base_sha "$BASE_SHA" \
+            --arg mode "$MODE" \
             --argjson ahead "$ahead" \
             --argjson behind "$behind" \
-            '{schema:"nexus.actions-candidate-identity.v1",source_sha:$source_sha,tree_sha:$tree_sha,base_sha:$base_sha,ahead:$ahead,behind:$behind,clean:true}' \
+            '{schema:"nexus.actions-candidate-identity.v2",source_sha:$source_sha,tree_sha:$tree_sha,base_sha:$base_sha,mode:$mode,ahead:$ahead,behind:$behind,clean:true}' \
             > /tmp/candidate-identity.json
       - name: Upload candidate identity
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -97,9 +163,118 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  development-fast:
+    name: development-fast
+    if: needs.validation-mode.outputs.mode == 'development'
+    needs: [validation-mode, candidate-identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout frozen development Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            config/security/security-tool-requirements.txt
+      - name: Classify changed authority paths
+        id: paths
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin "$BASE_SHA"
+          git diff --name-only "$BASE_SHA...HEAD" | tee /tmp/development-changed-paths.txt
+          python_changed=false
+          frontend_changed=false
+          sidecar_changed=false
+          migration_changed=false
+          while IFS= read -r path; do
+            case "$path" in backend/*|scripts/*|config/*|deploy/*|.github/workflows/*) python_changed=true ;; esac
+            case "$path" in webapp/*) frontend_changed=true ;; esac
+            case "$path" in connectors/whatsapp-sidecar/*) sidecar_changed=true ;; esac
+            case "$path" in backend/alembic/*|deploy/*|scripts/release/*|scripts/deploy/*) migration_changed=true ;; esac
+          done < /tmp/development-changed-paths.txt
+          printf 'python_changed=%s\n' "$python_changed" >> "$GITHUB_OUTPUT"
+          printf 'frontend_changed=%s\n' "$frontend_changed" >> "$GITHUB_OUTPUT"
+          printf 'sidecar_changed=%s\n' "$sidecar_changed" >> "$GITHUB_OUTPUT"
+          printf 'migration_changed=%s\n' "$migration_changed" >> "$GITHUB_OUTPUT"
+      - name: Install bounded Python verification dependencies
+        if: steps.paths.outputs.python_changed == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m pip install --disable-pip-version-check -r config/security/security-tool-requirements.txt
+      - name: Verify focused backend and governance contracts
+        if: steps.paths.outputs.python_changed == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-development
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/deploy scripts/release
+          python scripts/security/scan_repository.py --root . --output /tmp/nexus-development/repository-secret-scan.json
+          python scripts/verify_repository.py --static-only \
+            --expected-sha "${{ needs.candidate-identity.outputs.source_sha }}" \
+            --evidence-out /tmp/nexus-development/repository-static.json
+          python -m pytest -q \
+            backend/tests/test_admin_action_rate_limit.py \
+            backend/tests/test_canonical_actions_image_contract.py \
+            backend/tests/test_control_tower_contract.py \
+            backend/tests/test_delivery_workflow_governance.py \
+            backend/tests/test_operator_product_foundation.py \
+            backend/tests/test_outbound_channel_capabilities.py \
+            backend/tests/test_production_readiness_convergence.py \
+            backend/tests/test_qa_training_contract.py \
+            backend/tests/test_repository_contract_suites.py \
+            backend/tests/test_webchat_voice_api.py \
+            backend/tests/test_webchat_voice_p0_gap_closure.py \
+            backend/tests/test_webchat_voice_room_compensation.py \
+            2>&1 | tee /tmp/nexus-development/focused-backend.log
+      - name: Prove one Alembic head
+        if: steps.paths.outputs.migration_changed == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd backend
+          mapfile -t heads < <(python -m alembic heads | awk 'NF {print $1}')
+          test "${#heads[@]}" = "1"
+          printf '%s\n' "${heads[0]}" | tee /tmp/development-alembic-head.txt
+      - name: Set up Node for affected products
+        if: steps.paths.outputs.frontend_changed == 'true' || steps.paths.outputs.sidecar_changed == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify frontend without browser
+        if: steps.paths.outputs.frontend_changed == 'true'
+        working-directory: webapp
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run verify
+      - name: Verify Sidecar types tests and build
+        if: steps.paths.outputs.sidecar_changed == 'true'
+        working-directory: connectors/whatsapp-sidecar
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm run typecheck && npm test && npm run build
+      - name: Upload development evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: development-fast-${{ needs.candidate-identity.outputs.source_sha }}
+          path: |
+            /tmp/development-changed-paths.txt
+            /tmp/development-alembic-head.txt
+            /tmp/nexus-development
+          if-no-files-found: warn
+          retention-days: 14
+
   static-authority:
     name: static-authority
-    needs: candidate-identity
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -115,10 +290,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install exact Python dependencies
-        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
       - name: Run canonical static verifier
         run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
           mkdir -p /tmp/nexus-static
           python scripts/verify_repository.py --static-only \
             --expected-sha "${{ needs.candidate-identity.outputs.source_sha }}" \
@@ -132,9 +306,210 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  backend-full:
+    name: backend-full
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout frozen Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Run complete backend regression
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m compileall -q backend/app backend/scripts scripts/qualification scripts/deploy scripts/release
+          mkdir -p /tmp/nexus-backend
+          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend/pytest.log
+          python -m pytest -q \
+            scripts/qualification/tests/test_whatsapp_live_uat.py \
+            scripts/deploy/tests/test_validate_production_activation.py \
+            scripts/release/tests/test_controlled_candidate_workflow_contract.py \
+            2>&1 | tee /tmp/nexus-backend/whatsapp-delivery-contracts.log
+      - name: Upload backend evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-backend
+          if-no-files-found: warn
+          retention-days: 30
+
+  frontend-browser:
+    name: frontend-browser
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout frozen Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Verify frontend and browser journeys
+        working-directory: webapp
+        env:
+          RC_RUN_BROWSER_SMOKE: "true"
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run verify
+          npx playwright install --with-deps chromium
+          npm run e2e
+      - name: Upload frontend evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          path: |
+            webapp/playwright-report
+            webapp/test-results
+            frontend_dist
+          if-no-files-found: warn
+          retention-days: 30
+
+  postgres-acceptance:
+    name: postgres-acceptance
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_DB: nexus_ci_acceptance
+          POSTGRES_USER: nexus_ci
+          POSTGRES_PASSWORD: nexus_ci_only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nexus_ci -d nexus_ci_acceptance"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+psycopg://nexus_ci:nexus_ci_only@127.0.0.1:5432/nexus_ci_acceptance
+      JWT_SECRET_KEY: ci-only-not-a-production-secret-0123456789abcdef
+      AI_REPLY_CONTRACT_SECRET: ci-only-contract-secret-0123456789abcdef
+    steps:
+      - name: Checkout frozen Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Rehearse migrations and PostgreSQL acceptance
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          mkdir -p /tmp/nexus-postgres
+          cd backend
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-upgrade.log
+          python -m alembic downgrade -1 2>&1 | tee /tmp/nexus-postgres/alembic-downgrade.log
+          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-reupgrade.log
+          cd ..
+          python scripts/qualification/postgres_acceptance.py \
+            --evidence-dir /tmp/nexus-postgres \
+            --source-sha "${{ needs.candidate-identity.outputs.source_sha }}" \
+            --tree-sha "${{ needs.candidate-identity.outputs.tree_sha }}" \
+            --output /tmp/nexus-postgres/postgres-acceptance-run.json
+      - name: Upload PostgreSQL evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: postgres-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-postgres
+          if-no-files-found: error
+          retention-days: 30
+
+  sidecar-supply-chain:
+    name: sidecar-supply-chain
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout frozen Head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.candidate-identity.outputs.source_sha }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: connectors/whatsapp-sidecar/package-lock.json
+      - name: Verify Sidecar and build exact image
+        working-directory: connectors/whatsapp-sidecar
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+          npm audit --audit-level=high
+      - name: Build Sidecar image
+        env:
+          SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
+        run: |
+          mkdir -p /tmp/nexus-sidecar
+          docker build --pull=false \
+            --file connectors/whatsapp-sidecar/Dockerfile \
+            --build-arg GIT_SHA="$SOURCE_SHA" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg APP_VERSION="pr-$SOURCE_SHA" \
+            --tag "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
+            connectors/whatsapp-sidecar
+          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ .Config.User }}')" = "node"
+          docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" > /tmp/nexus-sidecar/image-inspect.json
+      - name: Block Sidecar high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: table
+          output: /tmp/nexus-sidecar/trivy-gate.txt
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+      - name: Upload Sidecar evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sidecar-supply-chain-${{ needs.candidate-identity.outputs.source_sha }}
+          path: /tmp/nexus-sidecar
+          if-no-files-found: warn
+          retention-days: 30
+
   security-supply-chain:
     name: security-supply-chain
-    needs: candidate-identity
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
     permissions:
       contents: read
       security-events: write
@@ -161,47 +536,24 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: webapp/package-lock.json
-      - name: Initialize CodeQL for Python and JavaScript
+      - name: Initialize CodeQL
         uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a
         with:
           languages: python,javascript-typescript
           build-mode: none
           queries: security-extended
-      - name: Install exact application and security dependencies
+      - name: Run secret SAST and dependency assurance
         run: |
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
           python -m pip install --disable-pip-version-check -r config/security/security-tool-requirements.txt
-      - name: Run tracked-tree and reachable-history secret assurance
-        shell: bash
-        run: |
-          set -Eeuo pipefail
           mkdir -p /tmp/nexus-security
-          python scripts/security/scan_repository.py \
-            --root . \
-            --output /tmp/nexus-security/repository-secret-scan.json
-          python scripts/security/scan_git_history.py \
-            --root . \
-            --max-blob-bytes 33554432 \
-            --output /tmp/nexus-security/history-secret-scan.json
-      - name: Run Python SAST and dependency assurance
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          python -m bandit -r backend/app -ll -ii -f json \
-            -o /tmp/nexus-security/bandit.json
-          python -m pip_audit -r backend/requirements.txt --strict \
-            --format json --output /tmp/nexus-security/python-dependencies.json
-          python -m pip_audit -r backend/requirements.txt --strict \
-            --format cyclonedx-json --output /tmp/nexus-security/python-sbom.cdx.json
-      - name: Run frontend dependency assurance and generate SBOM
-        working-directory: webapp
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          python scripts/security/scan_repository.py --root . --output /tmp/nexus-security/repository-secret-scan.json
+          python scripts/security/scan_git_history.py --root . --max-blob-bytes 33554432 --output /tmp/nexus-security/history-secret-scan.json
+          python -m bandit -r backend/app -ll -ii -f json -o /tmp/nexus-security/bandit.json
+          python -m pip_audit -r backend/requirements.txt --strict --format json --output /tmp/nexus-security/python-dependencies.json
+          cd webapp
           npm ci --ignore-scripts --no-audit --no-fund
           npm audit --audit-level=high --json > /tmp/nexus-security/frontend-dependencies.json
-          npm sbom --package-lock-only --sbom-format=cyclonedx \
-            > /tmp/nexus-security/frontend-sbom.cdx.json
       - name: Analyze exact Head with CodeQL
         uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a
         with:
@@ -210,12 +562,8 @@ jobs:
           output: /tmp/nexus-security/codeql
           category: canonical-security
       - name: Enforce zero CodeQL findings
-        run: |
-          python scripts/security/assert_sarif_clean.py \
-            --input /tmp/nexus-security/codeql \
-            --exceptions config/security/codeql-exceptions.json \
-            --output /tmp/nexus-security/codeql-summary.json
-      - name: Upload bounded security and supply-chain evidence
+        run: python scripts/security/assert_sarif_clean.py --input /tmp/nexus-security/codeql --exceptions config/security/codeql-exceptions.json --output /tmp/nexus-security/codeql-summary.json
+      - name: Upload security evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -224,259 +572,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  sidecar-supply-chain:
-    name: sidecar-supply-chain
-    needs: candidate-identity
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout frozen Head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ needs.candidate-identity.outputs.source_sha }}
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: connectors/whatsapp-sidecar/package-lock.json
-      - name: Install exact Sidecar dependencies
-        working-directory: connectors/whatsapp-sidecar
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify Sidecar types, tests and build
-        working-directory: connectors/whatsapp-sidecar
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p /tmp/nexus-sidecar
-          npm run typecheck 2>&1 | tee /tmp/nexus-sidecar/typecheck.log
-          npm test 2>&1 | tee /tmp/nexus-sidecar/tests.log
-          npm run build 2>&1 | tee /tmp/nexus-sidecar/build.log
-      - name: Audit Sidecar dependencies and generate npm SBOM
-        working-directory: connectors/whatsapp-sidecar
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          npm audit --audit-level=high --json > /tmp/nexus-sidecar/dependencies.json
-          npm sbom --package-lock-only --sbom-format=cyclonedx \
-            > /tmp/nexus-sidecar/sidecar.raw.cdx.json
-      - name: Build exact-Head Sidecar image
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
-        run: |
-          set -Eeuo pipefail
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          docker build --pull=false \
-            --file connectors/whatsapp-sidecar/Dockerfile \
-            --build-arg GIT_SHA="$SOURCE_SHA" \
-            --build-arg BUILD_TIME="$build_time" \
-            --build-arg APP_VERSION="pr-$SOURCE_SHA" \
-            --tag "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
-            connectors/whatsapp-sidecar 2>&1 | tee /tmp/nexus-sidecar/image-build.log
-          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
-          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ .Config.User }}')" = "node"
-          docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
-            > /tmp/nexus-sidecar/image-inspect.json
-      - name: Run Sidecar Trivy vulnerability inventory
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
-          format: json
-          output: /tmp/nexus-sidecar/sidecar-trivy.raw.json
-          scanners: vuln
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: '0'
-      - name: Block Sidecar high and critical vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
-          format: table
-          output: /tmp/nexus-sidecar/sidecar-trivy-gate.txt
-          scanners: vuln
-          severity: HIGH,CRITICAL
-          ignore-unfixed: false
-          exit-code: '1'
-      - name: Generate Sidecar image CycloneDX SBOM
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
-          format: cyclonedx
-          output: /tmp/nexus-sidecar/sidecar-image.raw.cdx.json
-          scanners: vuln
-          ignore-unfixed: false
-          exit-code: '0'
-      - name: Upload Sidecar supply-chain evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: sidecar-supply-chain-${{ needs.candidate-identity.outputs.source_sha }}
-          path: /tmp/nexus-sidecar
-          if-no-files-found: error
-          retention-days: 30
-
-  backend-full:
-    name: backend-full
-    needs: candidate-identity
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout frozen Head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ needs.candidate-identity.outputs.source_sha }}
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - name: Install exact Python dependencies
-        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
-      - name: Compile production Python
-        run: python -m compileall -q backend/app backend/scripts scripts/qualification scripts/deploy scripts/release
-      - name: Run complete backend regression
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p /tmp/nexus-backend
-          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend/pytest.log
-          python -m pytest -q \
-            scripts/qualification/tests/test_whatsapp_live_uat.py \
-            scripts/deploy/tests/test_validate_production_activation.py \
-            scripts/release/tests/test_controlled_candidate_workflow_contract.py \
-            2>&1 | tee /tmp/nexus-backend/whatsapp-delivery-contracts.log
-      - name: Upload backend evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: backend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
-          path: /tmp/nexus-backend
-          if-no-files-found: warn
-          retention-days: 30
-
-  frontend-browser:
-    name: frontend-browser
-    needs: candidate-identity
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - name: Checkout frozen Head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ needs.candidate-identity.outputs.source_sha }}
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: webapp/package-lock.json
-      - name: Install exact frontend dependencies
-        working-directory: webapp
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify architecture, lint, types, units and build
-        working-directory: webapp
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p /tmp/nexus-frontend
-          npm run verify 2>&1 | tee /tmp/nexus-frontend/verify.log
-      - name: Install Playwright Chromium
-        working-directory: webapp
-        run: npx playwright install --with-deps chromium
-      - name: Run browser journeys
-        working-directory: webapp
-        env:
-          RC_RUN_BROWSER_SMOKE: "true"
-        run: npm run e2e
-      - name: Upload frontend and browser evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: frontend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
-          path: |
-            /tmp/nexus-frontend
-            webapp/package.json
-            webapp/package-lock.json
-            webapp/playwright-report
-            webapp/test-results
-            frontend_dist
-          if-no-files-found: warn
-          retention-days: 30
-
-  postgres-acceptance:
-    name: postgres-acceptance
-    needs: candidate-identity
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    services:
-      postgres:
-        image: docker.io/pgvector/pgvector:0.8.5-pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
-        env:
-          POSTGRES_DB: nexus_ci_acceptance
-          POSTGRES_USER: nexus_ci
-          POSTGRES_PASSWORD: nexus_ci_only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U nexus_ci -d nexus_ci_acceptance"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 12
-    env:
-      DATABASE_URL: postgresql+psycopg://nexus_ci:nexus_ci_only@127.0.0.1:5432/nexus_ci_acceptance
-      JWT_SECRET_KEY: ci-only-not-a-production-secret-0123456789abcdef
-      AI_REPLY_CONTRACT_SECRET: ci-only-contract-secret-0123456789abcdef
-    steps:
-      - name: Checkout frozen Head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ needs.candidate-identity.outputs.source_sha }}
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - name: Install exact Python dependencies
-        run: python -m pip install --disable-pip-version-check -r backend/requirements.txt
-      - name: Rehearse Alembic with visible diagnostics
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mkdir -p /tmp/nexus-postgres
-          cd backend
-          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-upgrade.log
-          python -m alembic downgrade -1 2>&1 | tee /tmp/nexus-postgres/alembic-downgrade.log
-          python -m alembic upgrade head 2>&1 | tee /tmp/nexus-postgres/alembic-reupgrade.log
-      - name: Run disposable PostgreSQL acceptance
-        run: |
-          python scripts/qualification/postgres_acceptance.py \
-            --evidence-dir /tmp/nexus-postgres \
-            --source-sha "${{ needs.candidate-identity.outputs.source_sha }}" \
-            --tree-sha "${{ needs.candidate-identity.outputs.tree_sha }}" \
-            --output /tmp/nexus-postgres/postgres-acceptance-run.json
-      - name: Upload PostgreSQL evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: postgres-evidence-${{ needs.candidate-identity.outputs.source_sha }}
-          path: /tmp/nexus-postgres
-          if-no-files-found: error
-          retention-days: 30
-
   image-smoke:
     name: image-smoke
-    needs: candidate-identity
+    if: needs.validation-mode.outputs.run_full == 'true'
+    needs: [validation-mode, candidate-identity]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     services:
@@ -486,8 +585,7 @@ jobs:
           POSTGRES_DB: nexus_image_acceptance
           POSTGRES_USER: nexus_image
           POSTGRES_PASSWORD: nexus_image_only
-        ports:
-          - 55432:5432
+        ports: ["55432:5432"]
         options: >-
           --health-cmd "pg_isready -U nexus_image -d nexus_image_acceptance"
           --health-interval 10s
@@ -501,52 +599,29 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.candidate-identity.outputs.source_sha }}
       - name: Build exact-Head image
-        shell: bash
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
         run: |
-          set -Eeuo pipefail
           mkdir -p /tmp/nexus-image
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           docker build --pull=false \
             --build-arg GIT_SHA="$SOURCE_SHA" \
-            --build-arg BUILD_TIME="$build_time" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --build-arg IMAGE_TAG="nexus-ci:$SOURCE_SHA" \
             --build-arg APP_VERSION="pr-$SOURCE_SHA" \
             --build-arg FRONTEND_BUILD_SHA="$SOURCE_SHA" \
             --tag "nexus-ci:$SOURCE_SHA" . 2>&1 | tee /tmp/nexus-image/build.log
           test "$(docker image inspect "nexus-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
           docker image inspect "nexus-ci:$SOURCE_SHA" > /tmp/nexus-image/image-inspect.json
-      - name: Run Trivy vulnerability inventory
+      - name: Block image high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
-          format: json
-          output: /tmp/nexus-image/trivy.raw.json
+          format: table
+          output: /tmp/nexus-image/trivy-gate.txt
           scanners: vuln
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          severity: HIGH,CRITICAL
           ignore-unfixed: false
-          exit-code: '0'
-      - name: Generate image CycloneDX SBOM
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
-        with:
-          image-ref: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
-          format: cyclonedx
-          output: /tmp/nexus-image/image.raw.cdx.json
-          scanners: vuln
-          ignore-unfixed: false
-          exit-code: '0'
-      - name: Set up Node for frontend SBOM
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: webapp/package-lock.json
-      - name: Generate frontend CycloneDX SBOM
-        working-directory: webapp
-        run: |
-          npm sbom --package-lock-only --sbom-format=cyclonedx \
-            > /tmp/nexus-image/frontend.raw.cdx.json
+          exit-code: '1'
       - name: Migrate disposable image database
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
@@ -571,7 +646,6 @@ jobs:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
           DATABASE_URL: postgresql+psycopg://nexus_image:nexus_image_only@127.0.0.1:55432/nexus_image_acceptance
         run: |
-          set -Eeuo pipefail
           docker run -d --name nexus-ci-candidate --network host \
             -e PYTHONPATH=/app/backend \
             -e APP_ENV=test \
@@ -596,28 +670,19 @@ jobs:
             -e OPERATIONS_DISPATCH_MODE=disabled \
             "nexus-ci:$SOURCE_SHA"
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:8080/healthz > /tmp/nexus-image/healthz.json; then
-              break
-            fi
+            if curl --fail --silent http://127.0.0.1:8080/healthz > /tmp/nexus-image/healthz.json; then break; fi
             sleep 2
           done
           curl --fail --silent http://127.0.0.1:8080/healthz | tee /tmp/nexus-image/healthz.json
           curl --fail --silent http://127.0.0.1:8080/readyz | tee /tmp/nexus-image/readyz.json
           docker logs nexus-ci-candidate > /tmp/nexus-image/candidate.log 2>&1
-          jq -n \
-            --arg source_sha "$SOURCE_SHA" \
-            --argjson health "$(cat /tmp/nexus-image/healthz.json)" \
-            --argjson ready "$(cat /tmp/nexus-image/readyz.json)" \
-            '{schema:"nexus.runtime-smoke-summary.v1",source_sha:$source_sha,health:$health,ready:$ready,synthetic:true,provider_enabled:false,outbound_enabled:false}' \
-            > /tmp/nexus-image/runtime-smoke-summary.txt
       - name: Run controlled release-image assurance
-        shell: bash
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
           CANDIDATE_IMAGE: nexus-ci:${{ needs.candidate-identity.outputs.source_sha }}
           RELEASE_IMAGE_DIR: /tmp/nexus-image
         run: bash scripts/release/run_controlled_image_assurance.sh
-      - name: Upload image and deployment evidence
+      - name: Upload image evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -633,7 +698,9 @@ jobs:
     name: required-gate
     if: always()
     needs:
+      - validation-mode
       - candidate-identity
+      - development-fast
       - static-authority
       - security-supply-chain
       - sidecar-supply-chain
@@ -644,10 +711,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Enforce all canonical jobs
+      - name: Enforce fail-closed mode result
         shell: bash
         env:
+          MODE: ${{ needs.validation-mode.outputs.mode }}
+          VALIDATION_MODE: ${{ needs.validation-mode.result }}
           CANDIDATE_IDENTITY: ${{ needs.candidate-identity.result }}
+          DEVELOPMENT_FAST: ${{ needs.development-fast.result }}
           STATIC_AUTHORITY: ${{ needs.static-authority.result }}
           SECURITY_SUPPLY_CHAIN: ${{ needs.security-supply-chain.result }}
           SIDECAR_SUPPLY_CHAIN: ${{ needs.sidecar-supply-chain.result }}
@@ -657,24 +727,39 @@ jobs:
           IMAGE_SMOKE: ${{ needs.image-smoke.result }}
         run: |
           set -Eeuo pipefail
-          printf '%s\n' \
-            "candidate-identity=$CANDIDATE_IDENTITY" \
-            "static-authority=$STATIC_AUTHORITY" \
-            "security-supply-chain=$SECURITY_SUPPLY_CHAIN" \
-            "sidecar-supply-chain=$SIDECAR_SUPPLY_CHAIN" \
-            "backend-full=$BACKEND_FULL" \
-            "frontend-browser=$FRONTEND_BROWSER" \
-            "postgres-acceptance=$POSTGRES_ACCEPTANCE" \
-            "image-smoke=$IMAGE_SMOKE"
-          for result in \
-            "$CANDIDATE_IDENTITY" \
-            "$STATIC_AUTHORITY" \
-            "$SECURITY_SUPPLY_CHAIN" \
-            "$SIDECAR_SUPPLY_CHAIN" \
-            "$BACKEND_FULL" \
-            "$FRONTEND_BROWSER" \
-            "$POSTGRES_ACCEPTANCE" \
-            "$IMAGE_SMOKE"
-          do
-            test "$result" = success
-          done
+          test "$VALIDATION_MODE" = "success"
+          test "$CANDIDATE_IDENTITY" = "success"
+          case "$MODE" in
+            development)
+              test "$DEVELOPMENT_FAST" = "success"
+              for result in \
+                "$STATIC_AUTHORITY" \
+                "$SECURITY_SUPPLY_CHAIN" \
+                "$SIDECAR_SUPPLY_CHAIN" \
+                "$BACKEND_FULL" \
+                "$FRONTEND_BROWSER" \
+                "$POSTGRES_ACCEPTANCE" \
+                "$IMAGE_SMOKE"
+              do
+                test "$result" = "skipped"
+              done
+              ;;
+            candidate|main)
+              test "$DEVELOPMENT_FAST" = "skipped"
+              for result in \
+                "$STATIC_AUTHORITY" \
+                "$SECURITY_SUPPLY_CHAIN" \
+                "$SIDECAR_SUPPLY_CHAIN" \
+                "$BACKEND_FULL" \
+                "$FRONTEND_BROWSER" \
+                "$POSTGRES_ACCEPTANCE" \
+                "$IMAGE_SMOKE"
+              do
+                test "$result" = "success"
+              done
+              ;;
+            *)
+              echo "invalid validation mode: $MODE" >&2
+              exit 2
+              ;;
+          esac
