@@ -154,8 +154,8 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
     """Stamp only named legacy test suites with deterministic authorities.
 
     Production still rejects unbound and cross-Tenant resources. This bridge only
-    migrates historical test factories to the relational Tenant and Market
-    ownership already required by runtime code.
+    migrates historical test factories to the relational Tenant, Market, Scenario,
+    and Queue ownership already required by runtime code.
     """
 
     module_name = request.module.__name__.rsplit(".", 1)[-1]
@@ -240,6 +240,24 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                     or current in {"", "default", "pytest"}
                 ):
                     row.tenant_key = tenant_key
+
+            # This historical WebCall suite creates Ticket and scope rows directly
+            # instead of using the production classifier/grant service. Preserve
+            # its business assertions while making the fixture satisfy the exact
+            # immutable Scenario and Queue authority now required by runtime code.
+            if module_name == "test_channel_workbench_backend_contracts":
+                if (
+                    model_name == "Ticket"
+                    and str(getattr(row, "ticket_no", "") or "").startswith("WEBCALL-")
+                    and not str(getattr(row, "case_type", "") or "").strip()
+                ):
+                    row.case_type = "tracking_inquiry"
+                if (
+                    model_name == "OperatorQueueScopeGrant"
+                    and str(getattr(row, "channel_key", "") or "").strip()
+                    == "website"
+                ):
+                    row.queue_key = "customer_support"
 
     event.listen(Session, "before_flush", before_flush)
     try:
