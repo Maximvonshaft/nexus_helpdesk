@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from sqlalchemy import event, insert, select
 from sqlalchemy.orm import Session
 
-from app.models import Tenant
+from app.models import Market, Tenant
 from app.settings import get_settings
 from app.services import background_job_execution_scope, background_jobs
 from app.services.whatsapp_embedded_signup_settings import (
@@ -37,6 +39,17 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_webchat_voice_api": "pytest-voice",
     "test_webchat_voice_p0_gap_closure": "pytest-voice-p0",
     "test_whatsapp_native_ai_conversation": "pytest-whatsapp-ai",
+}
+
+# These suites create WebChat rows through the public API using historical
+# arbitrary tenant_key values. Their business assertions are not about Tenant
+# resolution, so bind those rows to the module's deterministic relational Tenant.
+_FORCE_TENANT_KEY_MODULES = {
+    "test_channel_workbench_backend_contracts",
+    "test_webchat_ai_turn_runtime",
+    "test_webchat_handoff_snapshot_service",
+    "test_webchat_terminal_fallback_delivery",
+    "test_webchat_terminal_outcome_convergence",
 }
 
 _TENANT_IDENTITY_MODELS = {
@@ -75,7 +88,12 @@ def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
-    """Stamp only named legacy test suites with one deterministic Tenant."""
+    """Stamp only named legacy test suites with one deterministic Tenant.
+
+    Production still rejects unbound and cross-Tenant resources. This bridge only
+    migrates old test factories to the same relational authorities now required
+    by runtime code, including Market-owned email accounts.
+    """
 
     module_name = request.module.__name__.rsplit(".", 1)[-1]
     tenant_key = _LEGACY_FIXTURE_TENANTS.get(module_name)
@@ -89,6 +107,7 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
         return
 
     cache_key = f"nexus.test.tenant:{tenant_key}"
+    market_cache_key = f"{cache_key}:email-market"
 
     def before_flush(session: Session, _flush_context, _instances) -> None:
         tenant_id = session.info.get(cache_key)
@@ -125,9 +144,34 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                     None,
                 ):
                     row.tenant_assignment_version = "nexus.test.fixture.v1"
+
+            if model_name == "OutboundEmailAccount" and not getattr(
+                row,
+                "market_id",
+                None,
+            ) and getattr(row, "market", None) is None:
+                market = session.info.get(market_cache_key)
+                if market is None:
+                    digest = hashlib.sha256(tenant_key.encode("utf-8")).hexdigest()[:10]
+                    market = Market(
+                        tenant_id=int(tenant_id),
+                        tenant_assignment_source="test_fixture",
+                        tenant_assignment_version="nexus.test.fixture.v1",
+                        code=f"T{digest}"[:16],
+                        name=f"Test Email Market {digest}",
+                        country_code="ZZ",
+                        is_active=True,
+                    )
+                    session.add(market)
+                    session.info[market_cache_key] = market
+                row.market = market
+
             if model_name in _TENANT_KEY_MODELS:
                 current = str(getattr(row, "tenant_key", "") or "").strip()
-                if current in {"", "default", "pytest"}:
+                if (
+                    module_name in _FORCE_TENANT_KEY_MODULES
+                    or current in {"", "default", "pytest"}
+                ):
                     row.tenant_key = tenant_key
 
     event.listen(Session, "before_flush", before_flush)
