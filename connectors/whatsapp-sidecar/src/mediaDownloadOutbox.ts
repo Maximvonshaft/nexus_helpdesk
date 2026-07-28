@@ -32,6 +32,7 @@ const MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MAX_FILE_BYTES = MAX_MESSAGE_BYTES + 64 * 1024;
 const MAX_ATTEMPTS = 20;
 const ENVELOPE_SCHEMA = "nexus.whatsapp.media-download.v1";
+const DEAD_SCHEMA = "nexus.whatsapp.media-download-dead.v1";
 
 export interface MediaDownloadEnvelope {
   schema: typeof ENVELOPE_SCHEMA;
@@ -59,6 +60,14 @@ interface StoredMetadata {
   next_attempt_at: number;
   created_at: string;
   raw_sha256: string;
+}
+
+interface DeadEvidence {
+  id: string;
+  accountId?: string;
+  externalMessageId?: string;
+  attempts?: number;
+  reason: string;
 }
 
 export class DurableMediaDownloadOutbox {
@@ -146,11 +155,15 @@ export class DurableMediaDownloadOutbox {
       try {
         envelope = this.read(path);
       } catch (error) {
-        this.moveToDead(path, basename(file, ".download"));
+        const id = basename(file, ".download");
+        this.replaceWithDeadEvidence(path, {
+          id,
+          reason: "media_download_outbox_corrupt"
+        });
         dead += 1;
         this.logger.error(
           {
-            media_download_id: basename(file, ".download"),
+            media_download_id: id,
             error_name: error instanceof Error ? error.name : "UnknownError"
           },
           "media_download_outbox_quarantined"
@@ -170,13 +183,21 @@ export class DurableMediaDownloadOutbox {
         envelope.attempts += 1;
         const retryable = (error as { retryable?: unknown })?.retryable !== false;
         if (!retryable || envelope.attempts >= MAX_ATTEMPTS) {
-          this.moveToDead(path, envelope.id);
+          this.replaceWithDeadEvidence(path, {
+            id: envelope.id,
+            accountId: envelope.account_id,
+            externalMessageId: envelope.external_message_id,
+            attempts: envelope.attempts,
+            reason: retryable
+              ? "media_download_attempts_exhausted"
+              : "media_download_non_retryable"
+          });
           dead += 1;
           this.logger.error(
             {
               media_download_id: envelope.id,
               account_id: envelope.account_id,
-              external_message_id: envelope.external_message_id,
+              external_message_id_hash: sha256(envelope.external_message_id),
               attempts: envelope.attempts,
               retryable
             },
@@ -331,10 +352,33 @@ export class DurableMediaDownloadOutbox {
     };
   }
 
-  private moveToDead(path: string, id: string): void {
-    const target = resolve(join(this.root, `${id}.dead`));
-    renameSync(path, target);
+  private replaceWithDeadEvidence(path: string, evidence: DeadEvidence): void {
+    const target = resolve(join(this.root, `${evidence.id}.dead`));
+    const temporary = join(
+      dirname(target),
+      `.${basename(target)}.${randomUUID()}.tmp`
+    );
+    const payload = {
+      schema: DEAD_SCHEMA,
+      id: evidence.id,
+      account_id: evidence.accountId || null,
+      external_message_id_sha256: evidence.externalMessageId
+        ? sha256(evidence.externalMessageId)
+        : null,
+      attempts: evidence.attempts ?? null,
+      reason: evidence.reason,
+      failed_at: new Date().toISOString()
+    };
+    writeFileSync(temporary, Buffer.from(JSON.stringify(payload), "utf8"), {
+      mode: 0o600
+    });
+    renameSync(temporary, target);
+    rmSync(path, { force: true });
   }
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function assertMessageId(value: unknown): string {
