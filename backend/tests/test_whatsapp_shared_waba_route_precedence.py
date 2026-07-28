@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from fastapi import FastAPI
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault(
@@ -14,7 +15,7 @@ from app.api.whatsapp_meta_shared_webhook import (
     receive_shared_meta_whatsapp_webhook,
     verify_shared_meta_whatsapp_webhook,
 )
-from app.main import app
+from app.bootstrap.routers import register_api_routers
 
 
 @pytest.mark.parametrize(
@@ -30,9 +31,11 @@ def test_shared_waba_webhook_is_registered_before_connection_specific_route(
 ):
     """Static WABA verification and event routes must win first-match routing."""
 
+    isolated_app = FastAPI()
+    register_api_routers(isolated_app)
     routes = [
         route
-        for route in app.routes
+        for route in isolated_app.routes
         if getattr(route, "path", None)
         in {
             "/api/integrations/whatsapp/meta/webhook",
