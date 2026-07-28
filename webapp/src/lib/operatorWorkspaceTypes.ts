@@ -27,6 +27,41 @@ export interface AuthorizedWorkspaceScopesResponse {
   items: AuthorizedWorkspaceScope[]
 }
 
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function requiredScopeString(
+  record: Record<string, unknown>,
+  key: keyof AuthorizedWorkspaceScope,
+  pattern: RegExp,
+): string {
+  const value = typeof record[key] === 'string' ? record[key].trim() : ''
+  if (!pattern.test(value)) throw new Error('invalid_operator_workspace_scope_response')
+  return value
+}
+
+export function parseAuthorizedWorkspaceScopes(value: unknown): AuthorizedWorkspaceScopesResponse {
+  const envelope = recordValue(value)
+  if (!envelope || !Array.isArray(envelope.items)) {
+    throw new Error('invalid_operator_workspace_scope_response')
+  }
+  const items = envelope.items.map((item) => {
+    const record = recordValue(item)
+    if (!record) throw new Error('invalid_operator_workspace_scope_response')
+    return {
+      tenant_key: requiredScopeString(record, 'tenant_key', /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/).toLowerCase(),
+      tenant_hash: requiredScopeString(record, 'tenant_hash', /^[a-f0-9]{12}$/),
+      country_code: requiredScopeString(record, 'country_code', /^[A-Za-z0-9][A-Za-z0-9_-]{1,15}$/).toUpperCase(),
+      channel_key: requiredScopeString(record, 'channel_key', /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/).toLowerCase(),
+      queue_key: requiredScopeString(record, 'queue_key', /^[A-Za-z][A-Za-z0-9_.:-]{1,159}$/).toLowerCase(),
+    }
+  })
+  return { items }
+}
+
 export function workspaceScopeFromAuthorized(scope: AuthorizedWorkspaceScope): WorkspaceScope {
   return {
     tenantKey: scope.tenant_key,
