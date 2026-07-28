@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import nullcontext
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import or_, update
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _exception_reason(exc: Exception) -> str:
@@ -45,7 +49,7 @@ def _refresh_message_lease(
     )
     if result.rowcount != 1:
         db.rollback()
-        message_dispatch.LOGGER.warning(
+        LOGGER.warning(
             "outbound_message_lease_refresh_rejected",
             extra={"event_payload": {"message_id": message_id}},
         )
@@ -97,7 +101,7 @@ def _recover_unhandled_dispatch_exception(
         message_id=message_id,
         lease_token=lease_token,
     ):
-        message_dispatch.LOGGER.warning(
+        LOGGER.warning(
             "outbound_stale_exception_result_rejected",
             extra={
                 "event_payload": {
@@ -114,7 +118,7 @@ def _recover_unhandled_dispatch_exception(
         .first()
     )
     if message is None:
-        message_dispatch.LOGGER.warning(
+        LOGGER.warning(
             "outbound_dispatch_exception_recovery_missing_message",
             extra={
                 "event_payload": {
@@ -145,7 +149,7 @@ def _recover_unhandled_dispatch_exception(
             "retry_count": message.retry_count,
         },
     )
-    message_dispatch.LOGGER.warning(
+    LOGGER.warning(
         "outbound_dispatch_attempt_exception_recovered",
         extra={
             "event_payload": {
@@ -228,7 +232,7 @@ def reclaim_stale_processing_messages(
             },
         )
     db.commit()
-    message_dispatch.LOGGER.warning(
+    LOGGER.warning(
         "outbound_stale_processing_recovered",
         extra={"event_payload": {"count": len(rows)}},
     )
@@ -246,7 +250,7 @@ def dispatch_pending_messages(
     blocked = message_dispatch._external_dispatch_block_reason()
     if blocked:
         failure_code, reason = blocked
-        message_dispatch.LOGGER.warning(
+        LOGGER.warning(
             "external_outbound_dispatch_blocked_by_runtime_gate",
             extra={
                 "event_payload": {
@@ -285,7 +289,7 @@ def dispatch_pending_messages(
                 lease_token=lease_token,
             ):
                 db.rollback()
-                message_dispatch.LOGGER.warning(
+                LOGGER.warning(
                     "outbound_stale_completion_rejected",
                     extra={"event_payload": {"message_id": message_id}},
                 )
