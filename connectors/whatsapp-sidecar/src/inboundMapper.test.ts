@@ -48,6 +48,43 @@ test("normalizes media-only messages to a durable placeholder", () => {
   assert.equal(normalized?.reply_to_message_id, "quoted-1");
 });
 
+test("unwraps ephemeral and view-once provider containers", () => {
+  const text = normalizeBaileysInbound("wa-main", {
+    key: { id: "wrapped-text", remoteJid: "15551234567@s.whatsapp.net", fromMe: false },
+    message: {
+      ephemeralMessage: {
+        message: {
+          extendedTextMessage: {
+            text: "wrapped hello",
+            contextInfo: { stanzaId: "quoted-wrapped" }
+          }
+        }
+      }
+    }
+  });
+  assert.equal(text?.body_text, "wrapped hello");
+  assert.equal(text?.message_type, "extendedTextMessage");
+  assert.equal(text?.reply_to_message_id, "quoted-wrapped");
+
+  const media = normalizeBaileysInbound("wa-main", {
+    key: { id: "wrapped-media", remoteJid: "15551234567@s.whatsapp.net", fromMe: false },
+    message: {
+      viewOnceMessageV2: {
+        message: {
+          imageMessage: {
+            mimetype: "image/jpeg",
+            caption: "wrapped image"
+          }
+        }
+      }
+    }
+  });
+  assert.equal(media?.body_text, "<media:image> wrapped image");
+  assert.equal(media?.message_type, "imageMessage");
+  assert.equal(media?.media_kind, "image");
+  assert.equal(media?.media_mime_type, "image/jpeg");
+});
+
 test("ignores outbound, group, broadcast, newsletter, and empty messages", () => {
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "15551234567@s.whatsapp.net", fromMe: true }, message: { conversation: "self" } }), null);
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "1@g.us" }, message: { conversation: "hi" } }), null);
