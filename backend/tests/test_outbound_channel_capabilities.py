@@ -86,9 +86,10 @@ def _ticket(
     channel=SourceChannel.whatsapp,
     contact="+15550123456",
 ) -> Ticket:
+    market_identity = _uid()
     market = Market(
-        code=f"M-{_uid()}",
-        name="Outbound Test Market",
+        code=f"M-{market_identity}",
+        name=f"Outbound Test Market {market_identity}",
         country_code="US",
         tenant_id=tenant.id,
         tenant_assignment_source="fixture",
