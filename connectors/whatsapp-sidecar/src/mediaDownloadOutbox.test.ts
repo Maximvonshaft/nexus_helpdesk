@@ -50,13 +50,14 @@ test("persists encrypted media download work across process restart", async () =
     assert.equal(bytes.includes(Buffer.from("message-1", "utf8")), false);
     assert.equal(bytes.includes(Buffer.from("mmg.whatsapp.net", "utf8")), false);
 
+    const firstAttemptAt = Date.now() + 1_000;
     const failed = await first.drainAccount(
       "wa-main",
       async () => {
         throw new Error("transient provider failure");
       },
       20,
-      1_000
+      firstAttemptAt
     );
     assert.equal(failed.delivered, 0);
     assert.equal(failed.pending, 1);
@@ -70,7 +71,7 @@ test("persists encrypted media download work across process restart", async () =
         observed.push(String(envelope.raw_message.key?.id || ""));
       },
       20,
-      1_000_000
+      firstAttemptAt + 10_000
     );
     assert.deepEqual(observed, ["message-1"]);
     assert.equal(delivered.delivered, 1);
