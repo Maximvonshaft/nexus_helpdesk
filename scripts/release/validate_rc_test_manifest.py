@@ -210,6 +210,16 @@ def _safe_token(value: str) -> str:
 
 def _reason_code(exc: Exception) -> str:
     message = str(exc)
+    stable_contract_codes = (
+        ("candidate.image_id ", "candidate_image_id_invalid"),
+        ("required checks are not pass:", "checks_not_pass"),
+        ("safety.", "safety_contract_invalid"),
+        ("missing evidence:", "missing_evidence"),
+        ("unexpected evidence:", "unexpected_evidence"),
+    )
+    for prefix, code in stable_contract_codes:
+        if message.startswith(prefix):
+            return code
     evidence_match = re.match(r"^evidence\.([a-z0-9_]+)(?:\.| )", message)
     if evidence_match:
         name = _safe_token(evidence_match.group(1))
