@@ -52,7 +52,7 @@ def _full_values() -> dict[str, str]:
 def test_full_activation_passes_with_exact_controls_and_evidence() -> None:
     result = activation.validate(_full_values())
 
-    assert result["schema"] == "nexus.production-activation-preflight.v2"
+    assert result["schema"] == "nexus.production-activation-preflight.v4"
     assert result["status"] == "pass"
     assert result["profile"] == "full"
     assert result["candidate"] == {
