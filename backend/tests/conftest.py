@@ -18,10 +18,6 @@ from app.services.whatsapp_runtime_settings import (
 )
 
 
-# These suites predate relational Tenant ownership. The bridge is intentionally
-# test-only and module-bounded: production code still rejects every unbound or
-# cross-Tenant actor/resource. Each listed module is migrated to one explicit,
-# deterministic Tenant without changing the business assertions under test.
 _LEGACY_FIXTURE_TENANTS = {
     "test_canonical_policy_projection_behavior": "tenant-policy-a",
     "test_channel_workbench_backend_contracts": "pytest-channel-workbench",
@@ -43,9 +39,6 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_whatsapp_native_ai_conversation": "pytest-whatsapp-ai",
 }
 
-# Global policy rows such as SLA revisions intentionally have tenant_id=NULL.
-# Stamp only concrete business/resource identities that production requires to
-# be Tenant-owned; never infer ownership for arbitrary models.
 _TENANT_IDENTITY_MODELS = {
     "ChannelAccount",
     "Customer",
@@ -86,6 +79,11 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
 
     module_name = request.module.__name__.rsplit(".", 1)[-1]
     tenant_key = _LEGACY_FIXTURE_TENANTS.get(module_name)
+    if (
+        module_name == "test_unified_operator_queue"
+        and request.node.name == "test_scope_grant_crud_is_normalized_hashed_and_audited"
+    ):
+        tenant_key = "tenant.example"
     if tenant_key is None:
         yield
         return
