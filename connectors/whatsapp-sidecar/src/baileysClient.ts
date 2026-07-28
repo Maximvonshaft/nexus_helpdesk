@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { Logger } from "pino";
 import { Boom } from "@hapi/boom";
 import makeWASocket, {
@@ -9,6 +10,10 @@ import makeWASocket, {
   type WASocket
 } from "@whiskeysockets/baileys";
 import { normalizeBaileysInbound } from "./inboundMapper.js";
+import {
+  DurableMediaDownloadOutbox,
+  type MediaDownloadEnvelope
+} from "./mediaDownloadOutbox.js";
 import { qrDataUrl } from "./qrManager.js";
 import type {
   AccountSnapshot,
@@ -40,7 +45,6 @@ const PAIRING_CODE_ATTEMPTS = 5;
 const PAIRING_CODE_READY_DELAY_MS = 1500;
 const PAIRING_CODE_RETRY_DELAY_MS = 2000;
 const PAIRING_CODE_WINDOW_MS = 180_000;
-const MEDIA_UPLOAD_ATTEMPTS = 5;
 const MEDIA_LIMITS: Record<WhatsAppMediaKind, number> = {
   image: 5 * 1024 * 1024,
   audio: 16 * 1024 * 1024,
@@ -109,8 +113,15 @@ function isRetryablePairingError(error: unknown): boolean {
   return normalized.includes("connection closed") || normalized.includes("timed out") || normalized.includes("not open");
 }
 
+function mediaDownloadError(message: string, retryable: boolean): Error & { retryable: boolean } {
+  return Object.assign(new Error(message), { retryable });
+}
+
 export class BaileysConnector implements WhatsAppConnector {
   private readonly accounts = new Map<string, RuntimeAccount>();
+  private readonly mediaDownloads: DurableMediaDownloadOutbox;
+  private readonly mediaDrainAccounts = new Set<string>();
+  private readonly mediaRetryTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly sessions: SessionStore,
@@ -119,7 +130,17 @@ export class BaileysConnector implements WhatsAppConnector {
     private readonly onMedia: MediaHandler,
     private readonly onStatus: StatusHandler,
     private readonly config: SidecarConfig
-  ) {}
+  ) {
+    this.mediaDownloads = new DurableMediaDownloadOutbox(
+      join(config.callbackSpoolRoot, "media-downloads"),
+      logger,
+      config.connectorHmacSecret
+    );
+    this.mediaRetryTimer = setInterval(() => {
+      void this.drainAllMediaDownloads();
+    }, config.callbackRetryIntervalMs);
+    this.mediaRetryTimer.unref?.();
+  }
 
   async start(accountId: string, generation?: number): Promise<AccountSnapshot> {
     const account = this.account(accountId);
@@ -452,6 +473,10 @@ export class BaileysConnector implements WhatsAppConnector {
     return result;
   }
 
+  pendingMediaDownloads(): number {
+    return this.mediaDownloads.count();
+  }
+
   private account(accountId: string): RuntimeAccount {
     let account = this.accounts.get(accountId);
     if (!account) {
@@ -531,6 +556,7 @@ export class BaileysConnector implements WhatsAppConnector {
         last_error_message: null
       };
       await this.emitStatus(account);
+      void this.drainMediaDownloads(account);
     }
     if (update.connection === "close") {
       const suppressed = account.suppressReconnectFor === socket;
@@ -568,14 +594,23 @@ export class BaileysConnector implements WhatsAppConnector {
       });
       if (!normalized) continue;
       const projected = projectSelfTestInboundToPhoneJid(normalized, account.status);
-      await this.onInbound(projected);
-      if (
+      const hasMedia = Boolean(
         projected.media_kind &&
         projected.media_mime_type &&
         projected.external_message_id
-      ) {
-        await this.downloadAndUploadMedia(account, raw, projected);
+      );
+      if (hasMedia) {
+        this.mediaDownloads.enqueue({
+          accountId: account.accountId,
+          externalMessageId: projected.external_message_id,
+          mediaKind: projected.media_kind as WhatsAppMediaKind,
+          mediaType: projected.media_mime_type as string,
+          fileName: projected.media_filename,
+          rawMessage: raw
+        });
       }
+      await this.onInbound(projected);
+      if (hasMedia) await this.drainMediaDownloads(account);
       const occurredAt = new Date().toISOString();
       account.status.last_inbound_at = occurredAt;
       account.status.last_transport_activity_at = occurredAt;
@@ -583,84 +618,66 @@ export class BaileysConnector implements WhatsAppConnector {
     }
   }
 
-  private async downloadAndUploadMedia(
-    account: RuntimeAccount,
-    raw: any,
-    message: NormalizedInboundMessage
-  ): Promise<void> {
-    if (!message.media_kind || !message.media_mime_type || !account.socket) return;
-    let content: Buffer;
-    try {
-      const downloaded = await downloadMediaMessage(
-        raw,
-        "buffer",
-        {},
-        {
-          logger: this.logger.child({ account_id: account.accountId }) as any,
-          reuploadRequest: account.socket.updateMediaMessage
-        }
-      );
-      content = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
-    } catch (error) {
-      this.logger.error(
-        {
-          account_id: account.accountId,
-          message_id: message.external_message_id,
-          media_kind: message.media_kind,
-          error_code: errorCode(error, "baileys_media_download_failed")
-        },
-        "baileys_media_download_failed"
-      );
-      return;
-    }
-    if (!content.byteLength || content.byteLength > MEDIA_LIMITS[message.media_kind]) {
-      this.logger.warn(
-        {
-          account_id: account.accountId,
-          message_id: message.external_message_id,
-          media_kind: message.media_kind,
-          byte_size: content.byteLength
-        },
-        "baileys_media_size_rejected"
-      );
-      return;
-    }
-    for (let attempt = 1; attempt <= MEDIA_UPLOAD_ATTEMPTS; attempt += 1) {
-      try {
-        await this.onMedia({
-          accountId: account.accountId,
-          messageId: message.external_message_id,
-          mediaKind: message.media_kind,
-          mediaType: message.media_mime_type,
-          filename: message.media_filename,
-          content
-        });
-        return;
-      } catch (error) {
-        this.logger.warn(
-          {
-            account_id: account.accountId,
-            message_id: message.external_message_id,
-            media_kind: message.media_kind,
-            attempt,
-            attempts: MEDIA_UPLOAD_ATTEMPTS,
-            error_name: error instanceof Error ? error.name : "UnknownError"
-          },
-          "baileys_media_upload_retry"
-        );
-        if (attempt < MEDIA_UPLOAD_ATTEMPTS) {
-          await sleep(Math.min(1000 * 2 ** (attempt - 1), 16_000));
-        }
+  private async drainAllMediaDownloads(): Promise<void> {
+    for (const account of this.accounts.values()) {
+      if (account.socket && account.status.status === "connected") {
+        await this.drainMediaDownloads(account);
       }
     }
-    this.logger.error(
+  }
+
+  private async drainMediaDownloads(account: RuntimeAccount): Promise<void> {
+    if (this.mediaDrainAccounts.has(account.accountId)) return;
+    this.mediaDrainAccounts.add(account.accountId);
+    try {
+      const result = await this.mediaDownloads.drainAccount(
+        account.accountId,
+        async (envelope) => this.downloadAndUploadMedia(account, envelope)
+      );
+      if (result.delivered || result.pending || result.dead) {
+        this.logger.info(
+          {
+            account_id: account.accountId,
+            delivered: result.delivered,
+            pending: result.pending,
+            dead: result.dead
+          },
+          "baileys_media_download_outbox_drained"
+        );
+      }
+    } finally {
+      this.mediaDrainAccounts.delete(account.accountId);
+    }
+  }
+
+  private async downloadAndUploadMedia(
+    account: RuntimeAccount,
+    envelope: MediaDownloadEnvelope
+  ): Promise<void> {
+    if (!account.socket || account.status.status !== "connected") {
+      throw mediaDownloadError("baileys_media_socket_not_ready", true);
+    }
+    const downloaded = await downloadMediaMessage(
+      envelope.raw_message as any,
+      "buffer",
+      {},
       {
-        account_id: account.accountId,
-        message_id: message.external_message_id,
-        media_kind: message.media_kind
-      },
-      "baileys_media_upload_exhausted"
+        logger: this.logger.child({ account_id: account.accountId }) as any,
+        reuploadRequest: account.socket.updateMediaMessage
+      }
     );
+    const content = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded as any);
+    if (!content.byteLength || content.byteLength > MEDIA_LIMITS[envelope.media_kind]) {
+      throw mediaDownloadError("baileys_media_size_rejected", false);
+    }
+    await this.onMedia({
+      accountId: account.accountId,
+      messageId: envelope.external_message_id,
+      mediaKind: envelope.media_kind,
+      mediaType: envelope.media_type,
+      filename: envelope.file_name,
+      content
+    });
   }
 
   private async scheduleReconnect(account: RuntimeAccount): Promise<void> {
