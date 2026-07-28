@@ -49,7 +49,7 @@ def valid_manifest(root: Path) -> tuple[dict, Path]:
             "image_id": "sha256:" + "b" * 64,
             "postgres_image_digest": "pgvector/pgvector@sha256:" + "c" * 64,
             "nginx_image_digest": "nginx@sha256:" + "d" * 64,
-            "migration_revision": "20260728_r5_handoff",
+            "migration_revision": "20260728_r5_scenario",
             "config_profile": "rc-test-isolated-v1",
             "config_digest": "sha256:" + "e" * 64,
         },
@@ -261,9 +261,9 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
 
     def test_exact_main_acceptance_and_image_identity_are_fail_closed(self):
         self.assertIn("RC_SOURCE_SHA=<40-char-git-sha>", self.env_example)
-        self.assertIn('SOURCE_SHA="${GIT_SHA}"', self.runner)
+        self.assertIn('SOURCE_SHA="${GIT_SHA:?GIT_SHA required}"', self.runner)
         self.assertIn("RC_SOURCE_SHA does not match GIT_SHA", self.runner)
-        self.assertIn('IMAGE_TAG_VALUE="${RC_IMAGE_TAG}"', self.runner)
+        self.assertIn('IMAGE_TAG_VALUE="${RC_IMAGE_TAG:?RC_IMAGE_TAG required}"', self.runner)
         self.assertIn('docker image inspect "${IMAGE_TAG_VALUE}"', self.runner)
         self.assertIn(
             "LABEL org.opencontainers.image.revision=${GIT_SHA}",
@@ -293,20 +293,20 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             self.compose,
         )
         self.assertIn(
-            'PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexus_rc_test}"',
+            'PROJECT_NAME="${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME required}"',
             self.runner,
         )
-        self.assertIn(
-            'docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}"',
-            self.runner,
-        )
-        self.assertIn("down --volumes --remove-orphans", self.runner)
-        self.assertIn("trap cleanup_stack EXIT", self.runner)
-        self.assertIn(
+        for marker in (
+            'docker compose \\\n    --project-name "${PROJECT_NAME}"',
+            '--env-file "${ENV_FILE}"',
+            '--file "${COMPOSE_FILE}"',
+            "down --volumes --remove-orphans",
+            "cleanup()",
+            "trap on_exit EXIT",
             "App must attach only to the internal RC network",
-            self.runner,
-        )
-        self.assertIn("Nginx network attachment mismatch", self.runner)
+            "Nginx network attachment mismatch",
+        ):
+            self.assertIn(marker, self.runner)
 
     def test_seed_runner_migration_browser_and_evidence_are_bound(self):
         for marker in (
