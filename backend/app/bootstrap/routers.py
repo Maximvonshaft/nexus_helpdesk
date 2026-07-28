@@ -24,6 +24,7 @@ from ..api.agent_runtime_operations import router as agent_runtime_operations_ro
 from ..api.auth import router as auth_router
 from ..api.canonical_integration import router as integration_router
 from ..api.canonical_osr_admin import router as osr_admin_router
+from ..api.case_scenarios import router as case_scenarios_router
 from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.data_lifecycle import router as data_lifecycle_router
@@ -131,6 +132,7 @@ def register_api_routers(app: FastAPI) -> None:
         frontend_observability_router,
         agent_control_router,
         agent_runtime_operations_router,
+        case_scenarios_router,
         channel_control_router,
         files_router,
         integration_router,
