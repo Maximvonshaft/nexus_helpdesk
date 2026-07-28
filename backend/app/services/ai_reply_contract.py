@@ -7,6 +7,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import event
+
 from ..enums import ConversationState
 from ..settings import get_settings
 
@@ -14,11 +16,30 @@ AI_REPLY_CONTRACT = "nexus.ai_reply.v3"
 
 AI_ORIGINS = {"provider_runtime", "ai_runtime"}
 HUMAN_ORIGIN = "human_agent"
-FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS = {"business_system", "tool_service", "knowledge_runtime", "safety_service"}
+FORBIDDEN_CUSTOMER_VISIBLE_ORIGINS = {
+    "business_system",
+    "tool_service",
+    "knowledge_runtime",
+    "safety_service",
+}
 VALID_SAFETY_STATUSES = {"passed", "reviewed"}
 VALID_AI_REPLY_CONTRACTS = {AI_REPLY_CONTRACT}
-VALID_REPLY_TYPES = {"answer", "clarifying_question", "handoff_notice", "null_reply"}
-WEAK_RUNTIME_CONTRACT_SECRETS = {"", "change-me", "changeme", "replace-me", "replace_this", "secret", "default", "dev-only"}
+VALID_REPLY_TYPES = {
+    "answer",
+    "clarifying_question",
+    "handoff_notice",
+    "null_reply",
+}
+WEAK_RUNTIME_CONTRACT_SECRETS = {
+    "",
+    "change-me",
+    "changeme",
+    "replace-me",
+    "replace_this",
+    "secret",
+    "default",
+    "dev-only",
+}
 HUMAN_REPLY_STATES = {
     ConversationState.human_owned,
     ConversationState.ready_to_reply,
@@ -38,7 +59,13 @@ class AIReplyContract:
     confidence: float | None = None
     channel: str | None = None
 
-    def payload_dict(self, *, body: str | None, origin: str = "provider_runtime", customer_visible: bool = True) -> dict[str, Any]:
+    def payload_dict(
+        self,
+        *,
+        body: str | None,
+        origin: str = "provider_runtime",
+        customer_visible: bool = True,
+    ) -> dict[str, Any]:
         return build_ai_reply_contract_payload(
             body=body,
             runtime_trace_id=self.runtime_trace_id,
@@ -55,11 +82,35 @@ class AIReplyContract:
             customer_visible=customer_visible,
         )
 
-    def payload_json(self, *, body: str | None, origin: str = "provider_runtime", customer_visible: bool = True) -> str:
-        return canonical_contract_payload_json(self.payload_dict(body=body, origin=origin, customer_visible=customer_visible))
+    def payload_json(
+        self,
+        *,
+        body: str | None,
+        origin: str = "provider_runtime",
+        customer_visible: bool = True,
+    ) -> str:
+        return canonical_contract_payload_json(
+            self.payload_dict(
+                body=body,
+                origin=origin,
+                customer_visible=customer_visible,
+            )
+        )
 
-    def payload_sha256(self, *, body: str | None, origin: str = "provider_runtime", customer_visible: bool = True) -> str | None:
-        return contract_payload_sha256(self.payload_json(body=body, origin=origin, customer_visible=customer_visible))
+    def payload_sha256(
+        self,
+        *,
+        body: str | None,
+        origin: str = "provider_runtime",
+        customer_visible: bool = True,
+    ) -> str | None:
+        return contract_payload_sha256(
+            self.payload_json(
+                body=body,
+                origin=origin,
+                customer_visible=customer_visible,
+            )
+        )
 
 
 def build_ai_reply_contract(
@@ -133,22 +184,30 @@ def sign_ai_reply_contract(
         "runtime_trace_id": runtime_trace_id,
         "contract_version": contract_version,
         "safety_status": safety_status,
+        "reply": {
+            "type": reply_type,
+            "text_sha256": _body_sha256(body, reply_type=reply_type),
+        },
+        "grounding": {
+            "used_sources": _clean_list(used_sources),
+            "unsupported_claims": _clean_list(unsupported_claims),
+            "conflicts": _clean_list(conflicts),
+        },
+        "risk": {"confidence": confidence},
+        "channel": channel,
     }
-    payload.update(
-        {
-            "reply": {"type": reply_type, "text_sha256": payload["body_sha256"]},
-            "grounding": {
-                "used_sources": _clean_list(used_sources),
-                "unsupported_claims": _clean_list(unsupported_claims),
-                "conflicts": _clean_list(conflicts),
-            },
-            "risk": {"confidence": confidence},
-            "channel": channel,
-        }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
     )
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     secret = runtime_contract_signing_secret()
-    return hmac.new(secret.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(
+        secret.encode("utf-8"),
+        encoded.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def validate_ai_reply_contract(
@@ -232,7 +291,9 @@ def runtime_contract_signing_secret() -> str:
     if settings.app_env in {"test", "development", "local"} and not secret:
         return "test-runtime-contract-signing-secret"
     if runtime_contract_secret_problem(secret):
-        raise RuntimeError("RUNTIME_CONTRACT_SIGNING_SECRET must be a strong secret")
+        raise RuntimeError(
+            "RUNTIME_CONTRACT_SIGNING_SECRET must be a strong secret"
+        )
     return secret
 
 
@@ -249,9 +310,12 @@ def runtime_contract_secret_problem(secret: str | None) -> str | None:
 
 def runtime_contract_secret_ready() -> dict[str, Any]:
     settings = get_settings()
-    problem = runtime_contract_secret_problem(settings.runtime_contract_signing_secret)
+    problem = runtime_contract_secret_problem(
+        settings.runtime_contract_signing_secret
+    )
     return {
-        "ok": problem is None or settings.app_env in {"test", "development", "local"},
+        "ok": problem is None
+        or settings.app_env in {"test", "development", "local"},
         "configured": bool(settings.runtime_contract_signing_secret),
         "problem": None if problem is None else problem,
     }
@@ -275,34 +339,35 @@ def build_ai_reply_contract_payload(
 ) -> dict[str, Any]:
     if contract_version != AI_REPLY_CONTRACT:
         raise ValueError("runtime_contract_version_invalid")
-    payload: dict[str, Any] = {
+    return {
         "runtime_trace_id": runtime_trace_id,
         "contract_version": contract_version,
         "runtime_signature": runtime_signature,
         "safety_status": safety_status,
         "origin": origin,
+        "reply": {
+            "type": reply_type,
+            "text": None if reply_type == "null_reply" else body,
+        },
+        "customer_visible": bool(customer_visible),
+        "grounding": {
+            "used_sources": _clean_list(used_sources),
+            "unsupported_claims": _clean_list(unsupported_claims),
+            "conflicts": _clean_list(conflicts),
+        },
+        "risk": {"confidence": confidence},
+        "channel": channel,
     }
-    payload.update(
-        {
-            "reply": {
-                "type": reply_type,
-                "text": None if reply_type == "null_reply" else body,
-            },
-            "customer_visible": bool(customer_visible),
-            "grounding": {
-                "used_sources": _clean_list(used_sources),
-                "unsupported_claims": _clean_list(unsupported_claims),
-                "conflicts": _clean_list(conflicts),
-            },
-            "risk": {"confidence": confidence},
-            "channel": channel,
-        }
-    )
-    return payload
 
 
 def canonical_contract_payload_json(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
 
 
 def contract_payload_sha256(payload_json: str | None) -> str | None:
@@ -311,7 +376,10 @@ def contract_payload_sha256(payload_json: str | None) -> str | None:
     return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
 
-def validate_contract_payload_hash(payload_json: str | None, expected_sha256: str | None) -> str | None:
+def validate_contract_payload_hash(
+    payload_json: str | None,
+    expected_sha256: str | None,
+) -> str | None:
     if not payload_json and not expected_sha256:
         return None
     if not payload_json or not expected_sha256:
@@ -331,15 +399,23 @@ def parse_runtime_contract_payload(payload_json: str | None) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def contract_validation_args_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def contract_validation_args_from_payload(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     reply = payload.get("reply") if isinstance(payload.get("reply"), dict) else {}
-    grounding = payload.get("grounding") if isinstance(payload.get("grounding"), dict) else {}
+    grounding = (
+        payload.get("grounding")
+        if isinstance(payload.get("grounding"), dict)
+        else {}
+    )
     risk = payload.get("risk") if isinstance(payload.get("risk"), dict) else {}
     return {
         "runtime_trace_id": payload.get("runtime_trace_id"),
         "contract_version": payload.get("contract_version"),
         "runtime_signature": payload.get("runtime_signature"),
         "safety_status": payload.get("safety_status"),
+        "origin": payload.get("origin"),
+        "body": reply.get("text"),
         "reply_type": reply.get("type") or "answer",
         "used_sources": grounding.get("used_sources"),
         "unsupported_claims": grounding.get("unsupported_claims"),
@@ -348,6 +424,88 @@ def contract_validation_args_from_payload(payload: dict[str, Any]) -> dict[str, 
         "channel": payload.get("channel"),
         "customer_visible": bool(payload.get("customer_visible", True)),
     }
+
+
+def validate_persisted_ai_payload_binding(target: Any) -> None:
+    """Bind signed payload metadata to the durable outbound row."""
+
+    origin = str(getattr(target, "origin", "") or "").strip().lower()
+    if origin not in AI_ORIGINS:
+        return
+    payload_json = getattr(target, "runtime_contract_payload_json", None)
+    payload_sha = getattr(target, "runtime_contract_payload_sha256", None)
+    hash_violation = validate_contract_payload_hash(payload_json, payload_sha)
+    if hash_violation:
+        raise ValueError(hash_violation)
+    if not payload_json:
+        return
+    payload = parse_runtime_contract_payload(payload_json)
+    if not payload:
+        raise ValueError("runtime_contract_payload_invalid")
+    args = contract_validation_args_from_payload(payload)
+    if str(args.get("origin") or "").strip().lower() != origin:
+        raise ValueError("runtime_contract_payload_origin_mismatch")
+    if args.get("body") != getattr(target, "body", None):
+        raise ValueError("runtime_contract_payload_body_mismatch")
+    for payload_key, model_attribute, error_code in (
+        (
+            "runtime_trace_id",
+            "runtime_trace_id",
+            "runtime_contract_payload_trace_mismatch",
+        ),
+        (
+            "contract_version",
+            "runtime_contract_version",
+            "runtime_contract_payload_version_mismatch",
+        ),
+        (
+            "runtime_signature",
+            "runtime_signature",
+            "runtime_contract_payload_signature_mismatch",
+        ),
+        (
+            "safety_status",
+            "safety_status",
+            "runtime_contract_payload_safety_mismatch",
+        ),
+        (
+            "reply_type",
+            "runtime_reply_type",
+            "runtime_contract_payload_reply_type_mismatch",
+        ),
+    ):
+        model_value = getattr(target, model_attribute, None)
+        if model_value is not None and args.get(payload_key) != model_value:
+            raise ValueError(error_code)
+
+
+def _validate_outbound_ai_payload_before_write(
+    _mapper,
+    _connection,
+    target,
+) -> None:
+    validate_persisted_ai_payload_binding(target)
+
+
+def _register_outbound_payload_events() -> None:
+    # Import after all contract functions are defined to avoid a model/service
+    # cycle while app.models is constructing SQLAlchemy classes.
+    from ..models import TicketOutboundMessage
+
+    for event_name in ("before_insert", "before_update"):
+        if not event.contains(
+            TicketOutboundMessage,
+            event_name,
+            _validate_outbound_ai_payload_before_write,
+        ):
+            event.listen(
+                TicketOutboundMessage,
+                event_name,
+                _validate_outbound_ai_payload_before_write,
+            )
+
+
+_register_outbound_payload_events()
 
 
 def _trace_id(trace: dict[str, Any]) -> str:
@@ -364,10 +522,14 @@ def _trace_id(trace: dict[str, Any]) -> str:
 def _body_sha256(body: str | None, *, reply_type: str) -> str | None:
     if reply_type == "null_reply" and body is None:
         return None
-    return hashlib.sha256((body or "").encode("utf-8", errors="ignore")).hexdigest()
+    return hashlib.sha256(
+        (body or "").encode("utf-8", errors="ignore")
+    ).hexdigest()
 
 
-def _clean_list(values: list[str] | tuple[str, ...] | None) -> list[str]:
+def _clean_list(
+    values: list[str] | tuple[str, ...] | None,
+) -> list[str]:
     if not values:
         return []
     cleaned: list[str] = []
