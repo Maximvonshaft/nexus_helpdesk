@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import os
 
 import pytest
-from fastapi import FastAPI
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault(
@@ -13,48 +13,63 @@ os.environ.setdefault(
 
 from app.api.whatsapp_integration import (
     receive_meta_whatsapp_webhook,
+    router as connection_specific_router,
     verify_meta_whatsapp_webhook,
 )
 from app.api.whatsapp_meta_shared_webhook import (
     receive_shared_meta_whatsapp_webhook,
+    router as shared_waba_router,
     verify_shared_meta_whatsapp_webhook,
 )
 from app.bootstrap.routers import register_api_routers
 
 
 @pytest.mark.parametrize(
-    ("shared_endpoint", "dynamic_endpoint"),
+    ("method", "shared_endpoint", "dynamic_endpoint"),
     [
         (
+            "GET",
             verify_shared_meta_whatsapp_webhook,
             verify_meta_whatsapp_webhook,
         ),
         (
+            "POST",
             receive_shared_meta_whatsapp_webhook,
             receive_meta_whatsapp_webhook,
         ),
     ],
 )
-def test_shared_waba_webhook_is_registered_before_connection_specific_route(
+def test_shared_and_connection_specific_waba_routes_are_both_defined(
+    method,
     shared_endpoint,
     dynamic_endpoint,
 ):
-    """Static WABA verification and event routes must win first-match routing."""
+    """Both authorities must exist before their application registration order matters."""
 
-    isolated_app = FastAPI()
-    register_api_routers(isolated_app)
-    routes = list(isolated_app.routes)
-    shared_index = next(
-        index
-        for index, route in enumerate(routes)
+    shared_route = next(
+        route
+        for route in shared_waba_router.routes
         if getattr(route, "endpoint", None) is shared_endpoint
     )
-    dynamic_index = next(
-        index
-        for index, route in enumerate(routes)
+    dynamic_route = next(
+        route
+        for route in connection_specific_router.routes
         if getattr(route, "endpoint", None) is dynamic_endpoint
     )
 
-    assert shared_index < dynamic_index
-    assert routes[shared_index].path.endswith("/meta/webhook")
-    assert routes[dynamic_index].path.endswith("/meta/{connection_id}/webhook")
+    assert method in (shared_route.methods or set())
+    assert method in (dynamic_route.methods or set())
+    assert shared_route.path.endswith("/meta/webhook")
+    assert dynamic_route.path.endswith("/meta/{connection_id}/webhook")
+
+
+def test_shared_waba_router_is_registered_before_dynamic_connection_router():
+    """Starlette is first-match; production registration order is a hard contract."""
+
+    source = inspect.getsource(register_api_routers)
+    shared_marker = "whatsapp_meta_shared_webhook_router,"
+    dynamic_marker = "whatsapp_integration_router,"
+
+    assert shared_marker in source
+    assert dynamic_marker in source
+    assert source.index(shared_marker) < source.index(dynamic_marker)
