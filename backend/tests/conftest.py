@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import event, insert, select
+from sqlalchemy.orm import Session
 
+from app.models import Tenant
 from app.settings import get_settings
 from app.services import background_job_execution_scope, background_jobs
 from app.services.whatsapp_embedded_signup_settings import (
@@ -13,6 +16,23 @@ from app.services.whatsapp_media_settings import (
 from app.services.whatsapp_runtime_settings import (
     reset_whatsapp_runtime_settings_cache,
 )
+
+
+# These suites predate relational Tenant ownership. The bridge is intentionally
+# test-only and module-bounded: production code still rejects every unbound or
+# cross-Tenant actor/resource. Each listed module is migrated to one explicit,
+# deterministic Tenant without changing the business assertions under test.
+_LEGACY_FIXTURE_TENANTS = {
+    "test_channel_workbench_backend_contracts": "pytest-channel-workbench",
+    "test_nexus_osr_tool_execution_service": "pytest-tool-execution",
+    "test_operator_product_foundation": "pytest-operator-product",
+    "test_unified_operator_queue": "tenant-queue-a",
+    "test_webchat_action_idempotency": "pytest-action-idempotency",
+    "test_webchat_handoff_control": "pytest",
+    "test_webchat_handoff_snapshot_service": "pytest-handoff-snapshot",
+    "test_webchat_voice_api": "pytest-voice",
+    "test_webchat_voice_p0_gap_closure": "pytest-voice-p0",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +53,67 @@ def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
     _reset_settings_caches()
     yield
     _reset_settings_caches()
+
+
+@pytest.fixture(autouse=True)
+def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
+    """Stamp only named legacy test suites with relational Tenant ownership.
+
+    A direct bounded insert is used because many fixtures flush User/Team/Ticket
+    rows independently before a WebChat conversation is created. The listener is
+    removed after every test and never runs in application processes.
+    """
+
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    tenant_key = _LEGACY_FIXTURE_TENANTS.get(module_name)
+    if tenant_key is None:
+        yield
+        return
+
+    cache_key = f"nexus.test.tenant:{tenant_key}"
+
+    def before_flush(session: Session, _flush_context, _instances) -> None:
+        tenant_id = session.info.get(cache_key)
+        if tenant_id is None:
+            connection = session.connection()
+            tenant_id = connection.execute(
+                select(Tenant.id).where(Tenant.tenant_key == tenant_key)
+            ).scalar_one_or_none()
+            if tenant_id is None:
+                result = connection.execute(
+                    insert(Tenant).values(
+                        tenant_key=tenant_key,
+                        display_name=f"Test Tenant {tenant_key}",
+                        is_active=True,
+                    )
+                )
+                tenant_id = int(result.inserted_primary_key[0])
+            session.info[cache_key] = int(tenant_id)
+
+        for row in tuple(session.new) + tuple(session.dirty):
+            if isinstance(row, Tenant) or not hasattr(row, "tenant_id"):
+                continue
+            if getattr(row, "tenant_id", None) is not None:
+                continue
+            row.tenant_id = int(tenant_id)
+            if hasattr(row, "tenant_assignment_source") and not getattr(
+                row,
+                "tenant_assignment_source",
+                None,
+            ):
+                row.tenant_assignment_source = "test_fixture"
+            if hasattr(row, "tenant_assignment_version") and not getattr(
+                row,
+                "tenant_assignment_version",
+                None,
+            ):
+                row.tenant_assignment_version = "nexus.test.fixture.v1"
+
+    event.listen(Session, "before_flush", before_flush)
+    try:
+        yield
+    finally:
+        event.remove(Session, "before_flush", before_flush)
 
 
 @pytest.fixture(autouse=True)
