@@ -42,7 +42,8 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-SOURCE_SHA="${RC_SOURCE_SHA:?RC_SOURCE_SHA required}"
+RC_SOURCE_SHA_VALUE="${RC_SOURCE_SHA:?RC_SOURCE_SHA required}"
+SOURCE_SHA="${GIT_SHA:?GIT_SHA required}"
 IMAGE_TAG_VALUE="${RC_IMAGE_TAG:?RC_IMAGE_TAG required}"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME required}"
 RC_POSTGRES_IMAGE="${RC_POSTGRES_IMAGE:?RC_POSTGRES_IMAGE required}"
@@ -53,7 +54,11 @@ RC_TEST_ADMIN_USERNAME="${RC_TEST_ADMIN_USERNAME:?RC_TEST_ADMIN_USERNAME require
 RC_TEST_ADMIN_PASSWORD="${RC_TEST_ADMIN_PASSWORD:?RC_TEST_ADMIN_PASSWORD required}"
 
 if [[ ! "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "RC_SOURCE_SHA must be an exact lowercase 40-character Git SHA" >&2
+  echo "GIT_SHA must be an exact lowercase 40-character Git SHA" >&2
+  exit 2
+fi
+if [[ "${RC_SOURCE_SHA_VALUE}" != "${SOURCE_SHA}" ]]; then
+  echo "RC_SOURCE_SHA does not match GIT_SHA" >&2
   exit 2
 fi
 if [[ "$(git -C "${ROOT_DIR}" rev-parse HEAD)" != "${SOURCE_SHA}" ]]; then
@@ -289,14 +294,17 @@ from app.models import Tenant
 from app.models_webchat_binding import WebchatPublicOriginBinding
 from app.services.webchat_tenant_binding import normalize_public_origin
 register_all_models()
+tenant_key = os.environ["RC_TEST_TENANT_KEY"].strip().lower()
 origin = normalize_public_origin(os.environ["RC_PUBLIC_ORIGIN"])
 db = SessionLocal()
 try:
-    tenants = db.query(Tenant).filter(Tenant.tenant_key == os.environ["RC_TEST_TENANT_KEY"]).all()
+    tenants = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).all()
     rows = db.query(WebchatPublicOriginBinding).filter(WebchatPublicOriginBinding.normalized_origin == origin).all()
     if len(tenants) != 1 or not tenants[0].is_active or len(rows) != 1:
         raise SystemExit("RC seed authority invalid")
     row = rows[0]
+    if row.tenant_key != tenant_key:
+        raise SystemExit("RC origin binding Tenant mismatch")
     print(json.dumps({
         "schema": "nexus.osr.rc-test-seed-verification.v1",
         "status": "pass",
@@ -321,9 +329,10 @@ from app.model_registry import register_all_models
 from app.models import Tenant, User
 from app.services.tenant_authority import RUNTIME_TENANT_ASSIGNMENT_SOURCE, RUNTIME_TENANT_ASSIGNMENT_VERSION
 register_all_models()
+tenant_key = os.environ["RC_TEST_TENANT_KEY"].strip().lower()
 db = SessionLocal()
 try:
-    tenant = db.query(Tenant).filter(Tenant.tenant_key == os.environ["RC_TEST_TENANT_KEY"]).first()
+    tenant = db.query(Tenant).filter(Tenant.tenant_key == tenant_key).first()
     if tenant is None or not tenant.is_active:
         raise SystemExit("RC operator Tenant missing")
     username = os.environ["RC_TEST_ADMIN_USERNAME"].strip()
@@ -380,8 +389,10 @@ rc = inspect_json("network", rc_network)
 edge = inspect_json("network", edge_network)
 app_networks = sorted(app["NetworkSettings"]["Networks"])
 nginx_networks = sorted(nginx["NetworkSettings"]["Networks"])
-if app_networks != [rc_network] or nginx_networks != sorted([rc_network, edge_network]):
-    raise SystemExit("RC network attachment mismatch")
+if app_networks != [rc_network]:
+    raise SystemExit("App must attach only to the internal RC network")
+if nginx_networks != sorted([rc_network, edge_network]):
+    raise SystemExit("Nginx network attachment mismatch")
 if rc.get("Internal") is not True or edge.get("Internal") is not False:
     raise SystemExit("RC network isolation flags mismatch")
 Path(output).write_text(json.dumps({
