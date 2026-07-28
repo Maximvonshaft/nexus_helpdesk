@@ -12,6 +12,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
+    select,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -24,6 +26,10 @@ ACTIVE_TASK_SQL = (
     "status NOT IN ('resolved', 'dropped', 'replayed', "
     "'replay_failed', 'cancelled')"
 )
+HANDOFF_PROJECTION_SOURCE = "webchat_handoff"
+HANDOFF_PROJECTION_SCHEMA = "nexus.operator-task.webchat-handoff.v2"
+HANDOFF_PROJECTION_PRIORITY = 40
+HANDOFF_OPEN_STATUSES = ("requested", "accepted")
 
 
 class OperatorTask(Base):
@@ -148,6 +154,56 @@ class OperatorTask(Base):
         UTCDateTime,
         nullable=True,
     )
+
+
+@event.listens_for(OperatorTask, "before_insert")
+@event.listens_for(OperatorTask, "before_update")
+def _enforce_handoff_projection_identity(
+    mapper,
+    connection,
+    target: OperatorTask,
+) -> None:  # noqa: ANN001
+    """Derive every Handoff projection identity from its source aggregate.
+
+    Callers may supply routing context, but they cannot mint a second mutable
+    identity for a Handoff task. The current open ``WebchatHandoffRequest`` is
+    the sole source for source id/version/schema/priority. This boundary also
+    rewrites legacy realtime writes before they can be persisted.
+    """
+
+    del mapper
+    if target.task_type != "handoff" or target.webchat_conversation_id is None:
+        return
+
+    from .webchat_models import WebchatHandoffRequest
+
+    source = connection.execute(
+        select(
+            WebchatHandoffRequest.id,
+            WebchatHandoffRequest.lock_version,
+            WebchatHandoffRequest.ticket_id,
+            WebchatHandoffRequest.reason_code,
+        )
+        .where(
+            WebchatHandoffRequest.conversation_id
+            == int(target.webchat_conversation_id),
+            WebchatHandoffRequest.status.in_(HANDOFF_OPEN_STATUSES),
+        )
+        .order_by(WebchatHandoffRequest.id.desc())
+        .limit(1)
+    ).mappings().first()
+    if source is None:
+        return
+
+    target.source_type = HANDOFF_PROJECTION_SOURCE
+    target.source_id = str(source["id"])
+    target.source_version = int(source["lock_version"] or 1)
+    target.projection_schema = HANDOFF_PROJECTION_SCHEMA
+    target.priority = HANDOFF_PROJECTION_PRIORITY
+    if source["ticket_id"] is not None:
+        target.ticket_id = int(source["ticket_id"])
+    if source["reason_code"]:
+        target.reason_code = str(source["reason_code"])[:160]
 
 
 class OperatorQueueScopeGrant(Base):
