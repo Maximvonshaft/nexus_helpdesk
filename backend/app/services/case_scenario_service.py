@@ -26,6 +26,17 @@ SCENARIO_IDENTITY_FIELDS = (
     "category",
     "ai_classification",
 )
+IMMUTABLE_ASSIGNMENT_FIELDS = (
+    "ticket_id",
+    "scenario_key",
+    "catalog_version",
+    "catalog_sha256",
+    "scenario_snapshot_json",
+    "assignment_source",
+    "assignment_reason",
+    "assigned_by",
+    "assigned_at",
+)
 
 
 def _http_conflict(code: str, **details: Any) -> HTTPException:
@@ -46,7 +57,7 @@ def load_runtime_scenario_catalog(
     *,
     at: datetime | None = None,
 ) -> BusinessScenarioCatalog:
-    """Load the catalog without treating governance review as runtime expiry."""
+    """Load approved runtime scenarios without treating review debt as expiry."""
 
     catalog = load_business_scenario_catalog(require_all_active=False)
     current = _utc(at)
@@ -97,6 +108,22 @@ def _candidate_matches(
     aliases = catalog.alias_map()
     matches: dict[str, str] = {}
     for field in SCENARIO_IDENTITY_FIELDS:
+        value = _normalized(getattr(ticket, field, None))
+        if value and value in aliases:
+            matches[field] = aliases[value]
+    return matches
+
+
+def _changed_candidate_matches(
+    ticket: Ticket,
+    catalog: BusinessScenarioCatalog,
+) -> dict[str, str]:
+    aliases = catalog.alias_map()
+    state = inspect(ticket)
+    matches: dict[str, str] = {}
+    for field in SCENARIO_IDENTITY_FIELDS:
+        if not state.attrs[field].history.has_changes():
+            continue
         value = _normalized(getattr(ticket, field, None))
         if value and value in aliases:
             matches[field] = aliases[value]
@@ -253,9 +280,17 @@ def serialize_case_scenario_assignment(
     *,
     at: datetime | None = None,
 ) -> dict[str, Any]:
-    snapshot = json.loads(row.scenario_snapshot_json)
-    review_due_raw = snapshot["scenario"]["lifecycle"]["review_due"]
-    review_due = datetime.fromisoformat(str(review_due_raw).replace("Z", "+00:00"))
+    try:
+        snapshot = json.loads(row.scenario_snapshot_json)
+        review_due_raw = snapshot["scenario"]["lifecycle"]["review_due"]
+        review_due = datetime.fromisoformat(
+            str(review_due_raw).replace("Z", "+00:00")
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _http_conflict(
+            "case_scenario_snapshot_invalid",
+            assignment_id=row.id,
+        ) from exc
     if review_due.tzinfo is None:
         review_due = review_due.replace(tzinfo=timezone.utc)
     return {
@@ -276,6 +311,16 @@ def serialize_case_scenario_assignment(
     }
 
 
+def _lock_ticket(db: Session, ticket_id: int) -> Ticket:
+    query = db.query(Ticket).filter(Ticket.id == ticket_id)
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        query = query.with_for_update()
+    row = query.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="ticket_not_found")
+    return row
+
+
 def reclassify_case_scenario(
     db: Session,
     *,
@@ -290,11 +335,12 @@ def reclassify_case_scenario(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "case_scenario_reclassification_reason_required"},
         )
+    locked_ticket = _lock_ticket(db, int(ticket.id))
     catalog = load_runtime_scenario_catalog()
     scenario = resolve_explicit_scenario(catalog, scenario_key)
     current = current_case_scenario_assignment(
         db,
-        ticket_id=ticket.id,
+        ticket_id=locked_ticket.id,
         lock=True,
     )
     if (
@@ -321,7 +367,7 @@ def reclassify_case_scenario(
 
     row = CaseScenarioAssignment(
         **_assignment_values(
-            ticket,
+            locked_ticket,
             catalog,
             scenario,
             source="explicit_reclassification",
@@ -337,7 +383,7 @@ def reclassify_case_scenario(
 
     log_event(
         db,
-        ticket_id=ticket.id,
+        ticket_id=locked_ticket.id,
         actor_id=actor_id,
         event_type=EventType.field_updated,
         field_name="scenario_assignment",
@@ -356,12 +402,11 @@ def reclassify_case_scenario(
         },
     )
     db.flush()
-    attributes.set_committed_value(ticket, "case_type", row.scenario_key)
     return row
 
 
 def _catalog_projection_key(row: CaseScenarioAssignment) -> str:
-    """Project the canonical Assignment into legacy readers without restoring authority."""
+    """Temporary explicit closure adapter; not a general read projection."""
 
     catalog = load_business_scenario_catalog(require_all_active=False)
     if (
@@ -376,7 +421,12 @@ def project_case_scenario_to_legacy_identity(
     db: Session,
     ticket: Ticket,
 ) -> CaseScenarioAssignment | None:
-    """Expose Assignment as a read-only compatibility projection on ``case_type``."""
+    """Temporary explicit adapter used only by the legacy Closure builder.
+
+    This function is deliberately not registered on Session load. It performs
+    one bounded lookup only when a governed closure boundary is invoked. The
+    remaining Closure refactor is tracked as an open repository finding.
+    """
 
     if ticket.id is None:
         return None
@@ -421,7 +471,6 @@ def _insert_automatic_assignment(
             )
         )
     )
-    attributes.set_committed_value(ticket, "case_type", scenario.scenario_key)
 
 
 def _identity_changed(ticket: Ticket) -> bool:
@@ -430,6 +479,25 @@ def _identity_changed(ticket: Ticket) -> bool:
         state.attrs[field].history.has_changes()
         for field in SCENARIO_IDENTITY_FIELDS
     )
+
+
+@event.listens_for(CaseScenarioAssignment, "before_update")
+def _guard_assignment_contract_immutable(
+    mapper,
+    connection,
+    target: CaseScenarioAssignment,
+) -> None:  # noqa: ANN001
+    del mapper, connection
+    state = inspect(target)
+    changed = [
+        field
+        for field in IMMUTABLE_ASSIGNMENT_FIELDS
+        if state.attrs[field].history.has_changes()
+    ]
+    if changed:
+        raise ValueError(
+            "case_scenario_assignment_immutable:" + ",".join(sorted(changed))
+        )
 
 
 @event.listens_for(Ticket, "after_insert")
@@ -453,23 +521,26 @@ def _guard_scenario_identity_update(
         return
 
     catalog = load_runtime_scenario_catalog()
-    matches = _candidate_matches(target, catalog)
-    resolved = set(matches.values())
     current = _connection_current_assignment(connection, int(target.id))
-
     if current is not None:
-        requested = sorted(key for key in resolved if key != current["scenario_key"])
+        changed_matches = _changed_candidate_matches(target, catalog)
+        requested = sorted(
+            key
+            for key in set(changed_matches.values())
+            if key != current["scenario_key"]
+        )
         if requested:
             raise _http_conflict(
                 "case_scenario_reclassification_command_required",
                 ticket_id=target.id,
                 current_scenario_key=current["scenario_key"],
                 requested_scenario_keys=requested,
-                matches=matches,
+                matches=changed_matches,
             )
         return
 
-    if len(resolved) > 1:
+    matches = _candidate_matches(target, catalog)
+    if len(set(matches.values())) > 1:
         raise _http_conflict(
             "case_scenario_identity_conflict",
             ticket_id=target.id,

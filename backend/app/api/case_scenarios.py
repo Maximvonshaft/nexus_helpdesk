@@ -10,10 +10,7 @@ from ..services.case_scenario_service import (
     reclassify_case_scenario,
     serialize_case_scenario_assignment,
 )
-from ..services.permissions import (
-    ensure_can_update_core_fields,
-    ensure_ticket_visible,
-)
+from ..services.permissions import ensure_can_escalate, ensure_ticket_visible
 from ..services.ticket_service import get_ticket_or_404
 from ..unit_of_work import managed_session
 from .deps import get_current_user
@@ -52,7 +49,7 @@ def reclassify_case_scenario_assignment(
 ):
     ticket = get_ticket_or_404(db, ticket_id)
     ensure_ticket_visible(current_user, ticket, db)
-    ensure_can_update_core_fields(current_user, db)
+    ensure_can_escalate(current_user, db)
     with managed_session(db):
         row = reclassify_case_scenario(
             db,

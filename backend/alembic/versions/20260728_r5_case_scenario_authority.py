@@ -1,4 +1,4 @@
-"""Add immutable Case Scenario Assignment authority and backfill.
+"""Add immutable Case Scenario Assignment authority and bounded backfill.
 
 Revision ID: 20260728_r5_scenario
 Revises: 20260728_r5_handoff
@@ -18,6 +18,9 @@ revision = "20260728_r5_scenario"
 down_revision = "20260728_r5_handoff"
 branch_labels = None
 depends_on = None
+
+_BATCH_SIZE = 500
+_CONFLICT_SAMPLE_LIMIT = 20
 
 
 def _catalog() -> tuple[dict, str]:
@@ -49,6 +52,34 @@ def _snapshot(payload: dict, digest: str, scenario: dict) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _ticket_batches(bind, tickets):
+    result = bind.execution_options(stream_results=True).execute(
+        sa.select(tickets).order_by(tickets.c.id.asc())
+    ).mappings()
+    try:
+        while True:
+            batch = result.fetchmany(_BATCH_SIZE)
+            if not batch:
+                break
+            yield batch
+    finally:
+        result.close()
+
+
+def _matches(ticket, aliases: dict[str, str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for field in (
+        "case_type",
+        "sub_category",
+        "category",
+        "ai_classification",
+    ):
+        value = str(ticket[field] or "").strip().lower()
+        if value and value in aliases:
+            result[field] = aliases[value]
+    return result
 
 
 def upgrade() -> None:
@@ -148,48 +179,61 @@ def upgrade() -> None:
         sa.column("superseded_by_id", sa.Integer),
     )
     bind = op.get_bind()
-    rows = bind.execute(sa.select(tickets)).mappings().all()
-    resolved_rows: list[tuple[dict, str]] = []
-    conflicts: list[dict] = []
-    for ticket in rows:
-        matches: dict[str, str] = {}
-        for field in (
-            "case_type",
-            "sub_category",
-            "category",
-            "ai_classification",
-        ):
-            value = str(ticket[field] or "").strip().lower()
-            if value and value in aliases:
-                matches[field] = aliases[value]
-        resolved = set(matches.values())
-        if len(resolved) > 1:
-            conflicts.append({"ticket_id": ticket["id"], "matches": matches})
-        elif len(resolved) == 1:
-            resolved_rows.append((ticket, next(iter(resolved))))
 
-    if conflicts:
+    conflict_count = 0
+    conflict_samples: list[dict] = []
+    for batch in _ticket_batches(bind, tickets):
+        for ticket in batch:
+            matches = _matches(ticket, aliases)
+            if len(set(matches.values())) <= 1:
+                continue
+            conflict_count += 1
+            if len(conflict_samples) < _CONFLICT_SAMPLE_LIMIT:
+                conflict_samples.append(
+                    {"ticket_id": ticket["id"], "matches": matches}
+                )
+    if conflict_count:
         raise RuntimeError(
             "case_scenario_backfill_conflict:"
-            + json.dumps(conflicts[:20], sort_keys=True)
-        )
-
-    for ticket, key in resolved_rows:
-        bind.execute(
-            assignments.insert().values(
-                ticket_id=int(ticket["id"]),
-                scenario_key=key,
-                catalog_version=payload["catalog_version"],
-                catalog_sha256=digest,
-                scenario_snapshot_json=_snapshot(payload, digest, scenarios[key]),
-                assignment_source="legacy_backfill",
-                assignment_reason="Resolved from historical Case identity aliases",
-                assigned_by=ticket["created_by"],
-                assigned_at=ticket["created_at"],
-                superseded_at=None,
-                superseded_by_id=None,
+            + json.dumps(
+                {
+                    "count": conflict_count,
+                    "samples": conflict_samples,
+                },
+                sort_keys=True,
             )
         )
+
+    for batch in _ticket_batches(bind, tickets):
+        inserts: list[dict] = []
+        for ticket in batch:
+            resolved = set(_matches(ticket, aliases).values())
+            if len(resolved) != 1:
+                continue
+            key = next(iter(resolved))
+            inserts.append(
+                {
+                    "ticket_id": int(ticket["id"]),
+                    "scenario_key": key,
+                    "catalog_version": payload["catalog_version"],
+                    "catalog_sha256": digest,
+                    "scenario_snapshot_json": _snapshot(
+                        payload,
+                        digest,
+                        scenarios[key],
+                    ),
+                    "assignment_source": "legacy_backfill",
+                    "assignment_reason": (
+                        "Resolved from historical Case identity aliases"
+                    ),
+                    "assigned_by": ticket["created_by"],
+                    "assigned_at": ticket["created_at"],
+                    "superseded_at": None,
+                    "superseded_by_id": None,
+                }
+            )
+        if inserts:
+            bind.execute(assignments.insert(), inserts)
 
 
 def downgrade() -> None:

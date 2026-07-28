@@ -27,7 +27,6 @@ from app.services.case_scenario_service import (
     reclassify_case_scenario,
     scenario_review_overdue,
 )
-from app.services.nexus_osr.business_scenarios import resolve_business_scenario
 
 register_all_models()
 
@@ -120,6 +119,21 @@ def test_conflicting_legacy_aliases_fail_closed_on_insert(db_session):
     assert exc.value.detail["code"] == "case_scenario_identity_conflict"
 
 
+def test_ticket_load_does_not_rewrite_legacy_identity(db_session):
+    ticket = _ticket("NO-PROJECTION", case_type="delivery_delay")
+    db_session.add(ticket)
+    db_session.commit()
+    ticket_id = ticket.id
+
+    db_session.expunge_all()
+    loaded = db_session.get(Ticket, ticket_id)
+    assert loaded is not None
+    assert loaded.case_type == "delivery_delay"
+    assignment = current_case_scenario_assignment(db_session, ticket_id=ticket_id)
+    assert assignment is not None
+    assert assignment.scenario_key == "delivery_eta_delay_inquiry"
+
+
 def test_generic_field_edit_cannot_silently_reclassify_case(db_session):
     ticket = _ticket("GUARD", case_type="delivery_delay")
     db_session.add(ticket)
@@ -166,12 +180,16 @@ def test_explicit_reclassification_preserves_history_and_snapshot(db_session):
         .count()
         == 2
     )
+    assert ticket.case_type == "delivery_delay"
 
-    catalog = load_runtime_scenario_catalog()
-    assert (
-        resolve_business_scenario(
-            catalog,
-            scenario_key=new.scenario_key,
-        ).scenario_key
-        == "formal_complaint"
-    )
+
+def test_assignment_contract_columns_are_immutable(db_session):
+    ticket = _ticket("IMMUTABLE", case_type="delivery_delay")
+    db_session.add(ticket)
+    db_session.flush()
+    row = current_case_scenario_assignment(db_session, ticket_id=ticket.id)
+    assert row is not None
+
+    row.scenario_key = "formal_complaint"
+    with pytest.raises(ValueError, match="case_scenario_assignment_immutable"):
+        db_session.flush()

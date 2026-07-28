@@ -16,8 +16,10 @@ class CaseScenarioAssignment(Base):
     """Immutable, Case-owned assignment to one versioned business scenario.
 
     A Ticket may have historical assignments, but exactly one current assignment.
-    The full scenario contract is snapshotted so an in-flight Case cannot silently
-    inherit changed rules from a later catalog publication.
+    The complete scenario contract is snapshotted so an in-flight Case cannot
+    silently inherit changed rules from a later catalog publication. Assignment
+    identity and contract columns are immutable after insert; reclassification
+    creates a new row and supersedes the previous row.
     """
 
     __tablename__ = "case_scenario_assignments"
@@ -78,5 +80,5 @@ class CaseScenarioAssignment(Base):
     )
 
 
-# Register Ticket lifecycle guards whenever this required model family is loaded.
+# Register lifecycle invariants whenever this required model family is loaded.
 from .services import case_scenario_service as _case_scenario_service  # noqa: E402,F401
