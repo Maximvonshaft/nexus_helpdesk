@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -10,6 +11,8 @@ from ..models_whatsapp import WhatsAppConnection
 
 
 META_GRAPH_ORIGIN = "https://graph.facebook.com"
+_META_CALLBACK_MARKER = "/api/integrations/whatsapp/meta/"
+_META_SHARED_CALLBACK_PATH = "/api/integrations/whatsapp/meta/webhook"
 
 
 class MetaCloudHttpClient(Protocol):
@@ -132,6 +135,29 @@ def probe_meta_cloud_connection(
     )
 
 
+def shared_meta_callback_url(callback_url: str) -> str:
+    """Return the one WABA-level callback authority for an application origin."""
+
+    raw = str(callback_url or "").strip()
+    parsed = urlsplit(raw)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise MetaCloudTransportError(
+            "meta_https_callback_required",
+            "Meta webhook callback override must use HTTPS",
+            retryable=False,
+        )
+    marker_index = parsed.path.find(_META_CALLBACK_MARKER)
+    if marker_index < 0:
+        raise MetaCloudTransportError(
+            "meta_shared_callback_path_required",
+            "Meta webhook callback must use the canonical integration path",
+            retryable=False,
+        )
+    prefix = parsed.path[:marker_index].rstrip("/")
+    path = f"{prefix}{_META_SHARED_CALLBACK_PATH}"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
 def subscribe_meta_waba(
     connection: WhatsAppConnection,
     *,
@@ -146,7 +172,7 @@ def subscribe_meta_waba(
     close_client = client is None
     payload: dict[str, Any] | None = None
     if callback_url or verify_token:
-        if not callback_url or not callback_url.startswith("https://"):
+        if not callback_url:
             raise MetaCloudTransportError(
                 "meta_https_callback_required",
                 "Meta webhook callback override must use HTTPS",
@@ -159,7 +185,7 @@ def subscribe_meta_waba(
                 retryable=False,
             )
         payload = {
-            "override_callback_uri": callback_url,
+            "override_callback_uri": shared_meta_callback_url(callback_url),
             "verify_token": verify_token,
         }
     try:
