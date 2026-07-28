@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -47,8 +48,8 @@ def db_session(tmp_path):
         engine.dispose()
 
 
-def _team(db_session, name="Support"):
-    row = Team(name=name, team_type="support")
+def _team(db_session, name="Support", *, market_id: int | None = None):
+    row = Team(name=name, team_type="support", market_id=market_id)
     db_session.add(row)
     db_session.flush()
     return row
@@ -70,11 +71,11 @@ def _user(db_session, username, role, team):
 
 
 def test_operator_lookup_endpoints_are_available_to_agent_role(db_session):
-    team = _team(db_session)
-    agent = _user(db_session, "operator_agent", UserRole.agent, team)
     market = Market(code="PH", name="Philippines", country_code="PH")
     db_session.add(market)
     db_session.flush()
+    team = _team(db_session, market_id=market.id)
+    agent = _user(db_session, "operator_agent", UserRole.agent, team)
     db_session.add(
         MarketBulletin(
             market_id=market.id,
@@ -129,7 +130,7 @@ def test_operator_surfaces_hide_internal_session_and_account_identifiers():
     assert "session_key" not in workspace
     assert "WhatsAppConfigurationPanel" in channels
     assert "phone_number_mask" in whatsapp_panel
-    assert "connection.phone_number" not in whatsapp_panel
+    assert re.search(r"\bconnection\.phone_number\b", whatsapp_panel) is None
     assert "OperatorTechnicalDisclosure" in channels
     assert ">wa-primary-private<" not in channels
 

@@ -133,16 +133,28 @@ def test_realtime_handoff_and_rebuild_share_one_source_identity(db_session):
 
     request.status = "accepted"
     request.lock_version += 1
-    rebuilt.status = "assigned"
     db_session.flush()
+    accepted = project_webchat_handoff_tasks(
+        db_session,
+        tenant_id=tenant.id,
+    )
+    assert accepted.skipped_existing == 1
+    db_session.refresh(rebuilt)
     _assert_canonical(rebuilt, request)
+    assert rebuilt.status == "assigned"
 
     request.status = "closed"
     request.lock_version += 1
-    rebuilt.status = "resolved"
     db_session.flush()
+    closed = project_webchat_handoff_tasks(
+        db_session,
+        tenant_id=tenant.id,
+    )
+    assert closed.retired == 1
+    db_session.refresh(rebuilt)
     assert rebuilt.source_type == HANDOFF_PROJECTION_SOURCE
     assert rebuilt.source_id == str(request.id)
+    assert rebuilt.status == "resolved"
 
 
 def test_legacy_realtime_identity_is_rewritten_before_persistence(db_session):

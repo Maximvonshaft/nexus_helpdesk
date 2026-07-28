@@ -137,6 +137,18 @@ if db_url.drivername.startswith("postgresql"):
 engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
 
 
+if db_url.drivername.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):  # noqa: ANN001
+        """Make SQLite preserve the same FK/cascade invariants as PostgreSQL."""
+
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+
+
 @event.listens_for(engine, 'before_cursor_execute')
 def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
     if not _db_query_timing_enabled():
@@ -172,6 +184,9 @@ def _after_cursor_execute(conn, cursor, statement, parameters, context, executem
 
 if db_url.drivername.startswith("sqlite"):
     with engine.connect() as con:
+        foreign_keys = int(con.execute(text("PRAGMA foreign_keys;")).scalar_one())
+        if foreign_keys != 1:
+            raise RuntimeError("sqlite_foreign_keys_disabled")
         con.execute(text("PRAGMA journal_mode=WAL;"))
         con.execute(text("PRAGMA synchronous=NORMAL;"))
 
