@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import event, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, attributes, object_session
 
 from ..enums import EventType
 from ..models import Ticket
@@ -356,6 +356,34 @@ def reclassify_case_scenario(
         },
     )
     db.flush()
+    attributes.set_committed_value(ticket, "case_type", row.scenario_key)
+    return row
+
+
+def _catalog_projection_key(row: CaseScenarioAssignment) -> str:
+    """Project the canonical Assignment into legacy readers without restoring authority."""
+
+    catalog = load_business_scenario_catalog(require_all_active=False)
+    if (
+        row.catalog_version != catalog.catalog_version
+        or row.catalog_sha256 != catalog.source_sha256
+    ):
+        return "case_scenario_catalog_mismatch"
+    return row.scenario_key
+
+
+def project_case_scenario_to_legacy_identity(
+    db: Session,
+    ticket: Ticket,
+) -> CaseScenarioAssignment | None:
+    """Expose Assignment as a read-only compatibility projection on ``case_type``."""
+
+    if ticket.id is None:
+        return None
+    row = current_case_scenario_assignment(db, ticket_id=int(ticket.id))
+    if row is None:
+        return None
+    attributes.set_committed_value(ticket, "case_type", _catalog_projection_key(row))
     return row
 
 
@@ -393,6 +421,7 @@ def _insert_automatic_assignment(
             )
         )
     )
+    attributes.set_committed_value(ticket, "case_type", scenario.scenario_key)
 
 
 def _identity_changed(ticket: Ticket) -> bool:
@@ -401,6 +430,12 @@ def _identity_changed(ticket: Ticket) -> bool:
         state.attrs[field].history.has_changes()
         for field in SCENARIO_IDENTITY_FIELDS
     )
+
+
+@event.listens_for(Session, "loaded_as_persistent")
+def _project_case_scenario_after_load(session: Session, instance: Any) -> None:
+    if isinstance(instance, Ticket):
+        project_case_scenario_to_legacy_identity(session, instance)
 
 
 @event.listens_for(Ticket, "after_insert")
