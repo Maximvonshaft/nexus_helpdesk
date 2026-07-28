@@ -36,6 +36,7 @@ from ..services.whatsapp_embedded_signup_settings import (
     get_whatsapp_embedded_signup_settings,
 )
 from ..unit_of_work import managed_session
+from ..utils.time import utc_now
 from .admin_whatsapp import (
     create_whatsapp_connection,
     start_whatsapp_binding,
@@ -156,6 +157,18 @@ def _binding_error(exc: HTTPException) -> tuple[str, bool]:
     return code, retryable
 
 
+def _restore_retryable_signup(
+    signup: WhatsAppEmbeddedSignupSession,
+    *,
+    code: str,
+) -> None:
+    """Return a transiently failed exchange to its resumable pending state."""
+
+    signup.status = "pending"
+    signup.last_error_code = code[:120]
+    signup.updated_at = utc_now()
+
+
 def _completion_result(
     *,
     session_id: str,
@@ -273,7 +286,10 @@ def complete_embedded_signup_session(
         )
         if signup is not None and signup.status != "completed":
             with managed_session(db):
-                mark_signup_failed(signup, code=exc.code)
+                if exc.retryable:
+                    _restore_retryable_signup(signup, code=exc.code)
+                else:
+                    mark_signup_failed(signup, code=exc.code)
                 db.flush()
         raise _http_error(exc) from exc
 
