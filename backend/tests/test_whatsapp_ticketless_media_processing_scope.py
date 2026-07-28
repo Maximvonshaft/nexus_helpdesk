@@ -77,8 +77,10 @@ def _ticketless_asset(db_session):
     connection = WhatsAppConnection(
         tenant_id=tenant.id,
         channel_account_id=account.id,
-        transport="meta_cloud",
+        transport="meta_cloud_api",
+        waba_id="waba-ticketless-processing",
         phone_number_id="phone-ticketless-processing",
+        graph_api_version="v23.0",
         desired_state="active",
         observed_state="connected",
         authentication_state="linked",
