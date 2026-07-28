@@ -11,6 +11,10 @@ os.environ.setdefault(
     "sqlite:////tmp/nexus-whatsapp-shared-waba-route.db",
 )
 
+from app.api.whatsapp_integration import (
+    receive_meta_whatsapp_webhook,
+    verify_meta_whatsapp_webhook,
+)
 from app.api.whatsapp_meta_shared_webhook import (
     receive_shared_meta_whatsapp_webhook,
     verify_shared_meta_whatsapp_webhook,
@@ -19,32 +23,38 @@ from app.bootstrap.routers import register_api_routers
 
 
 @pytest.mark.parametrize(
-    ("method", "expected_endpoint"),
+    ("shared_endpoint", "dynamic_endpoint"),
     [
-        ("GET", verify_shared_meta_whatsapp_webhook),
-        ("POST", receive_shared_meta_whatsapp_webhook),
+        (
+            verify_shared_meta_whatsapp_webhook,
+            verify_meta_whatsapp_webhook,
+        ),
+        (
+            receive_shared_meta_whatsapp_webhook,
+            receive_meta_whatsapp_webhook,
+        ),
     ],
 )
 def test_shared_waba_webhook_is_registered_before_connection_specific_route(
-    method,
-    expected_endpoint,
+    shared_endpoint,
+    dynamic_endpoint,
 ):
     """Static WABA verification and event routes must win first-match routing."""
 
     isolated_app = FastAPI()
     register_api_routers(isolated_app)
-    routes = [
-        route
-        for route in isolated_app.routes
-        if getattr(route, "path", None)
-        in {
-            "/api/integrations/whatsapp/meta/webhook",
-            "/api/integrations/whatsapp/meta/{connection_id}/webhook",
-        }
-        and method in (getattr(route, "methods", None) or set())
-    ]
-    assert [route.path for route in routes] == [
-        "/api/integrations/whatsapp/meta/webhook",
-        "/api/integrations/whatsapp/meta/{connection_id}/webhook",
-    ]
-    assert routes[0].endpoint is expected_endpoint
+    routes = list(isolated_app.routes)
+    shared_index = next(
+        index
+        for index, route in enumerate(routes)
+        if getattr(route, "endpoint", None) is shared_endpoint
+    )
+    dynamic_index = next(
+        index
+        for index, route in enumerate(routes)
+        if getattr(route, "endpoint", None) is dynamic_endpoint
+    )
+
+    assert shared_index < dynamic_index
+    assert routes[shared_index].path.endswith("/meta/webhook")
+    assert routes[dynamic_index].path.endswith("/meta/{connection_id}/webhook")
