@@ -22,7 +22,6 @@ from ..models import (
     TicketInboundEmailMessage,
     TicketInternalNote,
     TicketOutboundMessage,
-    WhatsAppInboundMessage,
 )
 from ..models_agent_routing import ConversationControl
 from ..models_case_governance import (
@@ -446,6 +445,7 @@ def build_data_subject_export(
         whatsapp_export = collect_whatsapp_subject_export(
             db,
             ticket_ids=ticket_ids,
+            conversation_ids=list(graph.conversation_ids),
             max_rows=MAX_EXPORT_ROWS_PER_COLLECTION,
         )
     except WhatsAppPrivacyLifecycleError as exc:
@@ -833,31 +833,16 @@ def _anonymize_subject_graph(
             row.raw_payload_json = None
             row.human_override_reason = None
         related += len(intakes)
-        whatsapp = (
-            db.query(WhatsAppInboundMessage)
-            .filter(WhatsAppInboundMessage.ticket_id.in_(ticket_ids))
-            .all()
-        )
-        for row in whatsapp:
-            row.chat_jid = _anonymized(
-                row.chat_jid,
-                namespace="chat",
-                record_id=row.id,
-            )
-            row.sender_jid = _anonymized(
-                row.sender_jid,
-                namespace="sender",
-                record_id=row.id,
-            )
-            row.sender_phone = None
-            row.body_text = "[redacted by privacy request]"
-            row.raw_payload_json = None
-        related += len(whatsapp)
+
+    try:
         related += redact_whatsapp_subject_records(
             db,
             ticket_ids=ticket_ids,
+            conversation_ids=list(graph.conversation_ids),
             anonymize=_anonymized,
         )
+    except WhatsAppPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
 
     if graph.conversation_ids:
         conversations = (
