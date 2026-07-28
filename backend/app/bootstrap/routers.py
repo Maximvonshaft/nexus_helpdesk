@@ -57,6 +57,9 @@ from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_integration import router as whatsapp_integration_router
 from ..api.whatsapp_media_integration import router as whatsapp_media_integration_router
 from ..api.whatsapp_media_operator import router as whatsapp_media_operator_router
+from ..api.whatsapp_meta_shared_webhook import (
+    router as whatsapp_meta_shared_webhook_router,
+)
 from ..services.whatsapp_embedded_signup_csp import (
     register_whatsapp_embedded_signup_csp,
 )
@@ -156,6 +159,7 @@ def register_api_routers(app: FastAPI) -> None:
         webchat_ws_router,
         webchat_voice_router,
         whatsapp_integration_router,
+        whatsapp_meta_shared_webhook_router,
         whatsapp_media_integration_router,
         whatsapp_media_operator_router,
         webchat_router,
