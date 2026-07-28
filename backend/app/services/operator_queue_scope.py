@@ -26,6 +26,7 @@ from .tenant_query_authority import (
 _TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 _COUNTRY_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,15}$")
 _CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+_QUEUE_RE = re.compile(r"^[a-z][a-z0-9_.:-]{1,159}$")
 
 
 def normalize_operator_scope(
@@ -55,6 +56,16 @@ def normalize_operator_scope(
     return tenant, country, channel
 
 
+def normalize_queue_key(value: str | None) -> str:
+    queue = str(value or "legacy").strip().lower()
+    if not _QUEUE_RE.fullmatch(queue):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid_operator_queue_business_scope",
+        )
+    return queue
+
+
 def tenant_scope_hash(tenant_key: str) -> str:
     return hashlib.sha256(tenant_key.encode("utf-8")).hexdigest()[:12]
 
@@ -79,18 +90,20 @@ def active_scope_grant(
     tenant_key: str,
     country_code: str,
     channel_key: str,
+    queue_key: str | None = None,
 ) -> OperatorQueueScopeGrant | None:
-    return (
-        db.query(OperatorQueueScopeGrant)
-        .filter(
-            OperatorQueueScopeGrant.user_id == user_id,
-            OperatorQueueScopeGrant.tenant_key == tenant_key,
-            OperatorQueueScopeGrant.country_code == country_code,
-            OperatorQueueScopeGrant.channel_key == channel_key,
-            OperatorQueueScopeGrant.enabled.is_(True),
-        )
-        .first()
+    query = db.query(OperatorQueueScopeGrant).filter(
+        OperatorQueueScopeGrant.user_id == user_id,
+        OperatorQueueScopeGrant.tenant_key == tenant_key,
+        OperatorQueueScopeGrant.country_code == country_code,
+        OperatorQueueScopeGrant.channel_key == channel_key,
+        OperatorQueueScopeGrant.enabled.is_(True),
     )
+    if queue_key is not None:
+        query = query.filter(
+            OperatorQueueScopeGrant.queue_key == normalize_queue_key(queue_key)
+        )
+    return query.order_by(OperatorQueueScopeGrant.id.asc()).first()
 
 
 def authorize_operator_scope(
@@ -155,7 +168,7 @@ def scope_grant_version(
         raw = (
             f"user:{int(current_user.id)}:team:{team_identity}:"
             f"capabilities:{policy_fingerprint}:"
-            f"grant:{grant.id}:{updated}:{int(bool(grant.enabled))}"
+            f"grant:{grant.id}:{grant.queue_key}:{updated}:{int(bool(grant.enabled))}"
         )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -167,6 +180,7 @@ def serialize_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, object]:
         "tenant_hash": tenant_scope_hash(row.tenant_key),
         "country_code": row.country_code,
         "channel_key": row.channel_key,
+        "queue_key": row.queue_key,
         "enabled": bool(row.enabled),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
@@ -179,6 +193,7 @@ def serialize_current_scope_grant(row: OperatorQueueScopeGrant) -> dict[str, str
         "tenant_hash": tenant_scope_hash(row.tenant_key),
         "country_code": row.country_code,
         "channel_key": row.channel_key,
+        "queue_key": row.queue_key,
     }
 
 
@@ -204,6 +219,7 @@ def list_current_scope_grants(
         .order_by(
             OperatorQueueScopeGrant.country_code.asc(),
             OperatorQueueScopeGrant.channel_key.asc(),
+            OperatorQueueScopeGrant.queue_key.asc(),
         )
         .all()
     )
@@ -222,6 +238,7 @@ def _audit(
         "tenant_hash": tenant_scope_hash(row.tenant_key),
         "country_code": row.country_code,
         "channel_key": row.channel_key,
+        "queue_key": row.queue_key,
         "enabled": bool(row.enabled),
     }
     db.add(
@@ -258,6 +275,7 @@ def upsert_scope_grant(
         country_code=payload.country_code,
         channel_key=payload.channel_key,
     )
+    queue = normalize_queue_key(getattr(payload, "queue_key", "legacy"))
     if tenant != actor_scope.tenant_key:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -283,6 +301,7 @@ def upsert_scope_grant(
             OperatorQueueScopeGrant.tenant_key == actor_scope.tenant_key,
             OperatorQueueScopeGrant.country_code == country,
             OperatorQueueScopeGrant.channel_key == channel,
+            OperatorQueueScopeGrant.queue_key == queue,
         )
         .first()
     )
@@ -293,6 +312,7 @@ def upsert_scope_grant(
             tenant_key=actor_scope.tenant_key,
             country_code=country,
             channel_key=channel,
+            queue_key=queue,
             enabled=bool(payload.enabled),
             granted_by=current_user.id,
         )
@@ -355,6 +375,7 @@ __all__ = [
     "delete_scope_grant",
     "list_current_scope_grants",
     "normalize_operator_scope",
+    "normalize_queue_key",
     "scope_grant_version",
     "serialize_current_scope_grant",
     "serialize_scope_grant",
