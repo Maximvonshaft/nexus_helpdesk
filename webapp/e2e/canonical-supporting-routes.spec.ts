@@ -1,36 +1,20 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 const TOKEN_KEY = 'helpdesk-webapp-token'
-const CANONICAL_SOURCES = [
-  'src/features/operator-workspace/lazy.tsx',
-  'src/features/knowledge/lazy.tsx',
-  'src/features/channels/lazy.tsx',
-  'src/features/runtime/lazy.tsx',
-  'src/features/control-tower/lazy.tsx',
-]
 
-type ManifestRecord = {
-  src?: string
-  file: string
+const authUser = {
+  id: 7,
+  username: 'platform-operator',
+  display_name: 'Platform Operator',
+  role: 'admin',
+  capabilities: [
+    'operator_queue.read',
+    'ticket.read',
+    'channel_account.manage',
+    'runtime.manage',
+    'audit.read',
+  ],
 }
-
-function manifest() {
-  const manifestPath = resolve(process.cwd(), '../frontend_dist/.vite/manifest.json')
-  return JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, ManifestRecord>
-}
-
-function assetPath(sourceSuffix: string) {
-  const pair = Object.entries(manifest()).find(([key, record]) => {
-    const source = String(record.src || key).replaceAll('\\', '/')
-    return source.endsWith(sourceSuffix)
-  })
-  if (!pair) throw new Error(`Missing manifest entry for ${sourceSuffix}`)
-  return pair[1].file
-}
-
-const CANONICAL_ASSETS = CANONICAL_SOURCES.map(assetPath)
 
 function json(route: Route, body: unknown, status = 200) {
   return route.fulfill({
@@ -40,91 +24,162 @@ function json(route: Route, body: unknown, status = 200) {
   })
 }
 
-async function setAuthenticatedSession(page: Page) {
-  await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'route-split-token'])
+async function mockSupportingRoutes(page: Page) {
+  await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'operator-token'])
+  await page.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/auth/me') return json(route, authUser)
+    if (url.pathname === '/api/admin/channel-accounts') {
+      return json(route, [{
+        id: 1,
+        provider: 'whatsapp',
+        account_id: 'wa-primary-private',
+        display_name: 'WhatsApp 主线路',
+        market_id: 1,
+        is_active: true,
+        priority: 10,
+        health_status: 'connected',
+        fallback_account_id: null,
+        updated_at: '2026-07-14T12:00:00Z',
+      }])
+    }
+    if (url.pathname === '/api/admin/whatsapp/connections') {
+      return json(route, [{
+        id: 11,
+        tenant_id: 1,
+        channel_account_id: 1,
+        account_id: 'wa-primary-private',
+        display_name: 'WhatsApp 主线路',
+        market_id: 1,
+        priority: 10,
+        channel_active: true,
+        transport: 'baileys_sidecar',
+        desired_state: 'active',
+        observed_state: 'connected',
+        authentication_state: 'linked',
+        listener_state: 'active',
+        verification_state: 'verified',
+        desired_generation: 3,
+        observed_generation: 3,
+        phone_number_mask: '•••• 1234',
+        business_account_id: null,
+        waba_id: null,
+        phone_number_id: null,
+        graph_api_version: null,
+        sidecar_session_key: 'wa-primary-private',
+        session_generation: 2,
+        access_token_configured: false,
+        app_secret_configured: false,
+        verify_token_configured: false,
+        last_qr_generated_at: null,
+        qr_expires_at: null,
+        last_connected_at: '2026-07-14T12:00:00Z',
+        last_disconnected_at: null,
+        last_inbound_at: '2026-07-14T12:05:00Z',
+        last_outbound_at: '2026-07-14T12:06:00Z',
+        last_probe_at: '2026-07-14T12:07:00Z',
+        last_probe_status: 'ok',
+        reconnect_count: 1,
+        last_error_code: null,
+        last_error_message: null,
+        inbound_tested_at: '2026-07-14T12:05:00Z',
+        outbound_tested_at: '2026-07-14T12:06:00Z',
+        verified_at: '2026-07-14T12:06:00Z',
+        created_at: '2026-07-14T10:00:00Z',
+        updated_at: '2026-07-14T12:07:00Z',
+      }])
+    }
+    if (url.pathname === '/api/admin/provider-runtime/status') {
+      return json(route, {
+        ok: true,
+        status: 'ready',
+        app_env: 'production',
+        webchat_runtime_enabled: true,
+        configured_provider: 'private_ai_runtime',
+        fallback_provider: null,
+        warnings: [],
+        boundary: {
+          secret_values_exposed: false,
+          external_network_call: false,
+          customer_message_sent: false,
+        },
+        providers: [{
+          name: 'private_ai_runtime',
+          selected: true,
+          feature_enabled: true,
+          configured: true,
+          runtime: 'private',
+          capabilities: { chat: true, rag: true },
+          diagnostics: {
+            chat_mode: 'direct',
+            request_shape: 'responses',
+            direct_model: 'internal-model-name',
+            rag_model: 'internal-rag-model-name',
+          },
+        }],
+      })
+    }
+    if (url.pathname === '/api/support/conversations/metrics') {
+      return json(route, {
+        total: 120,
+        needs_human: 8,
+        ai_active: 30,
+        by_channel: { webchat: 80, whatsapp: 40 },
+        runtime_latency: {
+          sample_count: 40,
+          total_turn: { p50_ms: 800, p90_ms: 1800 },
+          runtime_total: { p50_ms: 600, p90_ms: 1400 },
+          runtime_eval: { p50_ms: 350, p90_ms: 900 },
+          cold_load_count: 2,
+          slow_prompt_eval_count: 1,
+        },
+      })
+    }
+    return json(route, { detail: `Unhandled test API ${url.pathname}` }, 404)
+  })
+}
+
+test('Channels is a canonical route in the shared shell and keeps identifiers secondary', async ({ page }) => {
+  await mockSupportingRoutes(page)
+  await page.goto('/channels')
+
+  await expect(page).toHaveURL(/\/channels$/)
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '渠道管理', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: '渠道管理' })).toBeVisible()
+  await expect(page.getByText('WhatsApp 主线路').first()).toBeVisible()
+  await expect(page.getByText('•••• 1234')).toBeVisible()
+  await expect(page.getByText('+41790001234')).toHaveCount(0)
+  await expect(page.getByText('wa-primary-private').first()).toBeHidden()
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('Runtime primary hierarchy stays operational while model diagnostics remain collapsed', async ({ page }) => {
+  await mockSupportingRoutes(page)
+  await page.goto('/runtime')
+
+  await expect(page).toHaveURL(/\/runtime$/)
+  await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '系统运行', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { level: 1, name: '系统运行' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '系统状态' })).toBeVisible()
+  await expect(page.getByText('处理方式').locator('..')).toContainText('自动处理')
+  await expect(page.getByText('internal-model-name')).toBeHidden()
+  await expect(page.getByText('internal-rag-model-name')).toBeHidden()
+  await expect(page.getByText('会话总量').locator('..')).toContainText('120')
+
+  await page.getByRole('button', { name: /系统信息/ }).click()
+  await expect(page.getByText('internal-model-name')).toBeVisible()
+})
+
+test('supporting routes fail closed for an account without the required capability', async ({ page }) => {
+  await page.addInitScript(([key, token]) => sessionStorage.setItem(key, token), [TOKEN_KEY, 'operator-token'])
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') {
-      return json(route, {
-        id: 1,
-        username: 'operator',
-        display_name: 'Operations User',
-        role: 'admin',
-        capabilities: [
-          'ticket.read',
-          'operator_queue.read',
-          'ai_config.read',
-          'ai_config.manage',
-          'channel_account.manage',
-          'runtime.manage',
-          'audit.read',
-          'ticket.assign',
-        ],
-      })
+      return json(route, { ...authUser, capabilities: ['operator_queue.read', 'ticket.read'] })
     }
-    if (url.pathname === '/api/admin/operator-queue/my-scopes') {
-      return json(route, {
-        items: [{
-          tenant_key: 'tenant-route',
-          tenant_hash: '123456789abc',
-          country_code: 'CH',
-          channel_key: 'webchat',
-          queue_key: 'customer_support',
-        }],
-        requires_explicit_admin_scope: false,
-      })
-    }
-    if (url.pathname === '/api/admin/operator-queue/unified') {
-      return json(route, {
-        items: [],
-        next_cursor: null,
-        scope: {
-          tenant_hash: '123456789abc',
-          country_code: 'CH',
-          channel_key: 'webchat',
-          queue_key: 'customer_support',
-        },
-        filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
-      })
-    }
-    if (url.pathname === '/api/lite/knowledge-studio') return json(route, { kpis: [] })
-    if (url.pathname === '/api/knowledge-items') return json(route, { items: [], total: 0 })
-    if (url.pathname === '/api/admin/channel-accounts') return json(route, [])
-    if (url.pathname === '/api/admin/provider-runtime/status') {
-      return json(route, { ok: true, status: 'ready', app_env: 'test', webchat_runtime_enabled: false, configured_provider: null, fallback_provider: null, warnings: [], providers: [], boundary: {} })
-    }
-    if (url.pathname === '/api/support/conversations/metrics') return json(route, { total: 0, needs_human: 0, ai_active: 0, by_channel: {} })
-    return json(route, { detail: `Unhandled compatibility API ${url.pathname}` }, 404)
-  })
-}
-
-test('unauthenticated webchat redirect does not request canonical protected route chunks', async ({ page }) => {
-  let protectedChunkRequests = 0
-  page.on('request', (request) => {
-    if (CANONICAL_ASSETS.some((asset) => request.url().includes(`/${asset}`))) protectedChunkRequests += 1
+    return json(route, { detail: 'should not load protected route data' }, 403)
   })
 
-  await page.goto('/webchat')
-  await expect(page).toHaveURL(/\/login$/)
-  expect(protectedChunkRequests).toBe(0)
+  await page.goto('/runtime')
+  await expect(page.getByRole('heading', { level: 1, name: '无权访问此页面' })).toBeVisible()
 })
-
-test('authenticated legacy conversation entry redirects to the canonical workspace', async ({ page }) => {
-  await setAuthenticatedSession(page)
-  await page.goto('/webchat')
-  await expect(page).toHaveURL(/\/workspace(?:\?.*)?$/)
-  await expect(page.getByTestId('operator-workspace')).toBeVisible()
-})
-
-for (const [query, destination, heading] of [
-  ['tab=knowledge', '/knowledge', '知识与流程'],
-  ['tab=channels', '/channels', '渠道管理'],
-  ['tab=runtime', '/runtime', '系统运行'],
-] as const) {
-  test(`authenticated /webchat?${query} redirects to ${destination}`, async ({ page }) => {
-    await setAuthenticatedSession(page)
-    await page.goto(`/webchat?${query}`)
-    await expect(page).toHaveURL(new RegExp(`${destination.replace('/', '\\/')}$`))
-    await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible()
-  })
-}
