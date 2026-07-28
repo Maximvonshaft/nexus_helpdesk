@@ -22,10 +22,23 @@ class CaseContextStatus(StrEnum):
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _PHONE_RE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
 _TRACKING_RE = re.compile(r"\b(?=[A-Z0-9-]{8,35}\b)(?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]*[A-Z0-9]\b", re.IGNORECASE)
+_CASE_ISSUE_TYPE_ALIASES = {
+    # OSR historically used the transport-neutral shorthand "tracking". Persist
+    # the published Scenario alias instead so Ticket insertion can create its
+    # immutable CaseScenarioAssignment without a test/runtime compatibility gap.
+    "tracking": "tracking_inquiry",
+}
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def canonical_case_issue_type(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return _CASE_ISSUE_TYPE_ALIASES.get(normalized, normalized)
 
 
 def _normalise_tracking_token(value: str | None) -> str:
@@ -119,6 +132,13 @@ class CaseContext:
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
     closed_at: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "issue_type",
+            canonical_case_issue_type(self.issue_type),
+        )
 
     def with_inbound_message(self, text: str, *, channel: str | None = None, country_code: str | None = None) -> "CaseContext":
         safe_ref, tracking_hash = extract_tracking_reference(text)
