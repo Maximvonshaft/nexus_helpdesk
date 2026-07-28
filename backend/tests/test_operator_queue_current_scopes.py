@@ -29,6 +29,8 @@ from app.services.operator_queue_scope import list_current_scope_grants, upsert_
 
 register_all_models()
 
+TENANT = "tenant-ops"
+
 
 @pytest.fixture()
 def db_session(tmp_path):
@@ -78,7 +80,6 @@ def _grant(
     *,
     admin: User,
     user: User,
-    tenant: str,
     country: str,
     channel: str,
     enabled: bool = True,
@@ -88,7 +89,7 @@ def _grant(
         current_user=admin,
         payload=OperatorQueueScopeGrantUpsert(
             user_id=user.id,
-            tenant_key=tenant,
+            tenant_key=TENANT,
             country_code=country,
             channel_key=channel,
             enabled=enabled,
@@ -102,23 +103,22 @@ def test_current_user_receives_only_own_active_grant_scopes(db_session):
     agent = _user(db_session, username="agent", role=UserRole.agent, team_id=me_team.id)
     other = _user(db_session, username="other", role=UserRole.manager)
 
-    _grant(db_session, admin=admin, user=agent, tenant="tenant-me", country="ME", channel="webchat")
-    _grant(db_session, admin=admin, user=agent, tenant="tenant-disabled", country="ME", channel="whatsapp", enabled=False)
-    _grant(db_session, admin=admin, user=agent, tenant="tenant-wrong-country", country="CH", channel="webchat")
-    _grant(db_session, admin=admin, user=other, tenant="tenant-other-user-secret", country="ME", channel="webchat")
+    _grant(db_session, admin=admin, user=agent, country="ME", channel="webchat")
+    _grant(db_session, admin=admin, user=agent, country="ME", channel="whatsapp", enabled=False)
+    _grant(db_session, admin=admin, user=agent, country="CH", channel="webchat")
+    _grant(db_session, admin=admin, user=other, country="DE", channel="webchat")
     db_session.commit()
 
     result = list_current_scope_grants(db_session, current_user=agent)
     validated = OperatorQueueCurrentScopesResponse.model_validate(result)
 
     assert [(item.tenant_key, item.country_code, item.channel_key) for item in validated.items] == [
-        ("tenant-wrong-country", "CH", "webchat"),
-        ("tenant-me", "ME", "webchat"),
+        (TENANT, "CH", "webchat"),
+        (TENANT, "ME", "webchat"),
     ]
     serialized = validated.model_dump_json()
-    assert "tenant-disabled" not in serialized
-    assert "tenant-wrong-country" in serialized
-    assert "tenant-other-user-secret" not in serialized
+    assert '"channel_key":"whatsapp"' not in serialized
+    assert '"country_code":"DE"' not in serialized
     assert "user_id" not in serialized
     assert "grant_id" not in serialized
 
@@ -126,8 +126,8 @@ def test_current_user_receives_only_own_active_grant_scopes(db_session):
 def test_manager_receives_each_active_scope_owned_by_that_manager(db_session):
     admin = _user(db_session, username="admin", role=UserRole.admin)
     manager = _user(db_session, username="manager", role=UserRole.manager)
-    _grant(db_session, admin=admin, user=manager, tenant="tenant-a", country="CH", channel="webchat")
-    _grant(db_session, admin=admin, user=manager, tenant="tenant-b", country="ME", channel="whatsapp")
+    _grant(db_session, admin=admin, user=manager, country="CH", channel="webchat")
+    _grant(db_session, admin=admin, user=manager, country="ME", channel="whatsapp")
     db_session.commit()
 
     result = OperatorQueueCurrentScopesResponse.model_validate(
@@ -135,8 +135,8 @@ def test_manager_receives_each_active_scope_owned_by_that_manager(db_session):
     )
 
     assert [(item.country_code, item.channel_key, item.tenant_key) for item in result.items] == [
-        ("CH", "webchat", "tenant-a"),
-        ("ME", "whatsapp", "tenant-b"),
+        ("CH", "webchat", TENANT),
+        ("ME", "whatsapp", TENANT),
     ]
 
 
@@ -154,7 +154,7 @@ def test_admin_without_explicit_scope_is_not_given_a_guessed_tenant(db_session):
 def test_admin_explicit_scope_can_drive_the_same_selector_without_broad_inventory(db_session):
     grantor = _user(db_session, username="grantor", role=UserRole.admin)
     admin = _user(db_session, username="scoped-admin", role=UserRole.admin)
-    _grant(db_session, admin=grantor, user=admin, tenant="tenant-admin", country="CH", channel="webchat")
+    _grant(db_session, admin=grantor, user=admin, country="CH", channel="webchat")
     db_session.commit()
 
     result = OperatorQueueCurrentScopesResponse.model_validate(
@@ -162,4 +162,4 @@ def test_admin_explicit_scope_can_drive_the_same_selector_without_broad_inventor
     )
 
     assert len(result.items) == 1
-    assert result.items[0].tenant_key == "tenant-admin"
+    assert result.items[0].tenant_key == TENANT
