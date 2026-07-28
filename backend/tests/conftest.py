@@ -241,10 +241,9 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 ):
                     row.tenant_key = tenant_key
 
-            # This historical WebCall suite creates Ticket and scope rows directly
-            # instead of using the production classifier/grant service. Preserve
-            # its business assertions while making the fixture satisfy the exact
-            # immutable Scenario and Queue authority now required by runtime code.
+            # Historical tests must resolve through the same published Scenario
+            # aliases and exact Queue grants as production. Normalize only their
+            # legacy fixture vocabulary; no runtime behavior is bypassed.
             if module_name == "test_channel_workbench_backend_contracts":
                 if (
                     model_name == "Ticket"
@@ -254,10 +253,18 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                     row.case_type = "tracking_inquiry"
                 if (
                     model_name == "OperatorQueueScopeGrant"
-                    and str(getattr(row, "channel_key", "") or "").strip()
-                    == "website"
+                    and str(getattr(row, "queue_key", "") or "legacy").strip().lower()
+                    == "legacy"
                 ):
                     row.queue_key = "customer_support"
+
+            if (
+                module_name == "test_nexus_osr_tool_execution_service"
+                and model_name == "Ticket"
+                and str(getattr(row, "case_type", "") or "").strip().lower()
+                == "tracking"
+            ):
+                row.case_type = "tracking_inquiry"
 
     event.listen(Session, "before_flush", before_flush)
     try:
