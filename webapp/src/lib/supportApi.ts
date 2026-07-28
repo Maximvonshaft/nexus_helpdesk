@@ -41,7 +41,6 @@ import type {
   SupportConversationResolution,
   SupportConversationState,
   WebchatHandoffRequest,
-  WhatsAppNativeAccountStatus,
 } from '@/lib/types'
 import type {
   ChannelOnboardingTask,
@@ -230,7 +229,6 @@ export const supportApi = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
-  whatsappNativeStatus: (accountId: string) => apiRequest<WhatsAppNativeAccountStatus>(`/api/admin/whatsapp/accounts/${encodeURIComponent(accountId)}/status`),
   outboundEmailAccounts: () => apiRequest<OutboundEmailAccount[]>('/api/admin/outbound-email/accounts'),
   createOutboundEmailAccount: (payload: OutboundEmailAccountCreate) => apiRequest<OutboundEmailAccount>('/api/admin/outbound-email/accounts', {
     method: 'POST',
