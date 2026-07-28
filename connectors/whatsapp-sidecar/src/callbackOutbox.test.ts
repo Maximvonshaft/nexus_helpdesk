@@ -56,6 +56,104 @@ test("retains encrypted inbound callback after retry exhaustion and later recove
   }
 });
 
+test("keeps a newer replaceable status written while an older status is in flight", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-status-outbox-version-"));
+  const secret = "callback-outbox-secret-" + "s".repeat(48);
+  let now = Date.parse("2026-07-28T00:00:00Z");
+  try {
+    const outbox = new DurableCallbackOutbox(root, logger, secret, () => now);
+    outbox.enqueue({
+      kind: "status",
+      accountId: "wa-main",
+      payload: { state: "connecting" },
+      dedupeKey: "account-status:wa-main"
+    });
+
+    let releaseSender!: () => void;
+    const senderReleased = new Promise<void>((resolve) => {
+      releaseSender = resolve;
+    });
+    let markEntered!: () => void;
+    const senderEntered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const observed: unknown[] = [];
+
+    const firstDrain = outbox.drain(async (envelope) => {
+      observed.push(envelope.payload);
+      markEntered();
+      await senderReleased;
+    });
+
+    await senderEntered;
+    now += 1;
+    outbox.enqueue({
+      kind: "status",
+      accountId: "wa-main",
+      payload: { state: "connected" },
+      dedupeKey: "account-status:wa-main"
+    });
+    releaseSender();
+
+    const firstResult = await firstDrain;
+    assert.equal(firstResult.delivered, 1);
+    assert.equal(firstResult.pending, 1);
+    assert.equal(outbox.count(), 1, "newer status must remain queued");
+
+    const secondResult = await outbox.drain(async (envelope) => {
+      observed.push(envelope.payload);
+    });
+    assert.equal(secondResult.delivered, 1);
+    assert.equal(outbox.count(), 0);
+    assert.deepEqual(observed, [
+      { state: "connecting" },
+      { state: "connected" }
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("serializes concurrent drains so the same callback is not sent twice", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-callback-outbox-serialized-"));
+  const secret = "callback-outbox-secret-" + "q".repeat(48);
+  try {
+    const outbox = new DurableCallbackOutbox(root, logger, secret);
+    outbox.enqueue({
+      kind: "inbound",
+      accountId: "wa-main",
+      payload: { external_message_id: "message-serialized" }
+    });
+
+    let releaseSender!: () => void;
+    const senderReleased = new Promise<void>((resolve) => {
+      releaseSender = resolve;
+    });
+    let markEntered!: () => void;
+    const senderEntered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let sends = 0;
+    const sender = async () => {
+      sends += 1;
+      markEntered();
+      await senderReleased;
+    };
+
+    const first = outbox.drain(sender);
+    await senderEntered;
+    const second = outbox.drain(sender);
+    releaseSender();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(sends, 1);
+    assert.deepEqual(firstResult, secondResult);
+    assert.equal(outbox.count(), 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal delivery callback remains bounded and is removed", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-delivery-outbox-"));
   const secret = "callback-outbox-secret-" + "y".repeat(48);

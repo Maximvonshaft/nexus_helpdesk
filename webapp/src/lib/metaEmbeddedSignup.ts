@@ -76,24 +76,34 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
     return Promise.resolve(window.FB)
   }
   if (sdkPromise) return sdkPromise
+
+  document.getElementById(SDK_ID)?.remove()
+
   sdkPromise = new Promise<FacebookSdk>((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
+    let script: HTMLScriptElement | null = null
+    const resetMetaSdkLoad = (code: string) => {
+      window.clearTimeout(timeout)
+      if (script?.isConnected) {
+        script.remove()
+      } else {
+        document.getElementById(SDK_ID)?.remove()
+      }
       sdkPromise = null
-      reject(new Error('meta_sdk_load_timeout'))
+      reject(new Error(code))
+    }
+    const timeout = window.setTimeout(() => {
+      resetMetaSdkLoad('meta_sdk_load_timeout')
     }, 15_000)
     window.fbAsyncInit = () => {
       window.clearTimeout(timeout)
       if (!window.FB) {
-        sdkPromise = null
-        reject(new Error('meta_sdk_unavailable'))
+        resetMetaSdkLoad('meta_sdk_unavailable')
         return
       }
       window.FB.init({ appId, version, cookie: true, xfbml: false })
       resolve(window.FB)
     }
-    const existing = document.getElementById(SDK_ID)
-    if (existing) return
-    const script = document.createElement('script')
+    script = document.createElement('script')
     script.id = SDK_ID
     script.src = SDK_SRC
     script.async = true
@@ -101,9 +111,7 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
     script.crossOrigin = 'anonymous'
     script.referrerPolicy = 'origin'
     script.onerror = () => {
-      window.clearTimeout(timeout)
-      sdkPromise = null
-      reject(new Error('meta_sdk_load_failed'))
+      resetMetaSdkLoad('meta_sdk_load_failed')
     }
     document.head.appendChild(script)
   })

@@ -142,14 +142,16 @@ export class DurableMediaDownloadOutbox {
     now = Date.now()
   ): Promise<{ delivered: number; pending: number; dead: number }> {
     const safeAccountId = assertSafeAccountId(accountId);
+    const batchLimit = Math.max(1, Math.min(limit, 100));
     const files = readdirSync(this.root)
       .filter((name) => name.endsWith(".download"))
-      .sort()
-      .slice(0, Math.max(1, Math.min(limit, 100)));
+      .sort();
     let delivered = 0;
     let pending = 0;
     let dead = 0;
+    let selected = 0;
     for (const file of files) {
+      if (selected >= batchLimit) break;
       const path = resolve(join(this.root, file));
       let envelope: MediaDownloadEnvelope;
       try {
@@ -171,6 +173,7 @@ export class DurableMediaDownloadOutbox {
         continue;
       }
       if (envelope.account_id !== safeAccountId) continue;
+      selected += 1;
       if (envelope.next_attempt_at > now) {
         pending += 1;
         continue;

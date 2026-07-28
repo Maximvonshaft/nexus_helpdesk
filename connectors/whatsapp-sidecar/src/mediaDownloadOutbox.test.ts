@@ -31,6 +31,12 @@ function rawMessage(id: string): proto.IWebMessageInfo {
   });
 }
 
+function spoolId(accountId: string, externalMessageId: string): string {
+  return createHash("sha256")
+    .update(`${accountId}\n${externalMessageId}`)
+    .digest("hex");
+}
+
 test("persists encrypted media download work across process restart", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-media-download-"));
   const secret = "media-download-secret-" + "x".repeat(48);
@@ -92,6 +98,62 @@ test("persists encrypted media download work across process restart", async () =
     ]);
     assert.equal(delivered.delivered, 1);
     assert.equal(restarted.count(), 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fills the batch for the requested account instead of truncating on other accounts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-media-download-account-batch-"));
+  const secret = "media-download-secret-" + "z".repeat(48);
+  try {
+    const outbox = new DurableMediaDownloadOutbox(root, logger, secret);
+    const healthyCandidates = Array.from({ length: 512 }, (_, index) => {
+      const messageId = `healthy-${index}`;
+      return { messageId, hash: spoolId("wa-main", messageId) };
+    }).sort((left, right) => left.hash.localeCompare(right.hash));
+    const healthy = healthyCandidates.at(-1);
+    assert.ok(healthy);
+
+    const blockers = Array.from({ length: 4096 }, (_, index) => {
+      const messageId = `blocker-${index}`;
+      return { messageId, hash: spoolId("wa-offline", messageId) };
+    })
+      .filter((candidate) => candidate.hash < healthy.hash)
+      .sort((left, right) => left.hash.localeCompare(right.hash))
+      .slice(0, 20);
+    assert.equal(blockers.length, 20);
+
+    for (const blocker of blockers) {
+      outbox.enqueue({
+        accountId: "wa-offline",
+        externalMessageId: blocker.messageId,
+        mediaKind: "image",
+        mediaType: "image/jpeg",
+        rawMessage: rawMessage(blocker.messageId)
+      });
+    }
+    outbox.enqueue({
+      accountId: "wa-main",
+      externalMessageId: healthy.messageId,
+      mediaKind: "image",
+      mediaType: "image/jpeg",
+      rawMessage: rawMessage(healthy.messageId)
+    });
+
+    const observed: string[] = [];
+    const result = await outbox.drainAccount(
+      "wa-main",
+      async (envelope) => {
+        observed.push(envelope.external_message_id);
+      },
+      20,
+      Date.now() + 1_000
+    );
+
+    assert.deepEqual(observed, [healthy.messageId]);
+    assert.equal(result.delivered, 1);
+    assert.equal(outbox.count(), 20);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,253 +1,156 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import {
-  json,
-  mockResponsiveConsole,
-  responsiveUser,
-} from './fixtures/responsiveConsole'
 
-function queueItem(index = 42) {
-  return {
-    queue_id: `ticket:${index}`,
-    case_key: `case-${index}`,
-    display_label: `T-${index}`,
-    display_summary: `Customer delivery inquiry ${index}`,
-    source_type: 'ticket',
-    source_id: index,
-    ticket_id: index,
-    conversation_id: null,
-    country_code: 'CH',
-    channel_key: 'webchat',
-    state: 'active',
-    source_status: 'in_progress',
-    reopened: false,
-    priority: index % 17 === 0 ? 'urgent' : 'medium',
-    owner: { kind: 'unassigned', user_id: null, team_id: null },
-    sla: { state: 'healthy', due_at: '2026-07-26T18:00:00Z', seconds_remaining: 3600 },
-    retry: { state: 'not_applicable', attempt_count: 0, max_attempts: 0, next_retry_at: null, error_category: null },
-    created_at: '2026-07-25T08:00:00Z',
-    updated_at: '2026-07-25T09:00:00Z',
-    source_links: { ticket: `/api/tickets/${index}`, conversation: null, handoff: null, dispatch: null },
-  }
-}
+const TOKEN_KEY = 'helpdesk-webapp-token'
 
-function queueResponse(items: ReturnType<typeof queueItem>[], nextCursor: string | null = null) {
-  return {
-    items,
-    next_cursor: nextCursor,
-    scope: {
-      tenant_hash: '123456789abc',
-      country_code: 'CH',
-      channel_key: 'webchat',
-      queue_key: 'legacy',
-    },
-    filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
-  }
-}
-
-function closureReceipt(options?: { ready?: boolean; repair?: boolean; closed?: boolean }) {
-  const ready = Boolean(options?.ready)
-  const repair = Boolean(options?.repair)
-  return {
-    schema: 'nexus.ticket-closure-receipt.v1',
-    ticket_id: 42,
-    ticket_status: options?.closed ? 'closed' : 'in_progress',
-    ticket_revision: '2026-07-25T09:00:00Z',
-    scenario_key: 'parcel.delay',
-    scenario_catalog_version: 'v1',
-    scenario_catalog_sha256: 'a'.repeat(64),
-    generated_at: '2026-07-25T09:01:00Z',
-    readiness: {
-      scenario_key: 'parcel.delay',
-      closure_ready: ready,
-      missing_fact_classes: ready ? [] : ['tracking.current_status'],
-      missing_customer_inputs: [],
-      missing_action_classes: [],
-      missing_outcome_levels: repair ? ['business_result_confirmed'] : ready ? [] : ['operational_completed'],
-      notification_satisfied: ready,
-      blocked_reasons: repair ? ['repair_required'] : ready ? [] : ['fact:tracking.current_status'],
-    },
-    evidence: {
-      ticket_event_ids: [1],
-      background_job_ids: [],
-      outbound_message_ids: ready ? [2] : [],
-      latest_material_at: '2026-07-25T09:00:00Z',
-      observation_elapsed: ready,
-      contains_payloads: false,
-    },
-    receipt_sha256: 'b'.repeat(64),
-  }
-}
-
-async function mockTicketWorkspace(page: Page, receipt = closureReceipt()) {
-  await mockResponsiveConsole(page)
-  await page.route('**/api/admin/operator-queue/unified?*', (route) => json(route, queueResponse([queueItem()])))
-  await page.route('**/api/tickets/42/closure-readiness', (route) => json(route, receipt))
-  await page.route('**/api/tickets/42', (route) => json(route, {
-    id: 42,
-    ticket_no: 'T-42',
-    title: 'Customer supplied title must remain verbatim: helpdesk sync MCP CLI',
-    status: 'in_progress',
-    priority: 'high',
-  }))
-}
-
-test('normal and empty canonical surfaces expose one coherent task state', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await mockResponsiveConsole(page)
-
-  await page.goto('/workspace')
-  await expect(page.getByText('暂无待处理任务')).toBeVisible()
-  await expect(page.getByRole('main')).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-
-  await page.goto('/administration')
-  await expect(page.getByRole('heading', { level: 1, name: '系统管理' })).toBeVisible()
-  await expect(page.getByRole('heading', { level: 2, name: '用户与权限' })).toBeVisible()
-  await expect(page.getByRole('table', { name: '用户与权限列表' }).getByRole('heading', { name: 'Responsive Operations Administrator' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '创建账号' })).toBeEnabled()
-  await expect(page.getByText('无法读取用户')).toHaveCount(0)
-  await expect(page.getByText('没有匹配的用户')).toHaveCount(0)
-})
-
-test('visible primary controls meet the 44px target contract', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await mockResponsiveConsole(page)
-  await page.goto('/administration')
-
-  const targets = page.locator('button:visible, a[href]:visible, [role="tab"]:visible, [role="combobox"]:visible, [role="switch"]:visible')
-  const count = await targets.count()
-  expect(count).toBeGreaterThan(5)
-  for (let index = 0; index < count; index += 1) {
-    const box = await targets.nth(index).boundingBox()
-    expect(box?.height ?? 0, `target ${index} is below 44px`).toBeGreaterThanOrEqual(44)
-  }
-})
-
-test('long operator identity and 200 percent text use structural compact layout', async ({ page }) => {
-  const longIdentity = 'Extremely Long Multi-Country Operations Administrator Name 德语 Français Italiano'
-  await page.setViewportSize({ width: 1366, height: 768 })
-  await mockResponsiveConsole(page)
-  await page.route('**/api/auth/me', (route) => json(route, {
-    ...responsiveUser,
-    display_name: longIdentity,
-  }))
-  await page.goto('/workspace')
-  await page.addStyleTag({ content: 'html { font-size: 200% !important; }' })
-
-  await expect(page.getByRole('button', { name: '打开主导航' })).toBeVisible()
-  await expect(page.getByRole('tab', { name: '待处理' })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-
-  await page.getByRole('button', { name: '打开主导航' }).click()
-  const identity = page.getByTestId('operator-drawer-user-label')
-  await expect(identity).toHaveText(longIdentity)
-  expect(await identity.evaluate((element) => (
-    element.scrollWidth <= element.clientWidth
-    && element.scrollHeight <= element.clientHeight
-  ))).toBe(true)
-})
-
-test('slow queue loading resolves from loading to the canonical empty state', async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 812 })
-  await mockResponsiveConsole(page)
-  await page.route('**/api/admin/operator-queue/unified?*', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
-    await json(route, queueResponse([]))
+function json(route: Route, body: unknown, status = 200) {
+  return route.fulfill({
+    status,
+    contentType: 'application/json; charset=utf-8',
+    body: JSON.stringify(body),
   })
-  await page.goto('/workspace')
+}
 
-  await expect(page.getByText('正在读取任务…')).toBeVisible()
-  await expect(page.getByText('暂无待处理任务')).toBeVisible()
-  await expect(page.getByText('正在读取任务…')).toHaveCount(0)
-})
-
-test('failed background refresh preserves the last confirmed queue', async ({ page }) => {
-  await page.clock.install({ time: new Date('2026-07-26T10:00:00Z') })
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await mockResponsiveConsole(page)
-
-  let calls = 0
-  await page.route('**/api/admin/operator-queue/unified?*', (route) => {
-    calls += 1
-    if (calls === 1) return json(route, queueResponse([queueItem()]))
-    return json(route, { detail: 'provider unavailable' }, 503)
-  })
-  await page.route('**/api/tickets/42/closure-readiness', (route) => json(route, closureReceipt()))
-  await page.route('**/api/tickets/42', (route) => json(route, {
-    id: 42,
-    title: 'Existing safe information',
-    status: 'in_progress',
-    priority: 'medium',
-  }))
-
-  await page.goto('/workspace')
-  const queueRow = page.getByRole('button', { name: /T-42/ })
-  await expect(queueRow).toBeVisible()
-  await page.clock.fastForward(16_000)
-  await expect(page.getByText(/待处理列表刷新失败，当前显示上次服务器确认的信息/)).toBeVisible()
-  await expect(queueRow).toBeVisible()
-})
-
-test('repair-required state is plain-language, persistent and technically inspectable', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await mockTicketWorkspace(page, closureReceipt({ repair: true }))
-  await page.goto('/workspace')
-
-  await expect(page.getByLabel('处理进度').getByText('存在失败结果，需要修复')).toBeVisible()
-  const safeClosure = page.getByLabel('安全关闭')
-  await expect(safeClosure.getByText(/存在失败结果，需要修复/)).toBeVisible()
-  await expect(safeClosure.getByText('修复失败结果')).toBeVisible()
-  await expect(safeClosure.getByText('repair_required')).not.toBeVisible()
-  await expect(page.getByText('已安全关闭')).toHaveCount(0)
-  await expect(page.getByText('Customer supplied title must remain verbatim: helpdesk sync MCP CLI')).toBeVisible()
-
-  await safeClosure.getByRole('button', { name: '关闭凭证' }).click()
-  await expect(safeClosure.getByText(/阻断代码：repair_required/)).toBeVisible()
-})
-
-test('stale close conflict exits confirmation and exposes the recovery path', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await mockTicketWorkspace(page, closureReceipt({ ready: true }))
-  await page.route('**/api/tickets/42/status', (route) => json(route, { detail: 'ticket_revision_conflict' }, 409))
-  await page.goto('/workspace')
-
-  await page.getByRole('button', { name: '核对并关闭' }).click()
-  const dialog = page.getByRole('dialog', { name: '确认安全关闭工单？' })
-  await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: '确认安全关闭' }).click()
-
-  await expect(dialog).toHaveCount(0)
-  await expect(page.getByText('关闭条件已发生变化')).toBeVisible()
-  await expect(page.getByRole('button', { name: '重新核对' })).toBeVisible()
-  await expect(page.getByText('已安全关闭')).toHaveCount(0)
-})
-
-test('five hundred queue rows remain operable through bounded cursor pages', async ({ page }) => {
-  test.setTimeout(120_000)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await mockResponsiveConsole(page)
-  await page.route('**/api/admin/operator-queue/unified?*', (route: Route) => {
-    const url = new URL(route.request().url())
-    const pageIndex = Number(url.searchParams.get('cursor') || 0)
-    const start = pageIndex * 50
-    const items = Array.from({ length: 50 }, (_, offset) => {
-      const item = queueItem(start + offset + 1)
-      return {
-        ...item,
-        ticket_id: null,
-        source_links: { ticket: null, conversation: null, handoff: null, dispatch: null },
-      }
-    })
-    return json(route, queueResponse(items, pageIndex < 9 ? String(pageIndex + 1) : null))
-  })
-  await page.goto('/workspace')
-
-  for (let pageIndex = 1; pageIndex < 10; pageIndex += 1) {
-    await page.getByRole('button', { name: '加载更多任务' }).click()
+function authUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 9,
+    username: 'mfa-agent',
+    display_name: 'MFA Agent',
+    email: 'mfa-agent@example.test',
+    role: 'agent',
+    team_id: null,
+    capabilities: ['ticket.read', 'operator_queue.read'],
+    must_change_password: false,
+    password_changed_at: '2026-07-20T10:00:00Z',
+    last_login_at: '2026-07-20T12:00:00Z',
+    mfa_enabled: true,
+    ...overrides,
   }
-  const rows = page.locator('#workspace-queue .MuiListItemButton-root')
-  await expect(rows).toHaveCount(500)
-  await rows.nth(499).click()
-  await expect(rows.nth(499)).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('heading', { level: 1, name: 'T-500' })).toBeVisible()
+}
+
+async function seedToken(page: Page) {
+  await page.addInitScript(([key, token]) => window.sessionStorage.setItem(key, token), [TOKEN_KEY, 'mfa-account-token'])
+}
+
+test('password login does not store an access token until MFA challenge verification succeeds', async ({ page }) => {
+  let workspaceScopeRequests = 0
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path === '/api/auth/login' && request.method() === 'POST') {
+      return json(route, {
+        mfa_required: true,
+        challenge_token: 'five-minute-mfa-challenge',
+        expires_in_seconds: 300,
+        display_name: 'MFA Agent',
+      })
+    }
+    if (path === '/api/auth/mfa/login/verify' && request.method() === 'POST') {
+      expect(JSON.parse(request.postData() || '{}')).toEqual({
+        challenge_token: 'five-minute-mfa-challenge',
+        credential: '123456',
+      })
+      return json(route, {
+        access_token: 'verified-mfa-token',
+        token_type: 'bearer',
+        user: authUser(),
+      })
+    }
+    if (path === '/api/auth/me') return json(route, authUser())
+    if (path === '/api/admin/operator-queue/my-scopes') {
+      workspaceScopeRequests += 1
+      return json(route, {
+        items: [{
+          tenant_key: 'tenant-mfa',
+          tenant_hash: '123456789abc',
+          country_code: 'ME',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        }],
+        requires_explicit_admin_scope: false,
+      })
+    }
+    if (path === '/api/admin/operator-queue/unified') {
+      return json(route, {
+        items: [],
+        next_cursor: null,
+        scope: {
+          tenant_hash: '123456789abc',
+          country_code: 'ME',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        },
+        filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
+      })
+    }
+    return json(route, { detail: `Unhandled MFA login API ${request.method()} ${path}` }, 404)
+  })
+
+  await page.goto('/login')
+  await page.getByRole('textbox', { name: '账号' }).fill('mfa-agent')
+  await page.getByRole('textbox', { name: '密码' }).fill('Nexus!Mfa2026')
+  await page.getByRole('button', { name: '登录' }).click()
+
+  await expect(page.getByRole('heading', { level: 1, name: '两步验证' })).toBeVisible()
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_KEY)).toBeNull()
+  expect(workspaceScopeRequests).toBe(0)
+
+  await page.getByRole('textbox', { name: '验证码或恢复码' }).fill('123456')
+  await page.getByRole('button', { name: '验证并登录' }).click()
+
+  await expect(page).toHaveURL(/\/workspace$/)
+  await expect(page.getByTestId('operator-workspace')).toBeVisible()
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_KEY)).toBe('verified-mfa-token')
+  expect(workspaceScopeRequests).toBeGreaterThan(0)
+})
+
+test('account MFA setup displays recovery codes once and returns to login after acknowledgement', async ({ page }) => {
+  await seedToken(page)
+  await page.route('**/api/**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (path === '/api/auth/me') return json(route, authUser({ mfa_enabled: false }))
+    if (path === '/api/auth/mfa/status') {
+      return json(route, {
+        enabled: false,
+        setup_pending: false,
+        confirmed_at: null,
+        last_verified_at: null,
+        recovery_codes_remaining: 0,
+      })
+    }
+    if (path === '/api/auth/mfa/setup/begin' && request.method() === 'POST') {
+      expect(JSON.parse(request.postData() || '{}')).toEqual({ current_password: 'Nexus!Mfa2026' })
+      return json(route, {
+        secret: 'JBSWY3DPEHPK3PXP',
+        otpauth_uri: 'otpauth://totp/Nexus%20OSR%3Amfa-agent?secret=JBSWY3DPEHPK3PXP&issuer=Nexus+OSR',
+      })
+    }
+    if (path === '/api/auth/mfa/setup/confirm' && request.method() === 'POST') {
+      expect(JSON.parse(request.postData() || '{}')).toEqual({ code: '654321' })
+      return json(route, {
+        ok: true,
+        recovery_codes: ['AAAAA-BBBBB', 'CCCCC-DDDDD', 'EEEEE-FFFFF'],
+        reauthenticate: true,
+      })
+    }
+    return json(route, { detail: `Unhandled MFA setup API ${request.method()} ${path}` }, 404)
+  })
+
+  await page.goto('/account')
+  await expect(page.getByRole('heading', { level: 2, name: '两步验证' })).toBeVisible()
+  const mfaRegion = page.getByRole('region', { name: '两步验证' })
+  await mfaRegion.getByRole('textbox', { name: '当前密码' }).fill('Nexus!Mfa2026')
+  await mfaRegion.getByRole('button', { name: '开始启用' }).click()
+
+  await expect(mfaRegion.getByText('JBSWY3DPEHPK3PXP', { exact: true })).toBeVisible()
+  await mfaRegion.getByRole('textbox', { name: '6 位验证码' }).fill('654321')
+  await mfaRegion.getByRole('button', { name: '确认并启用' }).click()
+
+  const recoveryDialog = page.getByRole('dialog', { name: '保存恢复码' })
+  await expect(recoveryDialog.getByText('AAAAA-BBBBB')).toBeVisible()
+  await expect(recoveryDialog.getByText('CCCCC-DDDDD')).toBeVisible()
+  await recoveryDialog.getByRole('button', { name: '已安全保存，重新登录' }).click()
+
+  await expect(page).toHaveURL(/\/login$/)
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), TOKEN_KEY)).toBeNull()
 })

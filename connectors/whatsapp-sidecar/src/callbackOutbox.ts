@@ -48,8 +48,11 @@ interface StoredCallback {
   auth_tag: string;
 }
 
+type DrainResult = { delivered: number; pending: number };
+
 export class DurableCallbackOutbox {
   private readonly encryptionKey: Buffer;
+  private drainInFlight: Promise<DrainResult> | null = null;
 
   constructor(
     private readonly root: string,
@@ -99,7 +102,29 @@ export class DurableCallbackOutbox {
   async drain(
     sender: (envelope: CallbackEnvelope) => Promise<void>,
     limit = 100
-  ): Promise<{ delivered: number; pending: number }> {
+  ): Promise<DrainResult> {
+    if (this.drainInFlight) {
+      return this.drainInFlight;
+    }
+    const operation = this.drainOnce(sender, limit);
+    this.drainInFlight = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.drainInFlight === operation) {
+        this.drainInFlight = null;
+      }
+    }
+  }
+
+  count(): number {
+    return readdirSync(this.root).filter((name) => name.endsWith(".json")).length;
+  }
+
+  private async drainOnce(
+    sender: (envelope: CallbackEnvelope) => Promise<void>,
+    limit: number
+  ): Promise<DrainResult> {
     const files = readdirSync(this.root)
       .filter((name) => name.endsWith(".json"))
       .sort()
@@ -108,9 +133,11 @@ export class DurableCallbackOutbox {
     let pending = 0;
     for (const file of files) {
       const path = resolve(join(this.root, file));
+      let serialized: string | null = null;
       let envelope: CallbackEnvelope;
       try {
-        envelope = this.decrypt(this.readBoundedFile(path));
+        serialized = this.readBoundedFile(path);
+        envelope = this.decrypt(serialized);
       } catch (error) {
         this.logger.error(
           {
@@ -119,7 +146,12 @@ export class DurableCallbackOutbox {
           },
           "callback_outbox_quarantined"
         );
-        rmSync(path, { force: true });
+        if (serialized === null || this.isCurrentVersion(path, serialized)) {
+          rmSync(path, { force: true });
+        }
+        continue;
+      }
+      if (serialized === null) {
         continue;
       }
       if (envelope.next_attempt_at > this.now()) {
@@ -128,10 +160,18 @@ export class DurableCallbackOutbox {
       }
       try {
         await sender(envelope);
-        rmSync(path, { force: true });
         delivered += 1;
+        if (this.isCurrentVersion(path, serialized)) {
+          rmSync(path, { force: true });
+        } else {
+          pending += 1;
+        }
       } catch (error) {
         envelope.attempts += 1;
+        if (!this.isCurrentVersion(path, serialized)) {
+          pending += 1;
+          continue;
+        }
         if (envelope.attempts >= MAX_CALLBACK_ATTEMPTS) {
           if (envelope.kind === "inbound") {
             envelope.attempts = MAX_CALLBACK_ATTEMPTS;
@@ -185,8 +225,12 @@ export class DurableCallbackOutbox {
     return { delivered, pending };
   }
 
-  count(): number {
-    return readdirSync(this.root).filter((name) => name.endsWith(".json")).length;
+  private isCurrentVersion(path: string, serialized: string): boolean {
+    try {
+      return this.readBoundedFile(path) === serialized;
+    } catch {
+      return false;
+    }
   }
 
   private readBoundedFile(path: string): string {
