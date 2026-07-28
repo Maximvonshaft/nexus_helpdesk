@@ -12,6 +12,7 @@ export interface WorkspaceScope {
   tenantKey: string
   countryCode: string
   channelKey: string
+  queueKey: string
 }
 
 export interface AuthorizedWorkspaceScope {
@@ -19,6 +20,7 @@ export interface AuthorizedWorkspaceScope {
   tenant_hash: string
   country_code: string
   channel_key: string
+  queue_key: string
 }
 
 export interface AuthorizedWorkspaceScopesResponse {
@@ -30,11 +32,12 @@ export function workspaceScopeFromAuthorized(scope: AuthorizedWorkspaceScope): W
     tenantKey: scope.tenant_key,
     countryCode: scope.country_code,
     channelKey: scope.channel_key,
+    queueKey: scope.queue_key,
   }
 }
 
 export function workspaceScopeKey(scope: WorkspaceScope) {
-  return `${scope.tenantKey}\u0000${scope.countryCode}\u0000${scope.channelKey}`
+  return `${scope.tenantKey}\u0000${scope.countryCode}\u0000${scope.channelKey}\u0000${scope.queueKey}`
 }
 
 export interface WorkspaceFilters {
@@ -101,6 +104,7 @@ export interface UnifiedQueueScope {
   tenant_hash: string
   country_code: string
   channel_key: string
+  queue_key: string
 }
 
 export interface UnifiedOperatorQueueResponse {
