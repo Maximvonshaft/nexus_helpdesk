@@ -382,6 +382,12 @@ def _eligible_voice_agents(
     )
     result: list[tuple[_core.User, _core.OperatorAgentState]] = []
     for user, state in candidates:
+        if _core._agent_has_prior_voice_offer(
+            db,
+            handoff_request_id=request_row.id,
+            agent_id=user.id,
+        ):
+            continue
         if not _candidate_authorized(
             db,
             plan=plan,
