@@ -33,10 +33,14 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_qa_training_contract": "pytest-qa-training",
     "test_unified_operator_queue": "tenant-queue-a",
     "test_webchat_action_idempotency": "pytest-action-idempotency",
+    "test_webchat_ai_turn_runtime": "pytest-ai-turn-runtime",
     "test_webchat_handoff_control": "pytest",
     "test_webchat_handoff_snapshot_service": "pytest-handoff-snapshot",
+    "test_webchat_terminal_fallback_delivery": "pytest-terminal-fallback",
+    "test_webchat_terminal_outcome_convergence": "pytest-terminal-outcome",
     "test_webchat_voice_api": "pytest-voice",
     "test_webchat_voice_p0_gap_closure": "pytest-voice-p0",
+    "test_whatsapp_native_ai_conversation": "pytest-whatsapp-ai",
 }
 
 # Global policy rows such as SLA revisions intentionally have tenant_id=NULL.
