@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.services.whatsapp_embedded_signup_csp import (
     augment_embedded_signup_csp,
     embedded_signup_csp_enabled,
@@ -53,3 +55,21 @@ def test_csp_is_enabled_only_for_channels_when_signup_is_configured(monkeypatch)
 def test_csp_remains_closed_when_signup_is_disabled(monkeypatch) -> None:
     _configure(monkeypatch, enabled=False)
     assert embedded_signup_csp_enabled("/channels") is False
+
+
+def test_meta_sdk_timeout_clears_cached_promise_for_operator_retry() -> None:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "webapp"
+        / "src"
+        / "lib"
+        / "metaEmbeddedSignup.ts"
+    ).read_text(encoding="utf-8")
+    timeout_block = source.split(
+        "const timeout = window.setTimeout(() => {",
+        1,
+    )[1].split("}, 15_000)", 1)[0]
+    assert "sdkPromise = null" in timeout_block
+    assert timeout_block.index("sdkPromise = null") < timeout_block.index(
+        "meta_sdk_load_timeout"
+    )
