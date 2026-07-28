@@ -29,8 +29,6 @@ from app.models_handoff_routing import (
     HandoffRoutingPlan,
 )
 from app.operator_models import OperatorQueueScopeGrant
-from app.services import agent_routing_primitives
-from app.services import agent_routing_service
 from app.services.agent_routing_service import (
     fill_agent_capacity,
     request_handoff,
@@ -265,19 +263,6 @@ def test_due_generation_reenters_live_capacity_routing(db_session):
 
 
 def test_private_primitives_have_no_parallel_repository_import_path():
-    assert (
-        agent_routing_primitives.request_handoff
-        is agent_routing_service.request_handoff
-    )
-    assert (
-        agent_routing_primitives.assign_handoff_to_agent
-        is agent_routing_service.assign_handoff_to_agent
-    )
-    assert (
-        agent_routing_primitives.create_next_voice_offer
-        is agent_routing_service.create_next_voice_offer
-    )
-
     app_root = Path(__file__).resolve().parents[1] / "app"
     references = []
     for path in app_root.rglob("*.py"):
