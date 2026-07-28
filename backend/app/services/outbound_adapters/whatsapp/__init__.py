@@ -99,15 +99,21 @@ def resolve_whatsapp_route(
             WhatsAppConnection.channel_account_id
             == ticket.channel_account_id,
         ).first()
+        if connection is None:
+            # A ticket-bound conversation must remain on its assigned account.
+            # Falling through to another market/global account would violate the
+            # outbound-part scope authority and turn a transient outage into a
+            # terminal cross-account failure.
+            raise ValueError("verified_whatsapp_connection_missing")
         account_source = "ticket.channel_account_id"
-    if connection is None and ticket.market_id is not None:
+    elif ticket.market_id is not None:
         connection = (
             query.filter(ChannelAccount.market_id == ticket.market_id)
             .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
             .first()
         )
         account_source = "ticket.market_id"
-    if connection is None:
+    if connection is None and not ticket.channel_account_id:
         connection = (
             query.filter(ChannelAccount.market_id.is_(None))
             .order_by(ChannelAccount.priority.asc(), ChannelAccount.id.asc())
@@ -219,13 +225,8 @@ def _failed(
     context: dict[str, Any],
     *,
     retryable: bool,
-) -> tuple[MessageStatus, str | None, object | None, dict[str, Any]]:
-    safe = dict(context)
-    safe.update(
-        {
-            "failure_code": failure_code[:120],
-            "error": message[:1000],
-            "retryable": retryable,
-        }
-    )
-    return MessageStatus.failed, failure_code[:120], None, safe
+) -> tuple[MessageStatus, str, None, dict[str, Any]]:
+    context = dict(context)
+    context["failure_code"] = failure_code
+    context["retryable"] = retryable
+    return MessageStatus.failed, message, None, context
