@@ -25,6 +25,7 @@ const STORED_SCHEMA = "nexus.whatsapp.callback.encrypted.v1";
 const ENVELOPE_SCHEMA = "nexus.whatsapp.callback.v1";
 const MAX_CALLBACK_FILE_BYTES = 256 * 1024;
 const MAX_CALLBACK_ATTEMPTS = 20;
+const EXHAUSTED_INBOUND_RETRY_MS = 60 * 60 * 1000;
 
 export type CallbackKind = "inbound" | "status" | "delivery";
 
@@ -53,7 +54,8 @@ export class DurableCallbackOutbox {
   constructor(
     private readonly root: string,
     private readonly logger: Logger,
-    integritySecret: string
+    integritySecret: string,
+    private readonly now: () => number = Date.now
   ) {
     if (integritySecret.trim().length < 32) {
       throw new Error("callback_outbox_secret_too_short");
@@ -79,7 +81,7 @@ export class DurableCallbackOutbox {
     const accountId = assertSafeAccountId(params.accountId);
     const id = params.dedupeKey
       ? `replaceable-${createHash("sha256").update(params.dedupeKey).digest("hex")}`
-      : `${Date.now()}-${randomUUID()}`;
+      : `${this.now()}-${randomUUID()}`;
     const envelope: CallbackEnvelope = {
       schema: ENVELOPE_SCHEMA,
       id,
@@ -87,8 +89,8 @@ export class DurableCallbackOutbox {
       account_id: accountId,
       payload: params.payload,
       attempts: 0,
-      next_attempt_at: Date.now(),
-      created_at: new Date().toISOString()
+      next_attempt_at: this.now(),
+      created_at: new Date(this.now()).toISOString()
     };
     this.write(envelope);
     return id;
@@ -120,7 +122,7 @@ export class DurableCallbackOutbox {
         rmSync(path, { force: true });
         continue;
       }
-      if (envelope.next_attempt_at > Date.now()) {
+      if (envelope.next_attempt_at > this.now()) {
         pending += 1;
         continue;
       }
@@ -131,12 +133,30 @@ export class DurableCallbackOutbox {
       } catch (error) {
         envelope.attempts += 1;
         if (envelope.attempts >= MAX_CALLBACK_ATTEMPTS) {
+          if (envelope.kind === "inbound") {
+            envelope.attempts = MAX_CALLBACK_ATTEMPTS;
+            envelope.next_attempt_at = this.now() + EXHAUSTED_INBOUND_RETRY_MS;
+            this.write(envelope);
+            pending += 1;
+            this.logger.error(
+              {
+                callback_id: envelope.id,
+                account_id: envelope.account_id,
+                callback_kind: envelope.kind,
+                attempts: envelope.attempts,
+                retained: true
+              },
+              "callback_outbox_dead_retained"
+            );
+            continue;
+          }
           this.logger.error(
             {
               callback_id: envelope.id,
               account_id: envelope.account_id,
               callback_kind: envelope.kind,
-              attempts: envelope.attempts
+              attempts: envelope.attempts,
+              retained: false
             },
             "callback_outbox_dead"
           );
@@ -147,7 +167,7 @@ export class DurableCallbackOutbox {
           1000 * 2 ** Math.min(envelope.attempts, 10),
           300000
         );
-        envelope.next_attempt_at = Date.now() + backoffMs;
+        envelope.next_attempt_at = this.now() + backoffMs;
         this.write(envelope);
         pending += 1;
         this.logger.warn(
