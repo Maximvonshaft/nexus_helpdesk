@@ -5,7 +5,8 @@ from datetime import timedelta
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
-from ..models import Ticket
+from ..models import Tenant, Ticket
+from ..models_agent_routing import ConversationControl
 from ..models_whatsapp import WhatsAppMediaAsset
 from ..utils.time import utc_now
 from .data_subject_action_service import ensure_data_processing_allowed
@@ -167,19 +168,42 @@ def _enforce_asset_processing_scope(
     asset: WhatsAppMediaAsset,
 ) -> None:
     inbound = asset.inbound_message
-    if inbound is None or inbound.ticket_id is None:
-        return
-    row = (
-        db.query(Ticket.customer_id, Ticket.tenant_id)
-        .filter(Ticket.id == inbound.ticket_id)
-        .first()
-    )
-    if row is None or row.tenant_id != asset.tenant_id:
-        raise WhatsAppMediaError("whatsapp_media_ticket_scope_mismatch")
-    if row.customer_id is not None:
+    if inbound is None:
+        raise WhatsAppMediaError("whatsapp_media_inbound_scope_missing")
+
+    customer_id: int | None
+    if inbound.ticket_id is not None:
+        row = (
+            db.query(Ticket.customer_id, Ticket.tenant_id)
+            .filter(Ticket.id == inbound.ticket_id)
+            .first()
+        )
+        if row is None or row.tenant_id != asset.tenant_id:
+            raise WhatsAppMediaError("whatsapp_media_ticket_scope_mismatch")
+        customer_id = int(row.customer_id) if row.customer_id is not None else None
+    else:
+        if inbound.conversation_id is None:
+            raise WhatsAppMediaError("whatsapp_media_conversation_scope_missing")
+        row = (
+            db.query(ConversationControl.customer_id, Tenant.id)
+            .join(
+                Tenant,
+                Tenant.tenant_key == ConversationControl.tenant_key,
+            )
+            .filter(
+                ConversationControl.conversation_id == inbound.conversation_id,
+                Tenant.is_active.is_(True),
+            )
+            .first()
+        )
+        if row is None or int(row.id) != int(asset.tenant_id):
+            raise WhatsAppMediaError("whatsapp_media_conversation_scope_mismatch")
+        customer_id = int(row.customer_id) if row.customer_id is not None else None
+
+    if customer_id is not None:
         ensure_data_processing_allowed(
             db,
-            customer_id=int(row.customer_id),
+            customer_id=customer_id,
             purpose="human_support",
         )
 
