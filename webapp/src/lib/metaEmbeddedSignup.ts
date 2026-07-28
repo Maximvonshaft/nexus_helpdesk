@@ -80,14 +80,9 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
   document.getElementById(SDK_ID)?.remove()
 
   sdkPromise = new Promise<FacebookSdk>((resolve, reject) => {
-    let script: HTMLScriptElement | null = null
     const resetMetaSdkLoad = (code: string) => {
       window.clearTimeout(timeout)
-      if (script?.isConnected) {
-        script.remove()
-      } else {
-        document.getElementById(SDK_ID)?.remove()
-      }
+      document.getElementById(SDK_ID)?.remove()
       sdkPromise = null
       reject(new Error(code))
     }
@@ -103,7 +98,7 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
       window.FB.init({ appId, version, cookie: true, xfbml: false })
       resolve(window.FB)
     }
-    script = document.createElement('script')
+    const script = document.createElement('script')
     script.id = SDK_ID
     script.src = SDK_SRC
     script.async = true
