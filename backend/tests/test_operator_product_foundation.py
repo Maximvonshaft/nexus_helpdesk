@@ -123,10 +123,13 @@ def test_capabilities_are_available_through_one_authenticated_product_shell():
 def test_operator_surfaces_hide_internal_session_and_account_identifiers():
     workspace = (ROOT.parent / "webapp/src/features/operator-workspace/OperatorWorkspacePage.tsx").read_text(encoding="utf-8")
     channels = (ROOT.parent / "webapp/src/features/channels/ChannelsPage.tsx").read_text(encoding="utf-8")
+    whatsapp_panel = (ROOT.parent / "webapp/src/features/channels/WhatsAppConfigurationPanel.tsx").read_text(encoding="utf-8")
 
     assert "会话编号" not in workspace
     assert "session_key" not in workspace
-    assert "maskPhone" in channels
+    assert "WhatsAppConfigurationPanel" in channels
+    assert "phone_number_mask" in whatsapp_panel
+    assert "connection.phone_number" not in whatsapp_panel
     assert "OperatorTechnicalDisclosure" in channels
     assert ">wa-primary-private<" not in channels
 
