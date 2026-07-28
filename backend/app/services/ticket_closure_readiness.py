@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -11,19 +11,22 @@ from sqlalchemy.orm import Session
 from ..enums import EventType, MessageStatus, TicketStatus
 from ..models import Ticket, TicketEvent, TicketOutboundMessage, User
 from ..models_case_governance import CaseOutcomeRecord
+from ..models_case_scenario import CaseScenarioAssignment
 from ..utils.time import ensure_utc, utc_now
 from .case_outcome_service import (
     append_case_outcome,
     project_case_ledger,
     record_case_evidence,
 )
+from .case_scenario_service import (
+    current_case_scenario_assignment,
+    scenario_is_runtime_active,
+)
 from .nexus_osr.business_scenarios import (
-    BusinessScenarioCatalogError,
     BusinessScenarioDefinition,
+    ScenarioLifecycle,
     ScenarioReadiness,
     evaluate_scenario_readiness,
-    load_business_scenario_catalog,
-    resolve_business_scenario,
 )
 from .permissions import ensure_can_change_status, ensure_ticket_visible
 
@@ -31,6 +34,7 @@ CLOSURE_EVIDENCE_SCHEMA = "nexus.case-closure-evidence.v2"
 CLOSURE_RECEIPT_SCHEMA = "nexus.ticket-closure-receipt.v2"
 CLOSURE_RECEIPT_FIELD = "closure_readiness_receipt"
 CLOSURE_RECEIPT_INVALIDATED_FIELD = "closure_readiness_receipt_invalidated"
+CASE_SCENARIO_SNAPSHOT_SCHEMA = "nexus.case-scenario-assignment.v1"
 
 _ALLOWED_EVIDENCE_KINDS = frozenset(
     {"fact", "customer_input", "action", "outcome", "notification"}
@@ -105,60 +109,206 @@ def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _scenario_identity(ticket: Ticket) -> tuple[str | None, str | None]:
-    candidates = (
-        ticket.case_type,
-        ticket.sub_category,
-        ticket.category,
-        ticket.ai_classification,
-    )
-    for value in candidates:
-        normalized = str(value or "").strip().lower()
-        if normalized:
-            return normalized, normalized
-    return None, None
+def _snapshot_timestamp(value: Any, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"case_scenario_snapshot_{field}_invalid") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"case_scenario_snapshot_{field}_invalid")
+    return parsed.astimezone(timezone.utc)
+
+
+def _optional_snapshot_timestamp(value: Any, field: str) -> datetime | None:
+    return None if value is None else _snapshot_timestamp(value, field)
+
+
+def _snapshot_text(value: Any, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"case_scenario_snapshot_{field}_invalid")
+    return text
+
+
+def _snapshot_tuple(value: Any, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"case_scenario_snapshot_{field}_invalid")
+    result = tuple(str(item or "").strip() for item in value)
+    if any(not item for item in result):
+        raise ValueError(f"case_scenario_snapshot_{field}_invalid")
+    return result
+
+
+def _scenario_from_assignment(
+    row: CaseScenarioAssignment,
+    *,
+    observed_at: datetime,
+) -> BusinessScenarioDefinition:
+    try:
+        root = json.loads(row.scenario_snapshot_json)
+        if not isinstance(root, dict):
+            raise ValueError("case_scenario_snapshot_root_invalid")
+        if root.get("schema") != CASE_SCENARIO_SNAPSHOT_SCHEMA:
+            raise ValueError("case_scenario_snapshot_schema_invalid")
+        if root.get("catalog_version") != row.catalog_version:
+            raise ValueError("case_scenario_snapshot_catalog_version_mismatch")
+        if root.get("catalog_sha256") != row.catalog_sha256:
+            raise ValueError("case_scenario_snapshot_catalog_digest_mismatch")
+        payload = root["scenario"]
+        lifecycle_payload = payload["lifecycle"]
+        if not isinstance(payload, dict) or not isinstance(lifecycle_payload, dict):
+            raise ValueError("case_scenario_snapshot_payload_invalid")
+        scenario_key = _snapshot_text(payload["scenario_key"], "scenario_key")
+        if scenario_key != row.scenario_key:
+            raise ValueError("case_scenario_snapshot_key_mismatch")
+        lifecycle = ScenarioLifecycle(
+            status=_snapshot_text(lifecycle_payload["status"], "status"),
+            owner=_snapshot_text(lifecycle_payload["owner"], "owner"),
+            approved_at=_snapshot_timestamp(
+                lifecycle_payload["approved_at"], "approved_at"
+            ),
+            effective_from=_snapshot_timestamp(
+                lifecycle_payload["effective_from"], "effective_from"
+            ),
+            review_due=_snapshot_timestamp(
+                lifecycle_payload["review_due"], "review_due"
+            ),
+            expires_at=_optional_snapshot_timestamp(
+                lifecycle_payload.get("expires_at"), "expires_at"
+            ),
+            supersedes=(
+                str(lifecycle_payload["supersedes"]).strip()
+                if lifecycle_payload.get("supersedes") is not None
+                else None
+            ),
+        )
+        scenario = BusinessScenarioDefinition(
+            scenario_key=scenario_key,
+            issue_type_aliases=_snapshot_tuple(
+                payload["issue_type_aliases"], "issue_type_aliases"
+            ),
+            trigger_sources=_snapshot_tuple(
+                payload["trigger_sources"], "trigger_sources"
+            ),
+            required_fact_classes=_snapshot_tuple(
+                payload["required_fact_classes"], "required_fact_classes"
+            ),
+            required_customer_inputs=_snapshot_tuple(
+                payload["required_customer_inputs"], "required_customer_inputs"
+            ),
+            risk_level=_snapshot_text(payload["risk_level"], "risk_level"),
+            escalation_policy_key=(
+                str(payload["escalation_policy_key"]).strip()
+                if payload.get("escalation_policy_key") is not None
+                else None
+            ),
+            owner_queue_key=_snapshot_text(
+                payload["owner_queue_key"], "owner_queue_key"
+            ),
+            required_capabilities=_snapshot_tuple(
+                payload["required_capabilities"], "required_capabilities"
+            ),
+            allowed_action_classes=_snapshot_tuple(
+                payload["allowed_action_classes"], "allowed_action_classes"
+            ),
+            required_action_classes=_snapshot_tuple(
+                payload["required_action_classes"], "required_action_classes"
+            ),
+            blocked_action_classes=_snapshot_tuple(
+                payload["blocked_action_classes"], "blocked_action_classes"
+            ),
+            notification_policy=_snapshot_text(
+                payload["notification_policy"], "notification_policy"
+            ),
+            allowed_no_notification_reasons=_snapshot_tuple(
+                payload["allowed_no_notification_reasons"],
+                "allowed_no_notification_reasons",
+            ),
+            terminal_behavior=_snapshot_text(
+                payload["terminal_behavior"], "terminal_behavior"
+            ),
+            required_outcome_levels=_snapshot_tuple(
+                payload["required_outcome_levels"], "required_outcome_levels"
+            ),
+            completion_rules=_snapshot_tuple(
+                payload["completion_rules"], "completion_rules"
+            ),
+            definition_of_done=_snapshot_text(
+                payload["definition_of_done"], "definition_of_done"
+            ),
+            observation_period_seconds=int(payload["observation_period_seconds"]),
+            reopen_conditions=_snapshot_tuple(
+                payload["reopen_conditions"], "reopen_conditions"
+            ),
+            cancellation_semantics=_snapshot_text(
+                payload["cancellation_semantics"], "cancellation_semantics"
+            ),
+            metrics=_snapshot_tuple(payload["metrics"], "metrics"),
+            scope_mode=_snapshot_text(payload["scope_mode"], "scope_mode"),
+            lifecycle=lifecycle,
+        )
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith(
+            "case_scenario_snapshot_"
+        ):
+            raise
+        raise ValueError("case_scenario_snapshot_invalid") from exc
+    if not scenario_is_runtime_active(scenario, at=observed_at):
+        raise ValueError("case_scenario_not_runtime_active")
+    return scenario
 
 
 def _resolve_scenario(
+    db: Session,
     ticket: Ticket,
+    *,
+    observed_at: datetime,
 ) -> tuple[
     BusinessScenarioDefinition | None,
     str | None,
     str | None,
     str | None,
+    int | None,
+    str | None,
+    bool,
 ]:
-    try:
-        catalog = load_business_scenario_catalog()
-    except BusinessScenarioCatalogError as exc:
-        return None, None, None, exc.reason
-    scenario_key, issue_type = _scenario_identity(ticket)
-    if not scenario_key:
+    row = current_case_scenario_assignment(db, ticket_id=int(ticket.id))
+    if row is None:
         return (
             None,
-            catalog.catalog_version,
-            catalog.source_sha256,
-            "scenario_identity_missing",
+            None,
+            None,
+            "case_scenario_assignment_missing",
+            None,
+            None,
+            False,
         )
     try:
-        scenario = resolve_business_scenario(
-            catalog,
-            scenario_key=scenario_key,
-            issue_type=issue_type,
+        scenario = _scenario_from_assignment(row, observed_at=observed_at)
+    except ValueError as exc:
+        return (
+            None,
+            row.catalog_version,
+            row.catalog_sha256,
+            str(exc),
+            row.id,
+            row.scenario_key,
+            False,
         )
-    except BusinessScenarioCatalogError:
-        try:
-            scenario = resolve_business_scenario(
-                catalog,
-                issue_type=issue_type,
-            )
-        except BusinessScenarioCatalogError as exc:
-            return (
-                None,
-                catalog.catalog_version,
-                catalog.source_sha256,
-                exc.reason,
-            )
-    return scenario, catalog.catalog_version, catalog.source_sha256, None
+    return (
+        scenario,
+        row.catalog_version,
+        row.catalog_sha256,
+        None,
+        row.id,
+        row.scenario_key,
+        observed_at >= scenario.lifecycle.review_due,
+    )
 
 
 def _field_projection(ticket: Ticket) -> tuple[set[str], set[str]]:
@@ -253,9 +403,9 @@ def _notification_projection(
     )
 
 
-def _not_ready(reason: str) -> ScenarioReadiness:
+def _not_ready(reason: str, *, scenario_key: str | None = None) -> ScenarioReadiness:
     return ScenarioReadiness(
-        scenario_key="unresolved",
+        scenario_key=scenario_key or "unresolved",
         closure_ready=False,
         missing_fact_classes=(),
         missing_customer_inputs=(),
@@ -272,19 +422,20 @@ def build_closure_snapshot(
     *,
     now: datetime | None = None,
 ) -> ClosureSnapshot:
-    """Build the base fact/action/outcome projection.
-
-    Notification delivery strength is applied by
-    ``notification_evidence_policy.build_governed_closure_snapshot``. This
-    function is not itself a close authorization.
-    """
+    """Build the one Assignment-bound base fact/action/outcome projection."""
 
     observed_now = ensure_utc(now or utc_now())
     if observed_now is None:
         raise ValueError("closure_time_unavailable")
-    scenario, catalog_version, catalog_sha256, scenario_error = _resolve_scenario(
-        ticket
-    )
+    (
+        scenario,
+        catalog_version,
+        catalog_sha256,
+        scenario_error,
+        assignment_id,
+        assignment_key,
+        review_overdue,
+    ) = _resolve_scenario(db, ticket, observed_at=observed_now)
     ledger = project_case_ledger(db, ticket_id=ticket.id)
     outbound = (
         db.query(TicketOutboundMessage)
@@ -334,7 +485,10 @@ def build_closure_snapshot(
     open_high_risk_escalation = ticket.status == TicketStatus.escalated
 
     if scenario is None:
-        readiness = _not_ready(scenario_error or "scenario_unavailable")
+        readiness = _not_ready(
+            scenario_error or "scenario_unavailable",
+            scenario_key=assignment_key,
+        )
     else:
         readiness = evaluate_scenario_readiness(
             scenario,
@@ -370,9 +524,11 @@ def build_closure_snapshot(
         "ticket_revision": (
             ticket_revision.isoformat() if ticket_revision is not None else None
         ),
-        "scenario_key": scenario.scenario_key if scenario else None,
+        "scenario_assignment_id": assignment_id,
+        "scenario_key": scenario.scenario_key if scenario else assignment_key,
         "scenario_catalog_version": catalog_version,
         "scenario_catalog_sha256": catalog_sha256,
+        "scenario_review_overdue": review_overdue,
         "generated_at": observed_now.isoformat(),
         "readiness": readiness.as_dict(),
         "evidence": {
@@ -434,6 +590,7 @@ def append_closure_receipt_event(
         payload={
             "receipt_sha256": digest,
             "scenario_key": receipt.get("scenario_key"),
+            "scenario_assignment_id": receipt.get("scenario_assignment_id"),
             "closure_ready": bool(
                 (receipt.get("readiness") or {}).get("closure_ready")
             ),
@@ -450,6 +607,9 @@ def append_closure_receipt_event(
             {
                 "schema": "nexus.case-ledger-timeline-projection.v1",
                 "receipt_sha256": digest,
+                "scenario_assignment_id": receipt.get(
+                    "scenario_assignment_id"
+                ),
                 "contains_payloads": False,
             }
         ),
@@ -607,7 +767,14 @@ def record_closure_evidence(
     if not normalized_key or not normalized_ref or not normalized_revision:
         raise ValueError("closure_evidence_source_identity_required")
 
-    scenario, _, _, error = _resolve_scenario(ticket)
+    evidence_time = ensure_utc(observed_at)
+    if evidence_time is None:
+        raise ValueError("closure_evidence_observed_at_required")
+    scenario, _, _, error, _, _, _ = _resolve_scenario(
+        db,
+        ticket,
+        observed_at=ensure_utc(utc_now()) or utc_now(),
+    )
     if scenario is None:
         raise ValueError(error or "scenario_unavailable")
     allowed_waiver_reasons = set(
@@ -627,9 +794,6 @@ def record_closure_evidence(
     if normalized_kind != "notification" and normalized_state == "waived":
         raise ValueError("closure_evidence_waiver_kind_invalid")
 
-    observed = ensure_utc(observed_at)
-    if observed is None:
-        raise ValueError("closure_evidence_observed_at_required")
     note_text = " ".join(str(note or "").strip().split())
     evidence_identity = {
         "schema": CLOSURE_EVIDENCE_SCHEMA,
@@ -640,7 +804,7 @@ def record_closure_evidence(
         "source_kind": normalized_source,
         "source_ref": normalized_ref[:200],
         "source_revision": normalized_revision[:160],
-        "observed_at": observed.isoformat(),
+        "observed_at": evidence_time.isoformat(),
         "recorded_by": current_user.id,
     }
     digest = _sha256(evidence_identity)
@@ -655,7 +819,7 @@ def record_closure_evidence(
             source_kind=normalized_source,
             source_ref=normalized_ref,
             source_revision=normalized_revision,
-            observed_at=observed,
+            observed_at=evidence_time,
             recorded_by=current_user.id,
             safe_metadata={
                 "evidence_sha256": digest,
@@ -695,7 +859,7 @@ def record_closure_evidence(
         record_type=record_type,
         state=outcome_state,
         idempotency_key=f"closure-evidence:{digest}",
-        occurred_at=observed,
+        occurred_at=evidence_time,
         created_by=current_user.id,
         source_kind=normalized_source,
         source_id=normalized_ref,

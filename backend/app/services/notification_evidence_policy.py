@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from ..models import Ticket, TicketOutboundMessage
 from ..models_case_governance import CaseOutcomeRecord
-from .case_scenario_service import project_case_scenario_to_legacy_identity
 from .nexus_osr.business_scenarios import ScenarioReadiness
 from .ticket_closure_readiness import ClosureSnapshot, build_closure_snapshot
 
@@ -197,7 +196,6 @@ def build_governed_closure_snapshot(
     *,
     now=None,
 ) -> ClosureSnapshot:
-    project_case_scenario_to_legacy_identity(db, ticket)
     return apply_notification_evidence_policy(
         db,
         ticket=ticket,
@@ -218,6 +216,9 @@ def require_governed_closure_ready(
             detail={
                 "code": "safe_closure_not_ready",
                 "scenario_key": snapshot.receipt.get("scenario_key"),
+                "scenario_assignment_id": snapshot.receipt.get(
+                    "scenario_assignment_id"
+                ),
                 "readiness": snapshot.readiness.as_dict(),
                 "receipt_sha256": snapshot.receipt["receipt_sha256"],
             },

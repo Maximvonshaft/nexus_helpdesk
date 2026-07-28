@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import event, inspect, select
-from sqlalchemy.orm import Session, attributes
+from sqlalchemy.orm import Session
 
 from ..enums import EventType
 from ..models import Ticket
@@ -53,27 +53,6 @@ def _utc(value: datetime | None = None) -> datetime:
     return current
 
 
-def load_runtime_scenario_catalog(
-    *,
-    at: datetime | None = None,
-) -> BusinessScenarioCatalog:
-    """Load approved runtime scenarios without treating review debt as expiry."""
-
-    catalog = load_business_scenario_catalog(require_all_active=False)
-    current = _utc(at)
-    invalid = [
-        item.scenario_key
-        for item in catalog.scenarios
-        if not scenario_is_runtime_active(item, at=current)
-    ]
-    if invalid:
-        raise _http_conflict(
-            "scenario_catalog_contains_runtime_inactive_definition",
-            scenario_keys=sorted(invalid),
-        )
-    return catalog
-
-
 def scenario_is_runtime_active(
     scenario: BusinessScenarioDefinition,
     *,
@@ -94,6 +73,27 @@ def scenario_review_overdue(
     at: datetime | None = None,
 ) -> bool:
     return _utc(at) >= scenario.lifecycle.review_due
+
+
+def load_runtime_scenario_catalog(
+    *,
+    at: datetime | None = None,
+) -> BusinessScenarioCatalog:
+    """Load approved scenarios; review debt does not stop customer runtime."""
+
+    catalog = load_business_scenario_catalog(require_all_active=False)
+    current = _utc(at)
+    invalid = [
+        item.scenario_key
+        for item in catalog.scenarios
+        if not scenario_is_runtime_active(item, at=current)
+    ]
+    if invalid:
+        raise _http_conflict(
+            "scenario_catalog_contains_runtime_inactive_definition",
+            scenario_keys=sorted(invalid),
+        )
+    return catalog
 
 
 def _normalized(value: Any) -> str | None:
@@ -161,8 +161,7 @@ def resolve_explicit_scenario(
     *,
     at: datetime | None = None,
 ) -> BusinessScenarioDefinition:
-    normalized = _normalized(scenario_key)
-    target = catalog.alias_map().get(normalized or "")
+    target = catalog.alias_map().get(_normalized(scenario_key) or "")
     if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -239,14 +238,13 @@ def _assignment_values(
     actor_id: int | None = None,
     assigned_at: datetime | None = None,
 ) -> dict[str, Any]:
-    snapshot = _scenario_snapshot(catalog, scenario)
     return {
         "ticket_id": int(ticket.id),
         "scenario_key": scenario.scenario_key,
         "catalog_version": catalog.catalog_version,
         "catalog_sha256": catalog.source_sha256,
         "scenario_snapshot_json": json.dumps(
-            snapshot,
+            _scenario_snapshot(catalog, scenario),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -282,9 +280,10 @@ def serialize_case_scenario_assignment(
 ) -> dict[str, Any]:
     try:
         snapshot = json.loads(row.scenario_snapshot_json)
-        review_due_raw = snapshot["scenario"]["lifecycle"]["review_due"]
         review_due = datetime.fromisoformat(
-            str(review_due_raw).replace("Z", "+00:00")
+            str(snapshot["scenario"]["lifecycle"]["review_due"]).replace(
+                "Z", "+00:00"
+            )
         )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _http_conflict(
@@ -335,6 +334,7 @@ def reclassify_case_scenario(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "case_scenario_reclassification_reason_required"},
         )
+
     locked_ticket = _lock_ticket(db, int(ticket.id))
     catalog = load_runtime_scenario_catalog()
     scenario = resolve_explicit_scenario(catalog, scenario_key)
@@ -402,38 +402,6 @@ def reclassify_case_scenario(
         },
     )
     db.flush()
-    return row
-
-
-def _catalog_projection_key(row: CaseScenarioAssignment) -> str:
-    """Temporary explicit closure adapter; not a general read projection."""
-
-    catalog = load_business_scenario_catalog(require_all_active=False)
-    if (
-        row.catalog_version != catalog.catalog_version
-        or row.catalog_sha256 != catalog.source_sha256
-    ):
-        return "case_scenario_catalog_mismatch"
-    return row.scenario_key
-
-
-def project_case_scenario_to_legacy_identity(
-    db: Session,
-    ticket: Ticket,
-) -> CaseScenarioAssignment | None:
-    """Temporary explicit adapter used only by the legacy Closure builder.
-
-    This function is deliberately not registered on Session load. It performs
-    one bounded lookup only when a governed closure boundary is invoked. The
-    remaining Closure refactor is tracked as an open repository finding.
-    """
-
-    if ticket.id is None:
-        return None
-    row = current_case_scenario_assignment(db, ticket_id=int(ticket.id))
-    if row is None:
-        return None
-    attributes.set_committed_value(ticket, "case_type", _catalog_projection_key(row))
     return row
 
 
