@@ -49,7 +49,7 @@ def valid_manifest(root: Path) -> tuple[dict, Path]:
             "image_id": "sha256:" + "b" * 64,
             "postgres_image_digest": "pgvector/pgvector@sha256:" + "c" * 64,
             "nginx_image_digest": "nginx@sha256:" + "d" * 64,
-            "migration_revision": "20260727_wa4",
+            "migration_revision": "20260728_r5_handoff",
             "config_profile": "rc-test-isolated-v1",
             "config_digest": "sha256:" + "e" * 64,
         },
