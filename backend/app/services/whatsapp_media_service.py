@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import socket
 from dataclasses import dataclass
 from datetime import timedelta
@@ -16,6 +17,7 @@ from ..enums import NoteVisibility
 from ..models import ChannelAccount, TicketAttachment, WhatsAppInboundMessage
 from ..models_whatsapp import WhatsAppConnection, WhatsAppMediaAsset
 from ..utils.time import utc_now
+from ..webchat_models import WebchatConversation, WebchatMessage
 from .secret_crypto import SecretCryptoService
 from .storage import get_storage_backend
 from .whatsapp_media_scanner import MediaScanError, scan_whatsapp_media
@@ -161,6 +163,11 @@ def persist_inbound_media_bytes(
     if not settings.enabled:
         raise WhatsAppMediaError("whatsapp_media_disabled")
     if asset.storage_status == "available" and asset.storage_key and asset.sha256:
+        project_available_inbound_media_for_ticket(
+            db,
+            conversation_id=(asset.inbound_message.conversation_id if asset.inbound_message else None),
+            ticket_id=(asset.inbound_message.ticket_id if asset.inbound_message else None),
+        )
         return StoredWhatsAppMedia(
             asset_id=asset.id,
             storage_key=asset.storage_key,
@@ -213,6 +220,28 @@ def persist_inbound_media_bytes(
         allowed_extensions={suffix},
         max_bytes=max_bytes,
     )
+    asset.file_name = filename
+    asset.declared_mime_type = mime_type
+    asset.detected_mime_type = stored.detected_mime_type
+    asset.byte_size = stored.size_bytes
+    asset.sha256 = digest
+    asset.storage_key = stored.storage_key
+    asset.storage_status = "available"
+    asset.scan_status = "clean"
+    asset.downloaded_at = asset.downloaded_at or utc_now()
+    asset.available_at = utc_now()
+    asset.last_error_code = None
+    asset.last_error_message = None
+    asset.updated_at = utc_now()
+    db.flush()
+
+    _project_conversation_media(
+        db,
+        asset=asset,
+        filename=filename,
+        mime_type=stored.detected_mime_type,
+        size_bytes=stored.size_bytes,
+    )
     attachment_id = _project_ticket_attachment(
         db,
         asset=asset,
@@ -221,20 +250,7 @@ def persist_inbound_media_bytes(
         mime_type=stored.detected_mime_type,
         size_bytes=stored.size_bytes,
     )
-    asset.file_name = filename
-    asset.declared_mime_type = mime_type
-    asset.detected_mime_type = stored.detected_mime_type
-    asset.byte_size = stored.size_bytes
-    asset.sha256 = digest
-    asset.storage_key = stored.storage_key
     asset.ticket_attachment_id = attachment_id
-    asset.storage_status = "available"
-    asset.scan_status = "clean"
-    asset.downloaded_at = asset.downloaded_at or utc_now()
-    asset.available_at = utc_now()
-    asset.last_error_code = None
-    asset.last_error_message = None
-    asset.updated_at = utc_now()
     db.flush()
     return StoredWhatsAppMedia(
         asset_id=asset.id,
@@ -313,6 +329,110 @@ def download_and_persist_meta_media(
             active_client.close()
 
 
+def project_available_inbound_media_for_ticket(
+    db: Session,
+    *,
+    conversation_id: int | None,
+    ticket_id: int | None,
+) -> int:
+    if not conversation_id or not ticket_id:
+        return 0
+    conversation = db.get(WebchatConversation, int(conversation_id))
+    if conversation is None or conversation.id != int(conversation_id):
+        return 0
+    if conversation.ticket_id not in {None, int(ticket_id)}:
+        raise WhatsAppMediaError("whatsapp_media_ticket_scope_conflict")
+    conversation.ticket_id = int(ticket_id)
+    assets = (
+        db.query(WhatsAppMediaAsset)
+        .join(
+            WhatsAppInboundMessage,
+            WhatsAppInboundMessage.id == WhatsAppMediaAsset.inbound_message_id,
+        )
+        .filter(
+            WhatsAppInboundMessage.conversation_id == int(conversation_id),
+            WhatsAppMediaAsset.storage_status == "available",
+            WhatsAppMediaAsset.scan_status == "clean",
+            WhatsAppMediaAsset.storage_key.is_not(None),
+            WhatsAppMediaAsset.ticket_attachment_id.is_(None),
+        )
+        .order_by(WhatsAppMediaAsset.id.asc())
+        .all()
+    )
+    projected = 0
+    for asset in assets:
+        inbound = asset.inbound_message
+        if inbound is not None:
+            inbound.ticket_id = int(ticket_id)
+            if inbound.webchat_message_id:
+                message = db.get(WebchatMessage, inbound.webchat_message_id)
+                if message is not None and message.conversation_id == int(conversation_id):
+                    message.ticket_id = int(ticket_id)
+        attachment_id = _project_ticket_attachment(
+            db,
+            asset=asset,
+            filename=asset.file_name or f"whatsapp-{asset.media_kind}.bin",
+            storage_key=str(asset.storage_key),
+            mime_type=asset.detected_mime_type or asset.declared_mime_type or "application/octet-stream",
+            size_bytes=int(asset.byte_size or 0),
+            ticket_id=int(ticket_id),
+        )
+        if attachment_id is not None:
+            asset.ticket_attachment_id = attachment_id
+            projected += 1
+    db.flush()
+    return projected
+
+
+def _project_conversation_media(
+    db: Session,
+    *,
+    asset: WhatsAppMediaAsset,
+    filename: str,
+    mime_type: str,
+    size_bytes: int,
+) -> None:
+    inbound = asset.inbound_message
+    if inbound is None or not inbound.conversation_id or not inbound.webchat_message_id:
+        return
+    conversation = db.get(WebchatConversation, inbound.conversation_id)
+    message = db.get(WebchatMessage, inbound.webchat_message_id)
+    if (
+        conversation is None
+        or message is None
+        or message.conversation_id != conversation.id
+    ):
+        raise WhatsAppMediaError("whatsapp_media_conversation_projection_conflict")
+    payload: dict[str, Any]
+    try:
+        parsed = json.loads(message.payload_json or "{}")
+        payload = parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = {}
+    payload["media"] = {
+        "schema": "nexus.whatsapp-conversation-media.v1",
+        "asset_id": asset.id,
+        "status": "available",
+        "media_kind": asset.media_kind,
+        "file_name": filename,
+        "mime_type": mime_type,
+        "byte_size": int(size_bytes),
+        "download_path": (
+            f"/api/support/conversations/{conversation.public_id}/media/{asset.id}"
+        ),
+    }
+    message.payload_json = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    message.message_type = asset.media_kind or message.message_type
+    if conversation.ticket_id is not None:
+        inbound.ticket_id = conversation.ticket_id
+        message.ticket_id = conversation.ticket_id
+
+
 def _project_ticket_attachment(
     db: Session,
     *,
@@ -321,14 +441,21 @@ def _project_ticket_attachment(
     storage_key: str,
     mime_type: str,
     size_bytes: int,
+    ticket_id: int | None = None,
 ) -> int | None:
     inbound = asset.inbound_message
-    if inbound is None or inbound.ticket_id is None:
+    resolved_ticket_id = int(ticket_id) if ticket_id else None
+    if resolved_ticket_id is None and inbound is not None:
+        resolved_ticket_id = inbound.ticket_id
+        if resolved_ticket_id is None and inbound.conversation_id:
+            conversation = db.get(WebchatConversation, inbound.conversation_id)
+            resolved_ticket_id = conversation.ticket_id if conversation is not None else None
+    if resolved_ticket_id is None:
         return None
     if asset.ticket_attachment_id is not None:
         return asset.ticket_attachment_id
     attachment = TicketAttachment(
-        ticket_id=inbound.ticket_id,
+        ticket_id=resolved_ticket_id,
         uploaded_by=None,
         file_name=filename,
         storage_key=storage_key,
