@@ -373,7 +373,12 @@ def _effective_channel(
     ).strip().lower()
     if conversation_channel == SourceChannel.whatsapp.value:
         return SourceChannel.whatsapp
-    if conversation_channel in {"", "webchat", SourceChannel.web_chat.value}:
+    if conversation_channel in {
+        "",
+        "default",
+        "webchat",
+        SourceChannel.web_chat.value,
+    }:
         if requested != SourceChannel.web_chat:
             raise ValueError(
                 "ticketless customer-visible message channel mismatch"
