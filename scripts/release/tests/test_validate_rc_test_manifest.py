@@ -9,13 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 MODULE_PATH = Path(__file__).resolve().parents[1] / "validate_rc_test_manifest.py"
-SPEC = importlib.util.spec_from_file_location("validate_rc_test_manifest", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "validate_rc_test_manifest",
+    MODULE_PATH,
+)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
-
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -28,7 +29,10 @@ def valid_manifest(root: Path) -> tuple[dict, Path]:
     for index, logical_name in enumerate(MODULE.REQUIRED_EVIDENCE):
         filename = f"evidence-{index:02d}-{logical_name}.txt"
         path = root / filename
-        path.write_text(f"bounded {logical_name} evidence\n", encoding="utf-8")
+        path.write_text(
+            f"bounded {logical_name} evidence\n",
+            encoding="utf-8",
+        )
         evidence[logical_name] = {
             "path": filename,
             "size_bytes": path.stat().st_size,
@@ -45,7 +49,7 @@ def valid_manifest(root: Path) -> tuple[dict, Path]:
             "image_id": "sha256:" + "b" * 64,
             "postgres_image_digest": "pgvector/pgvector@sha256:" + "c" * 64,
             "nginx_image_digest": "nginx@sha256:" + "d" * 64,
-            "migration_revision": "20260711_0058",
+            "migration_revision": "20260727_wa4",
             "config_profile": "rc-test-isolated-v1",
             "config_digest": "sha256:" + "e" * 64,
         },
@@ -94,13 +98,13 @@ class ManifestValidationTests(unittest.TestCase):
         for path, value in cases:
             with self.subTest(path=path, value=value), tempfile.TemporaryDirectory() as tmp:
                 payload, manifest_path = valid_manifest(Path(tmp))
-                cursor = copy.deepcopy(payload)
-                target = cursor
+                candidate = copy.deepcopy(payload)
+                target = candidate
                 for key in path[:-1]:
                     target = target[key]
                 target[path[-1]] = value
                 with self.assertRaises(MODULE.ManifestError):
-                    MODULE.validate_manifest(cursor, manifest_path)
+                    MODULE.validate_manifest(candidate, manifest_path)
 
     def test_rejects_missing_unexpected_reused_or_invalid_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,7 +140,9 @@ class ManifestValidationTests(unittest.TestCase):
                     MODULE.validate_manifest(candidate, manifest_path)
 
             bad_digest = copy.deepcopy(payload)
-            bad_digest["evidence"]["health"]["sha256"] = "sha256:" + "f" * 64
+            bad_digest["evidence"]["health"]["sha256"] = (
+                "sha256:" + "f" * 64
+            )
             with self.assertRaises(MODULE.ManifestError):
                 MODULE.validate_manifest(bad_digest, manifest_path)
 
@@ -157,22 +163,22 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         cls.env_example = (ROOT / "deploy/.env.rc-test.example").read_text(
             encoding="utf-8"
         )
-        cls.runner = (ROOT / "scripts/release/run_rc_test_candidate.sh").read_text(
-            encoding="utf-8"
-        )
-        cls.gate = (ROOT / "scripts/release/run_controlled_rc_gate.sh").read_text(
-            encoding="utf-8"
-        )
+        cls.runner = (
+            ROOT / "scripts/release/run_rc_test_candidate.sh"
+        ).read_text(encoding="utf-8")
+        cls.gate = (
+            ROOT / "scripts/release/run_controlled_rc_gate.sh"
+        ).read_text(encoding="utf-8")
         cls.workflow = (
             ROOT / ".github/workflows/controlled-candidate-convergence.yml"
         ).read_text(encoding="utf-8")
-        cls.seed = (ROOT / "scripts/release/seed_rc_test_data.py").read_text(
-            encoding="utf-8"
-        )
+        cls.seed = (
+            ROOT / "scripts/release/seed_rc_test_data.py"
+        ).read_text(encoding="utf-8")
         cls.dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        cls.playwright = (ROOT / "webapp/playwright.config.ts").read_text(
-            encoding="utf-8"
-        )
+        cls.playwright = (
+            ROOT / "webapp/playwright.config.ts"
+        ).read_text(encoding="utf-8")
         cls.browser = (ROOT / "webapp/e2e/rc-live.spec.ts").read_text(
             encoding="utf-8"
         )
@@ -187,12 +193,12 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             "worker-outbound-rc",
             "worker-background-rc",
             "worker-webchat-ai-rc",
-            "worker-handoff-snapshot-rc",
         ):
             self.assertRegex(
                 self.compose,
                 rf"(?ms)^  {re.escape(service)}:\n.*?^    <<: \*rc_app$",
             )
+        self.assertNotIn("worker-handoff-snapshot-rc", self.compose)
         self.assertIn(
             "COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist",
             self.dockerfile,
@@ -201,12 +207,21 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             "COPY --from=runtime-layout --chown=65532:65532 /layout/ /",
             self.dockerfile,
         )
-        for forbidden in ("RC_FRONTEND_IMAGE", "frontend-rc:", "sync-daemon-rc:", "event-daemon-rc:"):
-            self.assertNotIn(forbidden, self.compose + self.env_example + self.runner)
+        for forbidden in (
+            "RC_FRONTEND_IMAGE",
+            "frontend-rc:",
+            "sync-daemon-rc:",
+            "event-daemon-rc:",
+        ):
+            self.assertNotIn(
+                forbidden,
+                self.compose + self.env_example + self.runner,
+            )
 
     def test_postgres_receives_only_database_environment(self):
         block = self.compose.split("  postgres-rc:\n", 1)[1].split(
-            "\n  migrate-rc:\n", 1
+            "\n  migrate-rc:\n",
+            1,
         )[0]
         self.assertNotIn("env_file:", block)
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"):
@@ -228,13 +243,21 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             "PROVIDER_RUNTIME_KILL_SWITCH=true",
             "PROVIDER_RUNTIME_CANARY_PERCENT=0",
             "ENABLE_OUTBOUND_DISPATCH=false",
-            "WHATSAPP_NATIVE_ENABLED=false",
+            "WHATSAPP_ENABLED=false",
+            "WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false",
+            "WHATSAPP_MEDIA_ENABLED=false",
+            "WHATSAPP_MEDIA_SCANNER=disabled",
             "SPEEDAF_WORK_ORDER_CREATE_ENABLED=false",
             "OPERATIONS_DISPATCH_MODE=disabled",
         ):
             self.assertIn(token, self.env_example)
+        self.assertNotIn("WHATSAPP_NATIVE_ENABLED", self.env_example)
+        self.assertNotIn("WHATSAPP_DISPATCH_MODE", self.env_example)
         self.assertNotIn("OPENAI_API_KEY", self.env_example)
-        self.assertNotIn("PROVIDER_RUNTIME_LIVE_PROBE_TOKEN", self.env_example)
+        self.assertNotIn(
+            "PROVIDER_RUNTIME_LIVE_PROBE_TOKEN",
+            self.env_example,
+        )
 
     def test_exact_main_acceptance_and_image_identity_are_fail_closed(self):
         self.assertIn("RC_SOURCE_SHA=<40-char-git-sha>", self.env_example)
@@ -242,20 +265,47 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         self.assertIn("RC_SOURCE_SHA does not match GIT_SHA", self.runner)
         self.assertIn('IMAGE_TAG_VALUE="${RC_IMAGE_TAG}"', self.runner)
         self.assertIn('docker image inspect "${IMAGE_TAG_VALUE}"', self.runner)
-        self.assertIn("LABEL org.opencontainers.image.revision=${GIT_SHA}", self.dockerfile)
-        self.assertIn("CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}", self.workflow)
+        self.assertIn(
+            "LABEL org.opencontainers.image.revision=${GIT_SHA}",
+            self.dockerfile,
+        )
+        self.assertIn(
+            "CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}",
+            self.workflow,
+        )
         self.assertIn("ref: ${{ env.CANDIDATE_SHA }}", self.workflow)
-        self.assertIn("RC_SOURCE_SHA: ${{ env.CANDIDATE_SHA }}", self.workflow)
-        self.assertIn("github.event.workflow_run.event == 'push'", self.workflow)
-        self.assertIn("github.event.workflow_run.head_branch == 'main'", self.workflow)
+        self.assertIn(
+            "RC_SOURCE_SHA: ${{ env.CANDIDATE_SHA }}",
+            self.workflow,
+        )
+        self.assertIn(
+            "github.event.workflow_run.event == 'push'",
+            self.workflow,
+        )
+        self.assertIn(
+            "github.event.workflow_run.head_branch == 'main'",
+            self.workflow,
+        )
 
     def test_runner_uses_isolated_compose_identity_cleanup_and_networks(self):
-        self.assertIn("name: ${COMPOSE_PROJECT_NAME:-nexus_rc_test}", self.compose)
-        self.assertIn('PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexus_rc_test}"', self.runner)
-        self.assertIn('docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}"', self.runner)
+        self.assertIn(
+            "name: ${COMPOSE_PROJECT_NAME:-nexus_rc_test}",
+            self.compose,
+        )
+        self.assertIn(
+            'PROJECT_NAME="${COMPOSE_PROJECT_NAME:-nexus_rc_test}"',
+            self.runner,
+        )
+        self.assertIn(
+            'docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}"',
+            self.runner,
+        )
         self.assertIn("down --volumes --remove-orphans", self.runner)
         self.assertIn("trap cleanup_stack EXIT", self.runner)
-        self.assertIn("App must attach only to the internal RC network", self.runner)
+        self.assertIn(
+            "App must attach only to the internal RC network",
+            self.runner,
+        )
         self.assertIn("Nginx network attachment mismatch", self.runner)
 
     def test_seed_runner_migration_browser_and_evidence_are_bound(self):
@@ -278,23 +328,46 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.runner)
         self.assertIn("retries: rcBrowser ? 0", self.playwright)
-
         identity_extract = "new URL(messageResponse.url()).pathname.match"
         session_key = "const operatorSessionKey = `webchat:${conversationId}`"
         operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
-        body_selector = "page.locator('.operator-message p', { hasText: message }).first()"
-        for marker in (identity_extract, session_key, operator_path, body_selector):
+        body_selector = (
+            "page.locator('.operator-message p', { hasText: message }).first()"
+        )
+        for marker in (
+            identity_extract,
+            session_key,
+            operator_path,
+            body_selector,
+        ):
             self.assertIn(marker, self.browser)
-        self.assertLess(self.browser.index(identity_extract), self.browser.index(session_key))
-        self.assertLess(self.browser.index(session_key), self.browser.index(operator_path))
-        self.assertLess(self.browser.index(operator_path), self.browser.index(body_selector))
-
-        self.assertIn("bash scripts/release/run_controlled_rc_gate.sh", self.workflow)
-        self.assertIn("bash scripts/release/run_rc_test_candidate.sh", self.gate)
+        self.assertLess(
+            self.browser.index(identity_extract),
+            self.browser.index(session_key),
+        )
+        self.assertLess(
+            self.browser.index(session_key),
+            self.browser.index(operator_path),
+        )
+        self.assertLess(
+            self.browser.index(operator_path),
+            self.browser.index(body_selector),
+        )
+        self.assertIn(
+            "bash scripts/release/run_controlled_rc_gate.sh",
+            self.workflow,
+        )
+        self.assertIn(
+            "bash scripts/release/run_rc_test_candidate.sh",
+            self.gate,
+        )
         self.assertIn("validate_rc_test_evidence.py", self.gate)
         self.assertIn('"${evidence_files[@]}"', self.gate)
         self.assertIn("scripts/security/scan_artifacts.py", self.gate)
-        self.assertIn("controlled-rc-failure-${{ env.CANDIDATE_SHA }}", self.workflow)
+        self.assertIn(
+            "controlled-rc-failure-${{ env.CANDIDATE_SHA }}",
+            self.workflow,
+        )
 
 
 if __name__ == "__main__":
