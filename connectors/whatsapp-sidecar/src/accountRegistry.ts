@@ -27,6 +27,10 @@ export interface RegistryReadiness {
   pending_callbacks: number;
 }
 
+type ConnectorWithPendingMedia = WhatsAppConnector & {
+  pendingMediaDownloads?: () => number;
+};
+
 export class AccountRegistry {
   readonly connector: WhatsAppConnector;
   private readonly desiredAccounts = new Map<string, number>();
@@ -160,6 +164,8 @@ export class AccountRegistry {
         : ready
           ? "ready"
           : "not_ready";
+    const pendingMediaDownloads =
+      (this.connector as ConnectorWithPendingMedia).pendingMediaDownloads?.() ?? 0;
     return {
       ready,
       status,
@@ -169,7 +175,7 @@ export class AccountRegistry {
       last_authority_failure_at: iso(this.lastAuthorityFailureMs),
       last_authority_error_code: this.lastAuthorityErrorCode,
       desired_accounts: this.desiredAccounts.size,
-      pending_callbacks: this.backend.pendingCallbacks()
+      pending_callbacks: this.backend.pendingCallbacks() + pendingMediaDownloads
     };
   }
 
