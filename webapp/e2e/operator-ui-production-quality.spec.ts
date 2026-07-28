@@ -34,7 +34,12 @@ function queueResponse(items: ReturnType<typeof queueItem>[], nextCursor: string
   return {
     items,
     next_cursor: nextCursor,
-    scope: { tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' },
+    scope: {
+      tenant_hash: '123456789abc',
+      country_code: 'CH',
+      channel_key: 'webchat',
+      queue_key: 'legacy',
+    },
     filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
   }
 }
