@@ -24,6 +24,7 @@ from .speedaf.redactor import (
 settings = get_settings()
 WEBCHAT_AI_REPLY_JOB = "webchat.ai_reply"
 WEBCHAT_HANDOFF_SNAPSHOT_JOB = "webchat.handoff_snapshot"
+WEBCHAT_WHATSAPP_DELIVERY_JOB = "webchat.whatsapp_delivery"
 SPEEDAF_WORK_ORDER_CREATE_JOB = "speedaf.work_order.create"
 SPEEDAF_ADDRESS_UPDATE_JOB = "speedaf.address_update.submit"
 SPEEDAF_VOICE_CALLBACK_JOB = "speedaf.voice.callback"
@@ -734,6 +735,16 @@ def process_background_job(
             if not isinstance(snapshot, dict):
                 raise RuntimeError("webchat handoff snapshot payload is required")
             process_webchat_handoff_snapshot_job(db, snapshot=snapshot)
+        elif job.job_type == WEBCHAT_WHATSAPP_DELIVERY_JOB:
+            from .webchat_channel_delivery_service import (
+                process_ticketless_whatsapp_delivery_job,
+            )
+
+            process_ticketless_whatsapp_delivery_job(
+                db,
+                job=job,
+                payload=payload,
+            )
         elif job.job_type == SPEEDAF_WORK_ORDER_CREATE_JOB:
             _process_speedaf_work_order_create_job(db, job, payload)
         elif job.job_type == SPEEDAF_ADDRESS_UPDATE_JOB:

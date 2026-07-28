@@ -17,6 +17,7 @@ from .message_dispatch import (
     queue_outbound_message,
 )
 from .ticket_event_sanitizer import serialize_ticket_event_payload
+from .webchat_channel_delivery_service import queue_ticketless_whatsapp_delivery
 
 
 @dataclass(frozen=True)
@@ -186,30 +187,56 @@ def create_customer_visible_message(
         raise ValueError(
             "ticketless customer-visible message requires a conversation"
         )
-    if ticket is None and channel != SourceChannel.web_chat:
-        raise ValueError(
-            "ticketless customer-visible message requires web_chat channel"
-        )
+
+    effective_channel = _effective_channel(
+        ticket=ticket,
+        conversation=conversation,
+        requested=channel,
+    )
+    effective_provider_status = _effective_provider_status(
+        ticket=ticket,
+        channel=effective_channel,
+        origin=origin,
+        requested=provider_status,
+    )
+    effective_metadata = _metadata_payload(metadata_json)
+    effective_metadata.update(
+        {
+            "external_send": effective_channel == SourceChannel.whatsapp,
+            "reply_channel": effective_channel.value,
+            "provider_status": effective_provider_status,
+        }
+    )
 
     outbound_message: TicketOutboundMessage | None = None
     if ticket is not None:
         outbound_result = create_customer_visible_outbound(
             db,
             ticket=ticket,
-            channel=channel,
+            channel=effective_channel,
             body=body,
             origin=origin,
             created_by=created_by,
-            provider_status=provider_status,
+            provider_status=effective_provider_status,
             ai_contract=ai_contract,
             status=outbound_status,
             subject=subject,
         )
         outbound_message = outbound_result.outbound_message
+    else:
+        _enforce_ticketless_customer_visible_origin(
+            body=body,
+            origin=origin,
+            created_by=created_by,
+            ai_contract=ai_contract,
+        )
 
     resolved_delivery_status = delivery_status or (
-        "queued" if channel == SourceChannel.whatsapp else "sent"
+        "queued" if effective_channel == SourceChannel.whatsapp else "sent"
     )
+    if effective_channel == SourceChannel.whatsapp:
+        resolved_delivery_status = "queued"
+
     webchat_message: WebchatMessage | None = None
     if conversation is not None:
         webchat_message = WebchatMessage(
@@ -220,7 +247,7 @@ def create_customer_visible_message(
             body_text=body,
             message_type=message_type,
             payload_json=payload_json,
-            metadata_json=_json_or_none(metadata_json),
+            metadata_json=_json_or_none(effective_metadata),
             ai_turn_id=ai_turn_id,
             delivery_status=resolved_delivery_status,
             author_label=author_label,
@@ -230,6 +257,12 @@ def create_customer_visible_message(
         )
         db.add(webchat_message)
         db.flush()
+        if ticket is None and effective_channel == SourceChannel.whatsapp:
+            queue_ticketless_whatsapp_delivery(
+                db,
+                conversation=conversation,
+                message=webchat_message,
+            )
 
     ticket_comment: TicketComment | None = None
     if ticket is not None and create_external_comment:
@@ -246,9 +279,12 @@ def create_customer_visible_message(
     if ticket is not None and event_type is not None:
         payload = dict(event_payload or {})
         payload.setdefault("ticket_id", ticket.id)
-        payload.setdefault("provider_status", provider_status)
-        payload.setdefault("reply_channel", channel.value)
-        payload.setdefault("external_send", channel == SourceChannel.whatsapp)
+        payload.setdefault("provider_status", effective_provider_status)
+        payload.setdefault("reply_channel", effective_channel.value)
+        payload.setdefault(
+            "external_send",
+            effective_channel == SourceChannel.whatsapp,
+        )
         if conversation is not None:
             payload.setdefault("conversation_public_id", conversation.public_id)
             payload.setdefault("conversation_id", conversation.id)
@@ -284,6 +320,10 @@ def create_customer_visible_message(
                         ),
                         "message_id": webchat_message.id,
                         "actor_id": created_by,
+                        "reply_channel": effective_channel.value,
+                        "external_send": (
+                            effective_channel == SourceChannel.whatsapp
+                        ),
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
@@ -299,7 +339,7 @@ def create_customer_visible_message(
         ticket_comment=ticket_comment,
         ticket_event=ticket_event,
         customer_visible=True,
-        provider_status=provider_status,
+        provider_status=effective_provider_status,
     )
 
 
@@ -318,6 +358,98 @@ def record_runtime_null_reply(
         customer_visible=False,
         provider_status=provider_status,
     )
+
+
+def _effective_channel(
+    *,
+    ticket: Ticket | None,
+    conversation: WebchatConversation | None,
+    requested: SourceChannel,
+) -> SourceChannel:
+    if ticket is not None:
+        return requested
+    conversation_channel = str(
+        getattr(conversation, "channel_key", "") or ""
+    ).strip().lower()
+    if conversation_channel == SourceChannel.whatsapp.value:
+        return SourceChannel.whatsapp
+    if conversation_channel in {"", SourceChannel.web_chat.value}:
+        if requested != SourceChannel.web_chat:
+            raise ValueError(
+                "ticketless customer-visible message channel mismatch"
+            )
+        return SourceChannel.web_chat
+    raise ValueError("unsupported ticketless customer-visible channel")
+
+
+def _effective_provider_status(
+    *,
+    ticket: Ticket | None,
+    channel: SourceChannel,
+    origin: str,
+    requested: str,
+) -> str:
+    if ticket is not None or channel != SourceChannel.whatsapp:
+        return requested
+    if origin == "provider_runtime":
+        return "whatsapp_ai_reply_queued"
+    if origin == "human_agent":
+        return "whatsapp_agent_reply_queued"
+    return "whatsapp_reply_queued"
+
+
+def _enforce_ticketless_customer_visible_origin(
+    *,
+    body: str,
+    origin: str,
+    created_by: int | None,
+    ai_contract: AIReplyContract | None,
+) -> None:
+    runtime_payload_json = None
+    runtime_payload_sha256 = None
+    runtime_reply_type = None
+    if ai_contract is not None:
+        runtime_payload_json = ai_contract.payload_json(
+            body=body,
+            origin=origin,
+            customer_visible=True,
+        )
+        runtime_payload_sha256 = ai_contract.payload_sha256(
+            body=body,
+            origin=origin,
+            customer_visible=True,
+        )
+        runtime_reply_type = ai_contract.reply_type
+    _enforce_customer_visible_origin(
+        body=body,
+        origin=_normalize_customer_visible_origin(
+            origin,
+            created_by=created_by,
+        ),
+        ticket=None,
+        created_by=created_by,
+        runtime_trace_id=ai_contract.runtime_trace_id if ai_contract else None,
+        runtime_contract_version=(
+            ai_contract.contract_version if ai_contract else None
+        ),
+        runtime_signature=ai_contract.runtime_signature if ai_contract else None,
+        runtime_contract_payload_json=runtime_payload_json,
+        runtime_contract_payload_sha256=runtime_payload_sha256,
+        runtime_reply_type=runtime_reply_type,
+        safety_status=ai_contract.safety_status if ai_contract else None,
+    )
+
+
+def _metadata_payload(value: dict[str, Any] | str | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _json_or_none(value: dict[str, Any] | str | None) -> str | None:

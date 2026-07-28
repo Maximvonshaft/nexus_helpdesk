@@ -296,6 +296,7 @@ def dispatch_pending_background_jobs(
         worker_id=lease_token,
         job_types={
             background_jobs.WEBCHAT_HANDOFF_SNAPSHOT_JOB,
+            background_jobs.WEBCHAT_WHATSAPP_DELIVERY_JOB,
             background_jobs.SPEEDAF_WORK_ORDER_CREATE_JOB,
             background_jobs.SPEEDAF_ADDRESS_UPDATE_JOB,
             background_jobs.SPEEDAF_VOICE_CALLBACK_JOB,

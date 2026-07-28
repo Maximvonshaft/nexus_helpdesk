@@ -26,6 +26,7 @@ SCOPE_SCHEMA = "nexus.background-job-scope.v1"
 PURPOSE_BY_JOB_TYPE = {
     "webchat.ai_reply": "automated_ai",
     "webchat.handoff_snapshot": "human_support",
+    "webchat.whatsapp_delivery": "human_support",
     "speedaf.work_order.create": "provider_tool_execution",
     "speedaf.address_update.submit": "provider_tool_execution",
     "speedaf.voice.callback": "provider_tool_execution",
