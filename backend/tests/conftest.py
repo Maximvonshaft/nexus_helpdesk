@@ -33,7 +33,6 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_webchat_action_idempotency": "pytest-action-idempotency",
     "test_webchat_ai_turn_runtime": "pytest-ai-turn-runtime",
     "test_webchat_handoff_control": "pytest",
-    "test_webchat_handoff_snapshot_service": "pytest-handoff-snapshot",
     "test_webchat_terminal_fallback_delivery": "pytest-terminal-fallback",
     "test_webchat_terminal_outcome_convergence": "pytest-terminal-outcome",
     "test_webchat_voice_api": "pytest-voice",
@@ -47,7 +46,6 @@ _LEGACY_FIXTURE_TENANTS = {
 _FORCE_TENANT_KEY_MODULES = {
     "test_channel_workbench_backend_contracts",
     "test_webchat_ai_turn_runtime",
-    "test_webchat_handoff_snapshot_service",
     "test_webchat_terminal_fallback_delivery",
     "test_webchat_terminal_outcome_convergence",
 }
