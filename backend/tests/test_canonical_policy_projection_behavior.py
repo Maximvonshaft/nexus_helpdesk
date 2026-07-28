@@ -33,6 +33,7 @@ register_all_models()
 TENANT = "tenant-policy-a"
 COUNTRY = "ME"
 CHANNEL = "webchat"
+QUEUE = "legacy"
 
 
 @pytest.fixture()
@@ -73,6 +74,7 @@ def _grant(
     user: User,
     country: str = COUNTRY,
     channel: str = CHANNEL,
+    queue: str = QUEUE,
     enabled: bool = True,
 ) -> OperatorQueueScopeGrant:
     row = OperatorQueueScopeGrant(
@@ -80,6 +82,7 @@ def _grant(
         tenant_key=TENANT,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
         enabled=enabled,
         granted_by=user.id,
     )
@@ -95,6 +98,7 @@ def _authorize(
     tenant: str = TENANT,
     country: str = COUNTRY,
     channel: str = CHANNEL,
+    queue: str = QUEUE,
 ):
     return authorize_operator_scope(
         db,
@@ -102,6 +106,7 @@ def _authorize(
         tenant_key=tenant,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
     )
 
 
@@ -127,6 +132,7 @@ def test_normal_queue_authority_is_capability_plus_active_grant_not_role(db_sess
 
     assert (tenant, country, channel) == (TENANT, COUNTRY, CHANNEL)
     assert resolved.id == grant.id
+    assert resolved.queue_key == QUEUE
 
 
 def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> None:
@@ -148,6 +154,10 @@ def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> N
     with pytest.raises(HTTPException) as wrong_channel:
         _authorize(db_session, user, channel="email")
     assert wrong_channel.value.detail == "operator_queue_scope_not_granted"
+
+    with pytest.raises(HTTPException) as wrong_queue:
+        _authorize(db_session, user, queue="claims_review")
+    assert wrong_queue.value.detail == "operator_queue_scope_not_granted"
 
 
 def test_grant_country_is_authoritative_without_team_or_role_inference(db_session) -> None:
@@ -207,14 +217,14 @@ def test_current_scope_projection_contains_only_active_current_user_grants(db_se
                 "tenant_hash": result["items"][0]["tenant_hash"],
                 "country_code": "CH",
                 "channel_key": "email",
-                "queue_key": "legacy",
+                "queue_key": QUEUE,
             },
             {
                 "tenant_key": TENANT,
                 "tenant_hash": result["items"][1]["tenant_hash"],
                 "country_code": "ME",
                 "channel_key": "webchat",
-                "queue_key": "legacy",
+                "queue_key": QUEUE,
             },
         ]
     }
