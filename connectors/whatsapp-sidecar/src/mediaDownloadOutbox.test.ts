@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { proto } from "@whiskeysockets/baileys";
 import { DurableMediaDownloadOutbox } from "./mediaDownloadOutbox.js";
 
@@ -24,8 +25,7 @@ function rawMessage(id: string): proto.IWebMessageInfo {
     message: {
       imageMessage: {
         url: "https://mmg.whatsapp.net/example",
-        mimetype: "image/jpeg",
-        fileLength: 10
+        mimetype: "image/jpeg"
       }
     }
   });
@@ -97,7 +97,7 @@ test("persists encrypted media download work across process restart", async () =
   }
 });
 
-test("preserves non-retryable media download failures as dead-letter evidence", async () => {
+test("replaces terminal raw media work with a scrubbed failure receipt", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-media-download-dead-"));
   const secret = "media-download-secret-" + "y".repeat(48);
   try {
@@ -121,6 +121,19 @@ test("preserves non-retryable media download failures as dead-letter evidence", 
     assert.equal(result.dead, 1);
     assert.equal(outbox.count(), 0);
     assert.equal(outbox.countDead(), 1);
+    const deadFile = readdirSync(root).find((name) => name.endsWith(".dead"));
+    assert.ok(deadFile);
+    const deadBytes = readFileSync(join(root, deadFile));
+    assert.equal(deadBytes.includes(Buffer.from("message-dead", "utf8")), false);
+    assert.equal(deadBytes.includes(Buffer.from("mmg.whatsapp.net", "utf8")), false);
+    const receipt = JSON.parse(deadBytes.toString("utf8"));
+    assert.equal(receipt.schema, "nexus.whatsapp.media-download-dead.v1");
+    assert.equal(receipt.reason, "media_download_non_retryable");
+    assert.equal(
+      receipt.external_message_id_sha256,
+      createHash("sha256").update("message-dead", "utf8").digest("hex")
+    );
+
     outbox.enqueue({
       accountId: "wa-main",
       externalMessageId: "message-dead",
