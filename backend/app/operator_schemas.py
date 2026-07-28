@@ -158,6 +158,7 @@ class UnifiedQueueScope(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str = Field(max_length=16)
     channel_key: str = Field(max_length=40)
+    queue_key: str = Field(min_length=2, max_length=160)
 
 
 class UnifiedQueueFilters(BaseModel):
