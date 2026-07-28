@@ -77,10 +77,14 @@ function loadMetaSdk(appId: string, version: string): Promise<FacebookSdk> {
   }
   if (sdkPromise) return sdkPromise
   sdkPromise = new Promise<FacebookSdk>((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error('meta_sdk_load_timeout')), 15_000)
+    const timeout = window.setTimeout(() => {
+      sdkPromise = null
+      reject(new Error('meta_sdk_load_timeout'))
+    }, 15_000)
     window.fbAsyncInit = () => {
       window.clearTimeout(timeout)
       if (!window.FB) {
+        sdkPromise = null
         reject(new Error('meta_sdk_unavailable'))
         return
       }
