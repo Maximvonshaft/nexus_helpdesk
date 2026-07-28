@@ -58,6 +58,7 @@ jobs:
           path.write_text(text.replace(old, new), encoding="utf-8")
           PY
           python scripts/maintenance/apply_routing_wave_once.py
+          mv .github/workflows/apply-routing-wave-once.yml /tmp/apply-routing-wave-once.yml
           git diff --check
       - name: Verify routing authority and repository contracts
         shell: bash
@@ -72,6 +73,9 @@ jobs:
           set -Eeuo pipefail
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
           python -m compileall -q backend/app backend/tests scripts/release
+          python scripts/verify_repository.py --static-only \
+            --expected-sha "$EXACT_HEAD" \
+            --evidence-out /tmp/routing-wave-static.json
           python -m pytest -q \
             backend/tests/test_audit_838_r5_case_scenario_authority.py \
             backend/tests/test_audit_838_r5_handoff_authority.py \
@@ -93,7 +97,6 @@ jobs:
           git fetch --no-tags origin feat/whatsapp-dual-transport-production-final
           test "$(git rev-parse origin/feat/whatsapp-dual-transport-production-final)" = "$EXACT_HEAD"
           rm -f \
-            .github/workflows/apply-routing-wave-once.yml \
             scripts/maintenance/apply_routing_wave_once.py \
             artifacts/routing-wave-once-failure.txt
           git status --short
