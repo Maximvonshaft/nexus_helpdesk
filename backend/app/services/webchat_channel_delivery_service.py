@@ -12,7 +12,10 @@ from ..models_agent_routing import ConversationControl
 from ..models_whatsapp import WhatsAppConnection
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatConversation, WebchatMessage
-from .data_subject_action_service import ensure_data_processing_allowed
+from .data_subject_action_service import (
+    DataProcessingRestricted,
+    ensure_data_processing_allowed,
+)
 from .message_dispatch import ensure_external_dispatch_allowed
 from .secret_crypto import SecretCryptoService
 from .webchat_ai_turn_service import safe_write_webchat_event
@@ -167,11 +170,18 @@ def process_ticketless_whatsapp_delivery_job(
 
         # The canonical Job scope permits human support; this origin-specific
         # revalidation is the final guard immediately before Provider I/O.
-        ensure_data_processing_allowed(
-            db,
-            customer_id=control.customer_id,
-            purpose=purpose,
-        )
+        try:
+            ensure_data_processing_allowed(
+                db,
+                customer_id=control.customer_id,
+                purpose=purpose,
+            )
+        except DataProcessingRestricted as exc:
+            raise TicketlessWhatsAppDeliveryError(
+                "data_processing_restricted",
+                str(exc),
+                retryable=False,
+            ) from exc
         result = _send(
             connection=connection,
             route=route,
