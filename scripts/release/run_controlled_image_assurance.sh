@@ -82,6 +82,104 @@ jq -e \
    and .payload.reason_codes == []' \
   "${RELEASE_IMAGE_DIR}/migration-readiness-contract.json" >/dev/null
 
+ensure_assurance_input() {
+  local path="$1"
+  local description="$2"
+  if [[ ! -s "${path}" ]]; then
+    echo "missing ${description}: ${path}" >&2
+    return 1
+  fi
+}
+
+# The assurance authority owns its complete input set. Workflows may pre-create
+# these files for performance, but a caller cannot silently omit supply-chain or
+# runtime evidence and still reach policy evaluation.
+if [[ ! -s "${RELEASE_IMAGE_DIR}/trivy.raw.json" ]]; then
+  command -v trivy >/dev/null 2>&1 || {
+    echo "trivy command required to generate vulnerability inventory" >&2
+    exit 2
+  }
+  trivy image \
+    --quiet \
+    --format json \
+    --output "${RELEASE_IMAGE_DIR}/trivy.raw.json" \
+    --scanners vuln \
+    --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+    --ignore-unfixed=false \
+    "${CANDIDATE_IMAGE}"
+fi
+
+if [[ ! -s "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" ]]; then
+  command -v trivy >/dev/null 2>&1 || {
+    echo "trivy command required to generate image CycloneDX" >&2
+    exit 2
+  }
+  trivy image \
+    --quiet \
+    --format cyclonedx \
+    --output "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" \
+    --scanners vuln \
+    --ignore-unfixed=false \
+    "${CANDIDATE_IMAGE}"
+fi
+
+if [[ ! -s "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json" ]]; then
+  command -v npm >/dev/null 2>&1 || {
+    echo "npm command required to generate frontend CycloneDX" >&2
+    exit 2
+  }
+  (
+    cd webapp
+    npm sbom --package-lock-only --sbom-format=cyclonedx
+  ) > "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json"
+fi
+
+if [[ ! -s "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt" ]]; then
+  runtime_summary_raw="${RELEASE_IMAGE_DIR}/runtime-smoke-summary.raw"
+  docker exec -i \
+    -e NEXUS_ASSURANCE_SOURCE_SHA="${SOURCE_SHA}" \
+    -e PYTHONPATH=/app/backend \
+    "${assurance_container}" \
+    python - <<'PY' > "${runtime_summary_raw}"
+import json
+import os
+
+from starlette.responses import Response
+
+from app.main import healthz, readyz
+
+
+def normalized(result):
+    if isinstance(result, Response):
+        return result.status_code, json.loads(bytes(result.body).decode("utf-8"))
+    return 200, result
+
+
+health_status, health = normalized(healthz())
+ready_status, ready = normalized(readyz())
+payload = {
+    "schema": "nexus.runtime-smoke-summary.v1",
+    "source_sha": os.environ["NEXUS_ASSURANCE_SOURCE_SHA"],
+    "health_http_status": health_status,
+    "ready_http_status": ready_status,
+    "health": health,
+    "ready": ready,
+    "synthetic": True,
+    "provider_enabled": False,
+    "outbound_enabled": False,
+}
+print("NEXUS_RUNTIME_SMOKE_SUMMARY=" + json.dumps(payload, sort_keys=True))
+PY
+  sed -n 's/^NEXUS_RUNTIME_SMOKE_SUMMARY=//p' "${runtime_summary_raw}" \
+    | tail -n 1 > "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt"
+  rm -f "${runtime_summary_raw}"
+fi
+
+ensure_assurance_input "${RELEASE_IMAGE_DIR}/trivy.raw.json" "Trivy vulnerability inventory"
+ensure_assurance_input "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" "image CycloneDX"
+ensure_assurance_input "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json" "frontend CycloneDX"
+ensure_assurance_input "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt" "runtime smoke summary"
+
 python scripts/security/sanitize_image_sbom.py \
   --input "${RELEASE_IMAGE_DIR}/image.raw.cdx.json" \
   --frontend-input "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json" \
