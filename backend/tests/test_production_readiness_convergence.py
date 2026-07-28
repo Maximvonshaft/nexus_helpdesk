@@ -10,7 +10,7 @@ def test_controlled_templates_use_current_audit_migration_head() -> None:
         "deploy/.env.controlled.local-postgres.example",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "EXPECTED_MIGRATION_HEAD=20260727_wa4" in text
+        assert "EXPECTED_MIGRATION_HEAD=20260728_r5_scenario" in text
 
 
 def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
