@@ -51,7 +51,8 @@ export class AccountRegistry {
             async (message) => this.backend.postInbound(message),
             async (media) => this.backend.postMedia(media),
             async (accountId, snapshot) => this.backend.postStatus(accountId, snapshot),
-            config
+            config,
+            async (accountId, payload) => this.backend.postDelivery(accountId, payload)
           )
         : new MockConnector();
   }
