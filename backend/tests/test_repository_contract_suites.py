@@ -15,6 +15,7 @@ def test_release_deployment_and_remediation_contract_suites_are_canonical_backen
             "-m",
             "pytest",
             "-q",
+            "backend/tests/test_customer_visible_channel_compatibility.py",
             "backend/tests/test_canonical_policy_projection_behavior.py::test_current_scope_projection_contains_only_active_current_user_grants",
             "backend/tests/test_conversation_first_agent_routing.py::test_ticketless_transition_authority_and_reply_capability",
             "backend/tests/test_webchat_ai_terminal_outcome_convergence.py::test_no_public_runtime_result_exhausts_into_one_canonical_fallback",
