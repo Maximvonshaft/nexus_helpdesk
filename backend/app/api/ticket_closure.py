@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import Ticket
+from ..services.case_scenario_service import (
+    project_case_scenario_to_legacy_identity,
+)
 from ..services.notification_evidence_policy import (
     build_governed_closure_snapshot,
 )
@@ -66,6 +69,7 @@ def add_ticket_closure_evidence(
     current_user=Depends(get_current_user),
 ):
     ticket = _ticket(db, ticket_id, current_user)
+    project_case_scenario_to_legacy_identity(db, ticket)
     try:
         with managed_session(db):
             record = record_closure_evidence(
