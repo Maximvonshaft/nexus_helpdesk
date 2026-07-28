@@ -55,17 +55,24 @@ def _snapshot(payload: dict, digest: str, scenario: dict) -> str:
 
 
 def _ticket_batches(bind, tickets):
-    result = bind.execution_options(stream_results=True).execute(
-        sa.select(tickets).order_by(tickets.c.id.asc())
-    ).mappings()
-    try:
-        while True:
-            batch = result.fetchmany(_BATCH_SIZE)
-            if not batch:
-                break
-            yield batch
-    finally:
-        result.close()
+    """Read bounded Ticket batches without mutating Alembic connection options."""
+
+    last_id = 0
+    while True:
+        batch = (
+            bind.execute(
+                sa.select(tickets)
+                .where(tickets.c.id > last_id)
+                .order_by(tickets.c.id.asc())
+                .limit(_BATCH_SIZE)
+            )
+            .mappings()
+            .all()
+        )
+        if not batch:
+            break
+        yield batch
+        last_id = int(batch[-1]["id"])
 
 
 def _matches(ticket, aliases: dict[str, str]) -> dict[str, str]:
