@@ -4,7 +4,6 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-
 MODULE_PATH = Path(__file__).resolve().parents[1] / "validate_production_activation.py"
 SPEC = importlib.util.spec_from_file_location(
     "validate_production_activation",
@@ -20,7 +19,9 @@ class WhatsAppProductionActivationTests(unittest.TestCase):
     image_digest = "sha256:" + "b" * 64
     image = "ghcr.io/maximvonshaft/nexus_helpdesk@" + image_digest
     clamav_image = "docker.io/clamav/clamav@sha256:" + "c" * 64
-    sidecar_image = "ghcr.io/maximvonshaft/nexus-whatsapp-sidecar@sha256:" + "d" * 64
+    sidecar_image = (
+        "ghcr.io/maximvonshaft/nexus-whatsapp-sidecar@sha256:" + "d" * 64
+    )
 
     def _values(self) -> dict[str, str]:
         return {
@@ -42,7 +43,9 @@ class WhatsAppProductionActivationTests(unittest.TestCase):
             "ENABLE_OUTBOUND_DISPATCH": "true",
             "OUTBOUND_PROVIDER": "native",
             "WHATSAPP_ENABLED": "true",
-            "WHATSAPP_META_WEBHOOK_PUBLIC_URL": "https://support.example/api/integrations/whatsapp/meta/webhook",
+            "WHATSAPP_META_WEBHOOK_PUBLIC_URL": (
+                "https://support.example/api/integrations/whatsapp/meta/webhook"
+            ),
             "WHATSAPP_SIDECAR_IMAGE": self.sidecar_image,
             "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "false",
             "WHATSAPP_MEDIA_ENABLED": "false",
@@ -61,12 +64,12 @@ class WhatsAppProductionActivationTests(unittest.TestCase):
         ):
             MODULE.validate(values)
 
-    def test_whatsapp_must_use_canonical_outbound_authority(self):
+    def test_whatsapp_requires_the_global_outbound_authority_first(self):
         values = self._values()
         values["OUTBOUND_PROVIDER"] = "disabled"
         with self.assertRaisesRegex(
             MODULE.ActivationError,
-            "whatsapp_outbound_authority_invalid",
+            "outbound_provider_disabled",
         ):
             MODULE.validate(values)
 
@@ -111,10 +114,14 @@ class WhatsAppProductionActivationTests(unittest.TestCase):
             {
                 "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "true",
                 "WHATSAPP_META_APP_ID": "1234567890",
-                "WHATSAPP_META_APP_SECRET_FILE": "/run/nexus/whatsapp_meta_app_secret",
+                "WHATSAPP_META_APP_SECRET_FILE": (
+                    "/run/nexus/whatsapp_meta_app_secret"
+                ),
                 "WHATSAPP_META_CONFIGURATION_ID": "9876543210",
                 "WHATSAPP_META_GRAPH_API_VERSION": "v23.0",
-                "WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN": "https://support.example",
+                "WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN": (
+                    "https://support.example"
+                ),
             }
         )
         result = MODULE.validate(values)
