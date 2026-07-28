@@ -236,7 +236,7 @@ def test_clean_ticketless_media_is_visible_and_later_projects_to_ticket(
         source_channel=SourceChannel.whatsapp,
         priority=TicketPriority.medium,
         status=TicketStatus.in_progress,
-        conversation_state=ConversationState.human_active,
+        conversation_state=ConversationState.human_owned,
         channel_account_id=account.id,
         source_chat_id=inbound.chat_jid,
     )
