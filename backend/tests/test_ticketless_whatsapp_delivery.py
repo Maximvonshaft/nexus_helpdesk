@@ -25,6 +25,7 @@ from app.models_whatsapp import WhatsAppConnection
 from app.services import background_jobs, webchat_channel_delivery_service
 from app.services.background_job_scope import PURPOSE_BY_JOB_TYPE
 from app.services.customer_visible_message_service import create_customer_visible_message
+from app.services.data_subject_action_service import DataProcessingRestricted
 from app.utils.time import utc_now
 from app.webchat_models import WebchatConversation, WebchatMessage
 
@@ -138,6 +139,35 @@ def _fixture(db_session):
     db_session.add_all([control, visitor])
     db_session.flush()
     return customer, account, connection, conversation
+
+
+def _queue_ai_message(db_session, conversation: WebchatConversation) -> tuple[WebchatMessage, object]:
+    message = WebchatMessage(
+        conversation_id=conversation.id,
+        ticket_id=None,
+        direction="agent",
+        body="Automated answer",
+        body_text="Automated answer",
+        message_type="text",
+        delivery_status="queued",
+        metadata_json=json.dumps(
+            {
+                "generated_by": "agent_runtime",
+                "provider_status": "whatsapp_ai_reply_queued",
+                "external_send": True,
+            }
+        ),
+        author_label="AI Assistant",
+        created_at=utc_now(),
+    )
+    db_session.add(message)
+    db_session.flush()
+    job = webchat_channel_delivery_service.queue_ticketless_whatsapp_delivery(
+        db_session,
+        conversation=conversation,
+        message=message,
+    )
+    return message, job
 
 
 def test_ticketless_whatsapp_human_reply_uses_conversation_delivery_authority(
@@ -271,37 +301,58 @@ def test_ticketless_whatsapp_delivery_job_sends_once_and_scrubs_route(
 
 def test_ticketless_ai_delivery_keeps_automated_ai_final_purpose(db_session):
     _customer, _account, _connection, conversation = _fixture(db_session)
-    message = WebchatMessage(
-        conversation_id=conversation.id,
-        ticket_id=None,
-        direction="agent",
-        body="Automated answer",
-        body_text="Automated answer",
-        message_type="text",
-        ai_turn_id=7,
-        delivery_status="queued",
-        metadata_json=json.dumps(
-            {
-                "generated_by": "agent_runtime",
-                "provider_status": "whatsapp_ai_reply_queued",
-                "external_send": True,
-            }
-        ),
-        author_label="AI Assistant",
-        created_at=utc_now(),
-    )
-    db_session.add(message)
-    db_session.flush()
-
-    webchat_channel_delivery_service.queue_ticketless_whatsapp_delivery(
-        db_session,
-        conversation=conversation,
-        message=message,
-    )
+    message, _job = _queue_ai_message(db_session, conversation)
 
     metadata = json.loads(message.metadata_json or "{}")
     assert metadata["processing_purpose"] == "automated_ai"
     assert metadata["delivery_job_type"] == "webchat.whatsapp_delivery"
+
+
+def test_restricted_ai_delivery_is_terminal_and_never_calls_provider(
+    db_session,
+    monkeypatch,
+):
+    _customer, _account, _connection, conversation = _fixture(db_session)
+    message, job = _queue_ai_message(db_session, conversation)
+    job.status = JobStatus.processing
+    job.locked_by = "test-worker"
+    job.locked_at = utc_now()
+
+    monkeypatch.setattr(
+        webchat_channel_delivery_service,
+        "get_whatsapp_runtime_settings",
+        lambda: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        webchat_channel_delivery_service,
+        "ensure_external_dispatch_allowed",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        webchat_channel_delivery_service,
+        "ensure_data_processing_allowed",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DataProcessingRestricted("customer_processing_restricted")
+        ),
+    )
+    sends: list[str] = []
+    monkeypatch.setattr(
+        webchat_channel_delivery_service,
+        "send_baileys_text",
+        lambda *_args, **_kwargs: sends.append("called"),
+    )
+
+    processed = background_jobs.process_background_job(db_session, job)
+
+    assert processed.status == JobStatus.done
+    assert processed.attempt_count == 0
+    assert sends == []
+    assert message.delivery_status == "failed"
+    metadata = json.loads(message.metadata_json or "{}")
+    assert metadata["delivery_error_code"] == "data_processing_restricted"
+    scrubbed = json.loads(job.payload_json or "{}")
+    assert scrubbed["outcome"] == "failed"
+    assert scrubbed["error_code"] == "data_processing_restricted"
 
 
 def test_ai_service_has_no_ticketless_whatsapp_rejection_residue():
