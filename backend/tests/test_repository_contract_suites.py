@@ -18,6 +18,7 @@ def test_release_deployment_and_remediation_contract_suites_are_canonical_backen
             "backend/tests/test_customer_visible_channel_compatibility.py",
             "backend/tests/test_canonical_policy_projection_behavior.py::test_current_scope_projection_contains_only_active_current_user_grants",
             "backend/tests/test_conversation_first_agent_routing.py::test_ticketless_transition_authority_and_reply_capability",
+            "backend/tests/test_agent_routing_scenario_live_integration.py",
             "backend/tests/test_webchat_ai_terminal_outcome_convergence.py::test_no_public_runtime_result_exhausts_into_one_canonical_fallback",
             "backend/tests/test_webchat_ai_terminal_outcome_convergence.py::test_watchdog_timeout_uses_same_idempotent_terminal_outcome",
             "backend/tests/test_webchat_ai_turn_runtime.py::test_ai_turn_completes_and_clears_pending_after_dispatch",
