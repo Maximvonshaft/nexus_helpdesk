@@ -95,7 +95,13 @@ async function fulfillApi(route: Route) {
   if (path === '/api/agent-control/snapshot') return json(agentControlSnapshot())
   if (path === '/api/admin/operator-queue/my-scopes') {
     return json({
-      items: [{ tenant_key: 'default', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
+      items: [{
+        tenant_key: 'default',
+        tenant_hash: '123456789abc',
+        country_code: 'CH',
+        channel_key: 'webchat',
+        queue_key: 'legacy',
+      }],
       requires_explicit_admin_scope: false,
     })
   }
@@ -127,7 +133,12 @@ async function fulfillApi(route: Route) {
         },
       }],
       next_cursor: null,
-      scope: { tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' },
+      scope: {
+        tenant_hash: '123456789abc',
+        country_code: 'CH',
+        channel_key: 'webchat',
+        queue_key: 'legacy',
+      },
       filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
     })
   }
