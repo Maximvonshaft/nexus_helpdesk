@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT.parent))
 from app.api.tickets import ticket_outbound_channel_capabilities  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
-from app.models import ChannelAccount, Customer, OutboundEmailAccount, Team, Tenant, Ticket, User  # noqa: E402
+from app.models import ChannelAccount, Customer, Market, OutboundEmailAccount, Team, Tenant, Ticket, User  # noqa: E402
 from app.models_whatsapp import WhatsAppConnection  # noqa: E402
 from app.services.outbound_channel_registry import (  # noqa: E402
     get_outbound_channel_capability,
@@ -86,9 +86,21 @@ def _ticket(
     channel=SourceChannel.whatsapp,
     contact="+15550123456",
 ) -> Ticket:
+    market = Market(
+        code=f"M-{_uid()}",
+        name="Outbound Test Market",
+        country_code="US",
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+        is_active=True,
+    )
+    db_session.add(market)
+    db_session.flush()
     team = Team(
         name=f"Ops-{_uid()}",
         team_type="support",
+        market_id=market.id,
         tenant_id=tenant.id,
         tenant_assignment_source="fixture",
         tenant_assignment_version="nexus.test.fixture.v1",
@@ -113,6 +125,7 @@ def _ticket(
         priority=TicketPriority.medium,
         status=TicketStatus.pending_assignment,
         resolution_category=ResolutionCategory.none,
+        market_id=market.id,
         team_id=team.id,
         source_chat_id=contact,
         preferred_reply_channel=channel.value,
@@ -145,6 +158,7 @@ def _whatsapp_connection(
         provider=SourceChannel.whatsapp.value,
         account_id=f"wa-{_uid()}",
         display_name="WhatsApp Test",
+        market_id=ticket.market_id,
         tenant_id=tenant.id,
         tenant_assignment_source="fixture",
         tenant_assignment_version="nexus.test.fixture.v1",
@@ -225,6 +239,7 @@ def test_email_capability_uses_account_registry_and_target_validation(db_session
             password_encrypted="encrypted-password",
             from_address="support@example.test",
             security_mode="starttls",
+            market_id=ticket.market_id,
             is_active=True,
             priority=10,
         )
@@ -292,7 +307,18 @@ def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_ses
     _reset_settings(monkeypatch, dispatch=True, provider="native")
     tenant = _tenant(db_session)
     ticket = _ticket(db_session, tenant=tenant, channel=SourceChannel.sms, contact="0791234567")
-    db_session.add(ChannelAccount(provider="sms", account_id=f"sms-{_uid()}", is_active=True, priority=10))
+    db_session.add(
+        ChannelAccount(
+            provider="sms",
+            account_id=f"sms-{_uid()}",
+            market_id=ticket.market_id,
+            tenant_id=tenant.id,
+            tenant_assignment_source="fixture",
+            tenant_assignment_version="nexus.test.fixture.v1",
+            is_active=True,
+            priority=10,
+        )
+    )
     db_session.flush()
 
     cap = get_outbound_channel_capability(SourceChannel.sms, db=db_session, ticket=ticket)
