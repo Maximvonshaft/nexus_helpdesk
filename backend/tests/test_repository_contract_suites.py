@@ -22,6 +22,7 @@ def test_release_deployment_and_remediation_contract_suites_are_canonical_backen
             "backend/tests/test_agent_routing_scenario_live_integration.py",
             "backend/tests/test_channel_workbench_backend_contracts.py::test_formal_webcall_uses_scope_offer_handoff_and_durable_commands",
             "backend/tests/test_channel_workbench_backend_contracts.py::test_customer_hangup_closes_formal_webcall_without_duplicate_owner",
+            "backend/tests/test_nexus_osr_case_context_identity.py",
             "backend/tests/test_nexus_osr_tool_execution_service.py",
             "backend/tests/test_webchat_ai_terminal_outcome_convergence.py::test_no_public_runtime_result_exhausts_into_one_canonical_fallback",
             "backend/tests/test_webchat_ai_terminal_outcome_convergence.py::test_watchdog_timeout_uses_same_idempotent_terminal_outcome",
