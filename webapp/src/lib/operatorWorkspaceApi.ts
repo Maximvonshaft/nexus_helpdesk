@@ -6,6 +6,9 @@ import type {
   WebchatReplyResult,
   WebchatThread,
 } from '@/lib/types'
+import {
+  parseAuthorizedWorkspaceScopes,
+} from '@/lib/operatorWorkspaceTypes'
 import type {
   AuthorizedWorkspaceScopesResponse,
   UnifiedOperatorQueueResponse,
@@ -60,11 +63,20 @@ function withQuery(path: string, params: Record<string, string | number | null |
   return suffix ? `${pathname}?${suffix}` : pathname
 }
 
-export const operatorWorkspaceApi = {
-  currentScopes: (init?: RequestInit) => apiRequest<AuthorizedWorkspaceScopesResponse>(CURRENT_OPERATOR_SCOPES_PATH, {
+async function currentAuthorizedScopes(init?: RequestInit): Promise<AuthorizedWorkspaceScopesResponse> {
+  const payload = await apiRequest<unknown>(CURRENT_OPERATOR_SCOPES_PATH, {
     ...init,
     requestIdPrefix: 'workspace-scope',
-  }),
+  })
+  try {
+    return parseAuthorizedWorkspaceScopes(payload)
+  } catch {
+    throw new ApiError('服务器返回了无效的工作范围', 502)
+  }
+}
+
+export const operatorWorkspaceApi = {
+  currentScopes: currentAuthorizedScopes,
 
   unifiedQueue: (
     scope: WorkspaceScope,
