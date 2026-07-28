@@ -38,6 +38,7 @@ def test_release_deployment_and_remediation_contract_suites_are_canonical_backen
             "backend/tests/test_whatsapp_privacy_lifecycle.py",
             "backend/tests/test_whatsapp_ticket_account_affinity.py",
             "backend/tests/test_whatsapp_shared_waba_webhook.py",
+            "backend/tests/test_whatsapp_shared_waba_route_precedence.py",
             "scripts/release/tests",
             "scripts/deploy/tests",
         ],
