@@ -63,17 +63,33 @@ test("persists encrypted media download work across process restart", async () =
     assert.equal(failed.pending, 1);
     assert.equal(first.count(), 1);
 
+    first.enqueue({
+      accountId: "wa-main",
+      externalMessageId: "message-1",
+      mediaKind: "image",
+      mediaType: "image/jpeg",
+      fileName: "duplicate.jpg",
+      rawMessage: rawMessage("message-1")
+    });
+    assert.equal(first.count(), 1, "duplicate upsert must not reset the pending task");
+
     const restarted = new DurableMediaDownloadOutbox(root, logger, secret);
-    const observed: string[] = [];
+    const observed: Array<{ id: string; attempts: number; fileName: string | null }> = [];
     const delivered = await restarted.drainAccount(
       "wa-main",
       async (envelope) => {
-        observed.push(String(envelope.raw_message.key?.id || ""));
+        observed.push({
+          id: String(envelope.raw_message.key?.id || ""),
+          attempts: envelope.attempts,
+          fileName: envelope.file_name
+        });
       },
       20,
       firstAttemptAt + 10_000
     );
-    assert.deepEqual(observed, ["message-1"]);
+    assert.deepEqual(observed, [
+      { id: "message-1", attempts: 1, fileName: "photo.jpg" }
+    ]);
     assert.equal(delivered.delivered, 1);
     assert.equal(restarted.count(), 0);
   } finally {
@@ -104,6 +120,15 @@ test("preserves non-retryable media download failures as dead-letter evidence", 
     );
     assert.equal(result.dead, 1);
     assert.equal(outbox.count(), 0);
+    assert.equal(outbox.countDead(), 1);
+    outbox.enqueue({
+      accountId: "wa-main",
+      externalMessageId: "message-dead",
+      mediaKind: "image",
+      mediaType: "image/jpeg",
+      rawMessage: rawMessage("message-dead")
+    });
+    assert.equal(outbox.count(), 0, "duplicate upsert must not resurrect dead work");
     assert.equal(outbox.countDead(), 1);
   } finally {
     rmSync(root, { recursive: true, force: true });
