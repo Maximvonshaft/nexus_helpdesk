@@ -39,15 +39,31 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_webchat_voice_p0_gap_closure": "pytest-voice-p0",
 }
 
+# Global policy rows such as SLA revisions intentionally have tenant_id=NULL.
+# Stamp only concrete business/resource identities that production requires to
+# be Tenant-owned; never infer ownership for arbitrary models.
+_TENANT_IDENTITY_MODELS = {
+    "ChannelAccount",
+    "Customer",
+    "Market",
+    "OperatorTask",
+    "Team",
+    "Ticket",
+    "User",
+    "WebchatVoiceSession",
+    "WhatsAppConnection",
+}
+_TENANT_KEY_MODELS = {
+    "ConversationControl",
+    "OperatorQueueScopeGrant",
+    "WebchatConversation",
+    "WebchatHandoffRequest",
+}
+
 
 @pytest.fixture(autouse=True)
 def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
-    """Give every backend test a deterministic non-production runtime baseline.
-
-    Security-contract tests may explicitly override these values within the test.
-    Clearing every cached settings authority before and after the test prevents
-    production/enforce fixtures from leaking into unrelated suites.
-    """
+    """Give every backend test a deterministic non-production runtime baseline."""
 
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("TENANT_RUNTIME_AUTHORITY_MODE", "shadow")
@@ -62,12 +78,7 @@ def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
-    """Stamp only named legacy test suites with relational Tenant ownership.
-
-    A direct bounded insert is used because many fixtures flush User/Team/Ticket
-    rows independently before a WebChat conversation is created. The listener is
-    removed after every test and never runs in application processes.
-    """
+    """Stamp only named legacy test suites with one deterministic Tenant."""
 
     module_name = request.module.__name__.rsplit(".", 1)[-1]
     tenant_key = _LEGACY_FIXTURE_TENANTS.get(module_name)
@@ -96,23 +107,26 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
             session.info[cache_key] = int(tenant_id)
 
         for row in tuple(session.new) + tuple(session.dirty):
-            if isinstance(row, Tenant) or not hasattr(row, "tenant_id"):
-                continue
-            if getattr(row, "tenant_id", None) is not None:
-                continue
-            row.tenant_id = int(tenant_id)
-            if hasattr(row, "tenant_assignment_source") and not getattr(
-                row,
-                "tenant_assignment_source",
-                None,
-            ):
-                row.tenant_assignment_source = "test_fixture"
-            if hasattr(row, "tenant_assignment_version") and not getattr(
-                row,
-                "tenant_assignment_version",
-                None,
-            ):
-                row.tenant_assignment_version = "nexus.test.fixture.v1"
+            model_name = row.__class__.__name__
+            if model_name in _TENANT_IDENTITY_MODELS:
+                if getattr(row, "tenant_id", None) is None:
+                    row.tenant_id = int(tenant_id)
+                if hasattr(row, "tenant_assignment_source") and not getattr(
+                    row,
+                    "tenant_assignment_source",
+                    None,
+                ):
+                    row.tenant_assignment_source = "test_fixture"
+                if hasattr(row, "tenant_assignment_version") and not getattr(
+                    row,
+                    "tenant_assignment_version",
+                    None,
+                ):
+                    row.tenant_assignment_version = "nexus.test.fixture.v1"
+            if model_name in _TENANT_KEY_MODELS:
+                current = str(getattr(row, "tenant_key", "") or "").strip()
+                if current in {"", "default", "pytest"}:
+                    row.tenant_key = tenant_key
 
     event.listen(Session, "before_flush", before_flush)
     try:
@@ -125,20 +139,15 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
 def preserve_focused_background_job_test_doubles(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Keep non-ORM test doubles focused on attempt-boundary behavior.
-
-    Real SQLAlchemy Sessions always use the canonical execution-scope and lease
-    authority. A handful of old unit tests intentionally use a minimal FakeDB to
-    exercise rollback/retry semantics; this adapter routes only those doubles
-    through their patched claim function and bypasses scope persistence they do
-    not model.
-    """
+    """Keep non-ORM test doubles focused on attempt-boundary behavior."""
 
     canonical_claim = background_job_execution_scope.claim_executable_background_jobs
     canonical_require = background_job_execution_scope.require_executable_background_job_scope
 
     def claim(db, *, limit=None, worker_id=None, job_types=None):
         if not hasattr(db, "execute"):
+            if not hasattr(db, "get"):
+                db.get = lambda _model, identity: getattr(db, "rows", {}).get(identity)
             return background_jobs.claim_pending_jobs(
                 db,
                 limit=limit,
