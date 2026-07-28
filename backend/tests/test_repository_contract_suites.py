@@ -8,13 +8,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_release_and_deployment_contract_suites_are_canonical_backend_gates() -> None:
+def test_release_deployment_and_remediation_contract_suites_are_canonical_backend_gates() -> None:
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
             "-q",
+            "backend/tests/test_whatsapp_embedded_signup_retryability.py",
+            "backend/tests/test_ticketless_whatsapp_delivery.py",
             "scripts/release/tests",
             "scripts/deploy/tests",
         ],
