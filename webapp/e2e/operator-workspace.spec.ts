@@ -2,6 +2,7 @@ import { expect, test, type Page, type Route } from '@playwright/test'
 
 const TOKEN_KEY = 'helpdesk-webapp-token'
 const SCOPE_KEY = 'nexus-operator-workspace-scope'
+const QUEUE_KEY = 'legacy'
 
 type Scenario = 'handoff' | 'dispatch'
 
@@ -62,7 +63,12 @@ function queueResponse(scenario: Scenario) {
         },
       }],
       next_cursor: null,
-      scope: { tenant_hash: 'hash', country_code: 'CH', channel_key: 'whatsapp' },
+      scope: {
+        tenant_hash: '123456789abc',
+        country_code: 'CH',
+        channel_key: 'whatsapp',
+        queue_key: QUEUE_KEY,
+      },
       filters: { state: 'active', source_type: 'dispatch', owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
     }
   }
@@ -93,7 +99,12 @@ function queueResponse(scenario: Scenario) {
       },
     }],
     next_cursor: null,
-    scope: { tenant_hash: 'hash', country_code: 'CH', channel_key: 'webchat' },
+    scope: {
+      tenant_hash: '123456789abc',
+      country_code: 'CH',
+      channel_key: 'webchat',
+      queue_key: QUEUE_KEY,
+    },
     filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
   }
 }
@@ -175,10 +186,15 @@ async function mockWorkspace(page: Page, scenario: Scenario, overrides?: {
   events?: (afterId: number) => EventPage
 }) {
   const channelKey = scenario === 'dispatch' ? 'whatsapp' : 'webchat'
-  await page.addInitScript(([tokenKey, scopeKey, channel]) => {
+  await page.addInitScript(([tokenKey, scopeKey, channel, queue]) => {
     sessionStorage.setItem(tokenKey, 'operator-token')
-    sessionStorage.setItem(scopeKey, JSON.stringify({ tenantKey: 'default', countryCode: 'CH', channelKey: channel }))
-  }, [TOKEN_KEY, SCOPE_KEY, channelKey])
+    sessionStorage.setItem(scopeKey, JSON.stringify({
+      tenantKey: 'default',
+      countryCode: 'CH',
+      channelKey: channel,
+      queueKey: queue,
+    }))
+  }, [TOKEN_KEY, SCOPE_KEY, channelKey, QUEUE_KEY])
 
   await page.route('**/api/**', async (route: Route) => {
     const url = new URL(route.request().url())
@@ -192,9 +208,10 @@ async function mockWorkspace(page: Page, scenario: Scenario, overrides?: {
       return json({
         items: [{
           tenant_key: 'default',
-          tenant_hash: 'hash',
+          tenant_hash: '123456789abc',
           country_code: 'CH',
           channel_key: channelKey,
+          queue_key: QUEUE_KEY,
         }],
         requires_explicit_admin_scope: false,
       })
@@ -203,6 +220,7 @@ async function mockWorkspace(page: Page, scenario: Scenario, overrides?: {
       expect(route.request().headers()['x-nexus-tenant']).toBe('default')
       expect(url.searchParams.get('country_code')).toBe('CH')
       expect(url.searchParams.get('channel_key')).toBe(channelKey)
+      expect(url.searchParams.get('queue_key')).toBe(QUEUE_KEY)
       return json(overrides?.queue?.() ?? queueResponse(scenario))
     }
     if (url.pathname === '/api/webchat/admin/tickets/11/thread') return json(overrides?.thread?.(url) ?? threadResponse())
