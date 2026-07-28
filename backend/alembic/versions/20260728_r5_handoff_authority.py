@@ -60,7 +60,7 @@ def upgrade() -> None:
             tasks.c.webchat_conversation_id.is_not(None),
             tasks.c.status.not_in(_TERMINAL),
         )
-    ).mappings()
+    ).mappings().all()
 
     for task in active_tasks:
         source = bind.execute(
