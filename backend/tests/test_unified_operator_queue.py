@@ -44,6 +44,7 @@ NOW = datetime.now(timezone.utc).replace(microsecond=0)
 TENANT = "tenant-queue-a"
 COUNTRY = "ME"
 CHANNEL = "webchat"
+QUEUE = "legacy"
 SENSITIVE_SENTINEL = "customer-secret@example.test +38267000111 TRACK-PRIVATE"
 
 
@@ -90,12 +91,22 @@ def _team(db, country: str = COUNTRY) -> tuple[Market, Team]:
     return market, team
 
 
-def _grant(db, *, admin: User, user: User, tenant: str = TENANT, country: str = COUNTRY, channel: str = CHANNEL):
+def _grant(
+    db,
+    *,
+    admin: User,
+    user: User,
+    tenant: str = TENANT,
+    country: str = COUNTRY,
+    channel: str = CHANNEL,
+    queue: str = QUEUE,
+):
     payload = OperatorQueueScopeGrantUpsert(
         user_id=user.id,
         tenant_key=tenant,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
         enabled=True,
     )
     return upsert_scope_grant(db, current_user=admin, payload=payload)
@@ -227,6 +238,7 @@ def _list(db, user, **kwargs):
         tenant_key=kwargs.pop("tenant_key", TENANT),
         country_code=kwargs.pop("country_code", COUNTRY),
         channel_key=kwargs.pop("channel_key", CHANNEL),
+        queue_key=kwargs.pop("queue_key", QUEUE),
         **kwargs,
     )
 
@@ -615,6 +627,7 @@ def test_scope_grant_crud_is_normalized_hashed_and_audited(db_session):
     grant = _grant(db_session, admin=admin, user=agent, tenant="Tenant.Example", country="me", channel="WebChat")
     assert grant.country_code == "ME"
     assert grant.channel_key == "webchat"
+    assert grant.queue_key == QUEUE
     audit = db_session.query(AdminAuditLog).filter(AdminAuditLog.target_id == grant.id).one()
     assert "Tenant.Example" not in (audit.new_value_json or "")
     assert "tenant_hash" in (audit.new_value_json or "")
@@ -634,7 +647,7 @@ def test_grant_schema_forbids_unknown_fields_and_wildcards(db_session):
     admin = _user(db_session, username="wild-admin", role=UserRole.admin)
     agent = _user(db_session, username="wild-agent", role=UserRole.agent, team_id=team.id)
     with pytest.raises(ValidationError):
-        OperatorQueueScopeGrantUpsert(user_id=agent.id, tenant_key=TENANT, country_code="*", channel_key="*")
+        OperatorQueueScopeGrantUpsert(user_id=agent.id, tenant_key=TENANT, country_code="*", channel_key="*", queue_key="*")
 
 
 def test_legacy_projection_table_is_not_used_as_unified_source(db_session):
