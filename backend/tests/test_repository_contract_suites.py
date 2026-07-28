@@ -25,4 +25,4 @@ def test_release_and_deployment_contract_suites_are_canonical_backend_gates() ->
         check=False,
         timeout=300,
     )
-    assert completed.returncode == 0, completed.stdout[-16000:]
+    assert completed.returncode == 0, completed.stdout
