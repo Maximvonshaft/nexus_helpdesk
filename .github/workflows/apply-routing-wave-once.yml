@@ -65,14 +65,7 @@ jobs:
           git diff --check
           git config user.name "nexus-routing-verifier"
           git config user.email "nexus-routing-verifier@users.noreply.github.com"
-          git add -A \
-            .github/workflows/apply-routing-wave-once.yml \
-            scripts/maintenance/apply_routing_wave_once.py \
-            artifacts/routing-wave-once-failure.txt
-          git add \
-            .github/workflows/canonical-acceptance.yml \
-            backend \
-            deploy
+          git add -A
           git diff --cached --check
           git commit -m "verification: scenario-governed handoff routing"
           verified_head="$(git rev-parse HEAD)"
