@@ -61,6 +61,7 @@ class OperatorQueueScopeGrantUpsert(BaseModel):
     tenant_key: str = Field(min_length=1, max_length=80)
     country_code: str = Field(min_length=2, max_length=16)
     channel_key: str = Field(min_length=1, max_length=40)
+    queue_key: str = Field(default="legacy", min_length=1, max_length=160)
     enabled: bool = True
 
 
@@ -70,6 +71,7 @@ class OperatorQueueScopeGrantRead(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str
     channel_key: str
+    queue_key: str
     enabled: bool
     created_at: str
     updated_at: str
@@ -80,6 +82,7 @@ class OperatorQueueCurrentScopeRead(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str = Field(min_length=2, max_length=16)
     channel_key: str = Field(min_length=1, max_length=40)
+    queue_key: str = Field(min_length=1, max_length=160)
 
 
 class OperatorQueueCurrentScopesResponse(BaseModel):
