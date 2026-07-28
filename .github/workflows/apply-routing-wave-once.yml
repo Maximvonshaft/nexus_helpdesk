@@ -86,14 +86,16 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
           rm -f \
             .github/workflows/apply-routing-wave-once.yml \
-            scripts/maintenance/apply_routing_wave_once.py
+            scripts/maintenance/apply_routing_wave_once.py \
+            artifacts/routing-wave-once-failure.txt
           git status --short
           test -n "$(git status --porcelain)"
           git config user.name "nexus-routing-convergence"
           git config user.email "nexus-routing-convergence@users.noreply.github.com"
           git add -A \
             .github/workflows/apply-routing-wave-once.yml \
-            scripts/maintenance/apply_routing_wave_once.py
+            scripts/maintenance/apply_routing_wave_once.py \
+            artifacts/routing-wave-once-failure.txt
           git add \
             .github/workflows/canonical-acceptance.yml \
             backend \
@@ -101,7 +103,7 @@ jobs:
           git diff --cached --check
           git commit -m "feat(routing): converge scenario-governed handoff authority"
           git push origin HEAD:feat/whatsapp-dual-transport-production-final
-      - name: Report bounded failure to audit ledger
+      - name: Persist bounded failure evidence
         if: failure()
         shell: bash
         env:
@@ -112,6 +114,22 @@ jobs:
           tail -n 180 /tmp/routing-wave-once.log 2>/dev/null \
             | sed -E 's/(TOKEN|SECRET|PASSWORD|API_KEY)=([^[:space:]]+)/\1=[REDACTED]/g' \
             > /tmp/routing-wave-once-tail.txt || true
+          {
+            printf 'exact_head=%s\n' "$SOURCE_SHA"
+            printf 'result=fail_closed\n\n'
+            cat /tmp/routing-wave-once-tail.txt
+          } > /tmp/routing-wave-once-failure.txt
+          git fetch --no-tags origin feat/whatsapp-dual-transport-production-final
+          if test "$(git rev-parse HEAD)" = "$SOURCE_SHA" && \
+             test "$(git rev-parse origin/feat/whatsapp-dual-transport-production-final)" = "$SOURCE_SHA"; then
+            mkdir -p artifacts
+            cp /tmp/routing-wave-once-failure.txt artifacts/routing-wave-once-failure.txt
+            git config user.name "nexus-routing-convergence"
+            git config user.email "nexus-routing-convergence@users.noreply.github.com"
+            git add artifacts/routing-wave-once-failure.txt
+            git commit -m "chore(routing): record fail-closed executor evidence"
+            git push origin HEAD:feat/whatsapp-dual-transport-production-final
+          fi
           {
             printf '%s\n' '<!-- nexus-routing-once-diagnostic -->'
             printf '### R6 Routing one-time executor failed\n\n'
