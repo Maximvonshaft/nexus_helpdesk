@@ -18,7 +18,7 @@ from app.services.customer_visible_message_service import _effective_channel
 
 @pytest.mark.parametrize(
     "channel_key",
-    ["", "webchat", SourceChannel.web_chat.value],
+    ["", "default", "webchat", SourceChannel.web_chat.value],
 )
 def test_ticketless_internal_webchat_channel_aliases_remain_supported(
     channel_key: str,
@@ -39,6 +39,6 @@ def test_ticketless_webchat_alias_cannot_be_reinterpreted_as_whatsapp() -> None:
     ):
         _effective_channel(
             ticket=None,
-            conversation=SimpleNamespace(channel_key="webchat"),
+            conversation=SimpleNamespace(channel_key="default"),
             requested=SourceChannel.whatsapp,
         )
