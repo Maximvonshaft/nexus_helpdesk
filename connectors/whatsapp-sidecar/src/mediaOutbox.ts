@@ -28,6 +28,7 @@ const LENGTH_BYTES = 4;
 const MAX_MEDIA_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_BYTES = MAX_MEDIA_BYTES + 64 * 1024;
 const MAX_ATTEMPTS = 20;
+const EXHAUSTED_MEDIA_RETRY_MS = 60 * 60 * 1000;
 const ENVELOPE_SCHEMA = "nexus.whatsapp.media.v1";
 
 export type InboundMediaKind = "image" | "video" | "audio" | "document" | "sticker";
@@ -67,7 +68,8 @@ export class DurableMediaOutbox {
   constructor(
     private readonly root: string,
     private readonly logger: Logger,
-    integritySecret: string
+    integritySecret: string,
+    private readonly now: () => number = Date.now
   ) {
     if (integritySecret.trim().length < 32) {
       throw new Error("media_outbox_secret_too_short");
@@ -97,7 +99,11 @@ export class DurableMediaOutbox {
     const mediaKind = assertMediaKind(params.mediaKind);
     const mediaType = assertMediaType(params.mediaType);
     const fileName = safeFileName(params.fileName);
-    if (!Buffer.isBuffer(params.content) || params.content.length <= 0 || params.content.length > MAX_MEDIA_BYTES) {
+    if (
+      !Buffer.isBuffer(params.content) ||
+      params.content.length <= 0 ||
+      params.content.length > MAX_MEDIA_BYTES
+    ) {
       throw new Error("media_outbox_content_size_invalid");
     }
     const id = createHash("sha256")
@@ -113,8 +119,8 @@ export class DurableMediaOutbox {
       file_name: fileName,
       sha256: createHash("sha256").update(params.content).digest("hex"),
       attempts: 0,
-      next_attempt_at: Date.now(),
-      created_at: new Date().toISOString(),
+      next_attempt_at: this.now(),
+      created_at: new Date(this.now()).toISOString(),
       content: params.content
     };
     this.write(envelope);
@@ -147,7 +153,7 @@ export class DurableMediaOutbox {
         rmSync(path, { force: true });
         continue;
       }
-      if (envelope.next_attempt_at > Date.now()) {
+      if (envelope.next_attempt_at > this.now()) {
         pending += 1;
         continue;
       }
@@ -158,23 +164,29 @@ export class DurableMediaOutbox {
       } catch (error) {
         envelope.attempts += 1;
         if (envelope.attempts >= MAX_ATTEMPTS) {
+          envelope.attempts = MAX_ATTEMPTS;
+          envelope.next_attempt_at = this.now() + EXHAUSTED_MEDIA_RETRY_MS;
+          this.write(envelope);
+          pending += 1;
           this.logger.error(
             {
               media_id: envelope.id,
               account_id: envelope.account_id,
-              external_message_id: envelope.external_message_id,
-              attempts: envelope.attempts
+              external_message_id_hash: createHash("sha256")
+                .update(envelope.external_message_id, "utf8")
+                .digest("hex"),
+              attempts: envelope.attempts,
+              retained: true
             },
-            "media_outbox_dead"
+            "media_outbox_dead_retained"
           );
-          rmSync(path, { force: true });
           continue;
         }
         const backoffMs = Math.min(
           1000 * 2 ** Math.min(envelope.attempts, 10),
           300000
         );
-        envelope.next_attempt_at = Date.now() + backoffMs;
+        envelope.next_attempt_at = this.now() + backoffMs;
         this.write(envelope);
         pending += 1;
         this.logger.warn(
@@ -238,7 +250,11 @@ export class DurableMediaOutbox {
     let payload: Buffer;
     try {
       const metadata = fstatSync(descriptor);
-      if (!metadata.isFile() || metadata.size <= MAGIC.length + NONCE_BYTES + TAG_BYTES || metadata.size > MAX_FILE_BYTES) {
+      if (
+        !metadata.isFile() ||
+        metadata.size <= MAGIC.length + NONCE_BYTES + TAG_BYTES ||
+        metadata.size > MAX_FILE_BYTES
+      ) {
         throw new Error("media_outbox_file_size_invalid");
       }
       payload = readFileSync(descriptor);
@@ -266,7 +282,11 @@ export class DurableMediaOutbox {
       throw new Error("media_outbox_plaintext_invalid");
     }
     const metadataLength = plaintext.readUInt32BE(0);
-    if (metadataLength <= 0 || metadataLength > 32 * 1024 || LENGTH_BYTES + metadataLength >= plaintext.length) {
+    if (
+      metadataLength <= 0 ||
+      metadataLength > 32 * 1024 ||
+      LENGTH_BYTES + metadataLength >= plaintext.length
+    ) {
       throw new Error("media_outbox_metadata_size_invalid");
     }
     const candidate = JSON.parse(
@@ -321,7 +341,13 @@ function assertMessageId(value: unknown): string {
 }
 
 function assertMediaKind(value: unknown): InboundMediaKind {
-  if (value === "image" || value === "video" || value === "audio" || value === "document" || value === "sticker") {
+  if (
+    value === "image" ||
+    value === "video" ||
+    value === "audio" ||
+    value === "document" ||
+    value === "sticker"
+  ) {
     return value;
   }
   throw new Error("media_outbox_kind_invalid");
@@ -332,7 +358,11 @@ function assertMediaType(value: unknown): string {
     .split(";", 1)[0]
     .trim()
     .toLowerCase();
-  if (!normalized || normalized.length > 160 || !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(normalized)) {
+  if (
+    !normalized ||
+    normalized.length > 160 ||
+    !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(normalized)
+  ) {
     throw new Error("media_outbox_type_invalid");
   }
   return normalized;
