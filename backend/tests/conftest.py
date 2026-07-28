@@ -25,9 +25,12 @@ from app.services.whatsapp_runtime_settings import (
 _LEGACY_FIXTURE_TENANTS = {
     "test_canonical_policy_projection_behavior": "tenant-policy-a",
     "test_channel_workbench_backend_contracts": "pytest-channel-workbench",
+    "test_control_tower_contract": "pytest-control-tower",
+    "test_email_mailbox_polling_service": "pytest-email-mailbox",
     "test_nexus_osr_tool_execution_service": "pytest-tool-execution",
     "test_operator_product_foundation": "pytest-operator-product",
     "test_operator_queue_current_scopes": "tenant-ops",
+    "test_qa_training_contract": "pytest-qa-training",
     "test_unified_operator_queue": "tenant-queue-a",
     "test_webchat_action_idempotency": "pytest-action-idempotency",
     "test_webchat_handoff_control": "pytest",
