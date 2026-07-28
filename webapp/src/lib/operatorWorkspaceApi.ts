@@ -75,6 +75,7 @@ export const operatorWorkspaceApi = {
     const search = new URLSearchParams({
       country_code: scope.countryCode.trim().toUpperCase(),
       channel_key: scope.channelKey.trim().toLowerCase(),
+      queue_key: scope.queueKey.trim().toLowerCase(),
       sort: filters.sort,
       limit: '50',
     })
