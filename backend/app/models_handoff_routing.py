@@ -15,6 +15,7 @@ from sqlalchemy import (
     event,
     inspect,
 )
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -133,6 +134,17 @@ class HandoffRoutingPlan(Base):
         onupdate=utc_now,
         index=True,
     )
+
+    @hybrid_property
+    def handoff_request_id(self) -> int:
+        """Unambiguous query name backed by the single canonical request_id column."""
+
+        return int(self.request_id)
+
+    @handoff_request_id.inplace.expression
+    @classmethod
+    def _handoff_request_id_expression(cls):
+        return cls.request_id
 
 
 class HandoffRoutingCandidateAttempt(Base):
