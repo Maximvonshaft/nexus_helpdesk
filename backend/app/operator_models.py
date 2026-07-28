@@ -207,7 +207,7 @@ def _enforce_handoff_projection_identity(
 
 
 class OperatorQueueScopeGrant(Base):
-    """Exact server-owned visibility scope for the live unified queue."""
+    """Exact server-owned visibility and Scenario queue routing scope."""
 
     __tablename__ = "operator_queue_scope_grants"
     __table_args__ = (
@@ -216,6 +216,7 @@ class OperatorQueueScopeGrant(Base):
             "tenant_key",
             "country_code",
             "channel_key",
+            "queue_key",
             name="uq_operator_queue_scope_grant",
         ),
         Index(
@@ -230,6 +231,14 @@ class OperatorQueueScopeGrant(Base):
             "channel_key",
             "enabled",
         ),
+        Index(
+            "ix_operator_queue_scope_grants_route",
+            "tenant_key",
+            "country_code",
+            "channel_key",
+            "queue_key",
+            "enabled",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -239,6 +248,9 @@ class OperatorQueueScopeGrant(Base):
     tenant_key: Mapped[str] = mapped_column(String(80), nullable=False)
     country_code: Mapped[str] = mapped_column(String(16), nullable=False)
     channel_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    queue_key: Mapped[str] = mapped_column(
+        String(160), nullable=False, default="legacy"
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     granted_by: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id"), nullable=True, index=True
