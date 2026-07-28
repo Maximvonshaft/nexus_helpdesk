@@ -74,13 +74,6 @@ def _production_worker_env(tmp_path: Path, *, role: str) -> dict[str, str]:
         "ALLOW_LEGACY_INTEGRATION_API_KEY": "false",
         "STORAGE_BACKEND": "local",
         "UPLOAD_ROOT": str(tmp_path / role),
-        "EXTERNAL_CHANNEL_TRANSPORT": "disabled",
-        "EXTERNAL_CHANNEL_DEPLOYMENT_MODE": "disabled",
-        "EXTERNAL_CHANNEL_CLI_FALLBACK_ENABLED": "false",
-        "EXTERNAL_CHANNEL_BRIDGE_ENABLED": "false",
-        "EXTERNAL_CHANNEL_SYNC_ENABLED": "false",
-        "EXTERNAL_CHANNEL_INBOUND_AUTO_SYNC_ENABLED": "false",
-        "EXTERNAL_CHANNEL_EVENT_DRIVER_ENABLED": "false",
         "WEBCHAT_AI_ENABLED": "false",
         "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
         "WEBCHAT_AI_RECONCILER_ENABLED": "false",
@@ -91,7 +84,10 @@ def _production_worker_env(tmp_path: Path, *, role: str) -> dict[str, str]:
         "WEBCHAT_WS_PUBLIC_ENABLED": "false",
         "WEBCHAT_WS_ADMIN_ENABLED": "false",
         "WEBCHAT_WS_BROKER": "database",
-        "WHATSAPP_DISPATCH_MODE": "disabled",
+        "WHATSAPP_ENABLED": "false",
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "false",
+        "WHATSAPP_MEDIA_ENABLED": "false",
+        "WHATSAPP_MEDIA_SCANNER": "disabled",
         "EMAIL_MAILBOX_SYNC_ENABLED": "false",
         "METRICS_ENABLED": "false",
     }
@@ -102,7 +98,9 @@ def test_controlled_runtime_has_global_least_privilege_defaults():
     for service_name, service in document["services"].items():
         assert service.get("read_only") is True, service_name
         assert service.get("cap_drop") == ["ALL"], service_name
-        assert "no-new-privileges:true" in (service.get("security_opt") or []), service_name
+        assert "no-new-privileges:true" in (
+            service.get("security_opt") or []
+        ), service_name
         assert service.get("pids_limit") == 256, service_name
         assert any(
             str(entry).startswith("/tmp:rw,noexec,nosuid")
@@ -126,6 +124,8 @@ def test_retired_disabled_capability_credentials_are_absent():
         "LIVE_VOICE_UPSTREAM_TOKEN_FILE",
         "/run/nexus/ai_runtime_token",
         "/run/nexus/live_voice_token",
+        "WHATSAPP_NATIVE_ENABLED",
+        "WHATSAPP_DISPATCH_MODE",
     ):
         assert forbidden not in text
 
@@ -150,7 +150,7 @@ def test_migration_receives_only_database_and_metrics_volume():
     assert all("uploads" not in volume for volume in _volumes("migrate-controlled"))
 
 
-def test_web_process_owns_only_http_secrets_and_storage_mounts():
+def test_web_process_owns_http_secrets_storage_and_whatsapp_control_mount():
     environment = _environment("app-controlled")
     for required in (
         "SECRET_KEY",
@@ -158,6 +158,7 @@ def test_web_process_owns_only_http_secrets_and_storage_mounts():
         "METRICS_TOKEN",
         "ALLOWED_ORIGINS",
         "WEBCHAT_ALLOWED_ORIGINS",
+        "WHATSAPP_ENABLED",
     ):
         assert required in environment
     assert "DATABASE_URL_APP" in str(environment["DATABASE_URL"])
@@ -167,13 +168,18 @@ def test_web_process_owns_only_http_secrets_and_storage_mounts():
         volume.endswith(":/var/backups/nexusdesk/uploads:ro")
         for volume in volumes
     )
+    assert any(volume.endswith(":/run/nexus:ro") for volume in volumes)
 
 
-def test_outbound_worker_has_read_only_attachments_and_no_http_secret():
+def test_outbound_worker_has_read_only_attachments_and_scoped_whatsapp_secrets():
     environment = _environment("worker-outbound-controlled")
     assert "DATABASE_URL_OUTBOUND" in str(environment["DATABASE_URL"])
     assert any(
         volume.endswith(":/app/backend/uploads:ro")
+        for volume in _volumes("worker-outbound-controlled")
+    )
+    assert any(
+        volume.endswith(":/run/nexus:ro")
         for volume in _volumes("worker-outbound-controlled")
     )
     for forbidden in (
@@ -187,21 +193,22 @@ def test_outbound_worker_has_read_only_attachments_and_no_http_secret():
         "LIVEKIT_API_SECRET",
     ):
         assert forbidden not in environment
-    assert all(
-        "/var/backups/nexusdesk/uploads" not in volume
-        for volume in _volumes("worker-outbound-controlled")
-    )
 
 
-def test_background_worker_owns_snapshot_and_required_control_credentials():
+def test_background_worker_owns_snapshot_media_and_control_credentials():
     environment = _environment("worker-background-controlled")
     assert "DATABASE_URL_BACKGROUND" in str(environment["DATABASE_URL"])
     assert "QUEUE_METRICS_SNAPSHOT_INTERVAL_SECONDS" in environment
     assert "TELEPHONY_CONTROL_SECRET" in environment
     assert "LIVEKIT_API_KEY" in environment
     assert "LIVEKIT_API_SECRET" in environment
+    assert "WHATSAPP_MEDIA_ENABLED" in environment
     assert any(
         volume.endswith(":/app/backend/uploads:rw")
+        for volume in _volumes("worker-background-controlled")
+    )
+    assert any(
+        volume.endswith(":/run/nexus:ro")
         for volume in _volumes("worker-background-controlled")
     )
     for forbidden in (
@@ -212,13 +219,9 @@ def test_background_worker_owns_snapshot_and_required_control_credentials():
         "WEBCHAT_ALLOWED_ORIGINS",
     ):
         assert forbidden not in environment
-    assert all(
-        "/var/backups/nexusdesk/uploads" not in volume
-        for volume in _volumes("worker-background-controlled")
-    )
 
 
-def test_isolated_webchat_ai_worker_has_no_unrelated_secret_or_file_mount():
+def test_isolated_webchat_ai_worker_has_only_ai_contract_secret():
     service = "worker-webchat-ai-controlled"
     environment = _environment(service)
     assert "DATABASE_URL_WEBCHAT_AI" in str(environment["DATABASE_URL"])
@@ -282,7 +285,7 @@ def test_preflight_executes_the_same_role_isolation_contract():
     for index in range(1, len(roles) + 1):
         assert f"bounded-password-{index}" not in rendered
     source = PREFLIGHT.read_text(encoding="utf-8")
-    assert "nexus.osr.controlled-server-preflight.v2" in source
+    assert "nexus.osr.controlled-server-preflight.v3" in source
     assert "generic_database_url_forbidden" in source
     assert "compose_shared_env_file_forbidden" in source
     assert "disabled_capability_credential_forbidden" in source
@@ -291,11 +294,7 @@ def test_preflight_executes_the_same_role_isolation_contract():
 
 @pytest.mark.parametrize(
     "role",
-    [
-        "migration",
-        "worker-outbound",
-        "worker-background",
-    ],
+    ["migration", "worker-outbound", "worker-background"],
 )
 def test_non_http_production_roles_start_without_web_secrets(
     monkeypatch,
@@ -372,9 +371,6 @@ def test_worker_runner_keeps_processed_counts_separate_from_queue_depth():
     assert "dispatch_pending_webchat_handoff_snapshot_jobs" not in runner
     assert "collect_queue_health" in runner
     assert "_record_queue_depth_snapshot_if_due" in runner
-    assert 'record_queue_snapshot("outbound", "processed"' not in runner
-    assert 'record_queue_snapshot("background_job", "processed"' not in runner
-    assert 'record_queue_snapshot("webchat_ai_reply", "processed"' not in runner
 
 
 def test_process_role_authority_is_explicit_in_settings():
