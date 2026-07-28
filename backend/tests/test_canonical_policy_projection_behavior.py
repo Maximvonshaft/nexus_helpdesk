@@ -207,12 +207,14 @@ def test_current_scope_projection_contains_only_active_current_user_grants(db_se
                 "tenant_hash": result["items"][0]["tenant_hash"],
                 "country_code": "CH",
                 "channel_key": "email",
+                "queue_key": "legacy",
             },
             {
                 "tenant_key": TENANT,
                 "tenant_hash": result["items"][1]["tenant_hash"],
                 "country_code": "ME",
                 "channel_key": "webchat",
+                "queue_key": "legacy",
             },
         ]
     }
