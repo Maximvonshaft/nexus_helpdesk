@@ -55,11 +55,15 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             'test "$(git rev-parse origin/main)" = "$SOURCE_SHA"',
         ):
             self.assertIn(marker, WORKFLOW)
-        self.assertIn(
-            "on: {pull_request: {branches: [main]}, push: {branches: [main]}, "
-            "workflow_dispatch: {}}",
-            CANONICAL,
-        )
+        for marker in (
+            "pull_request:",
+            "types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]",
+            "push:",
+            "workflow_dispatch: {}",
+            "validation-mode:",
+            "development-fast:",
+        ):
+            self.assertIn(marker, CANONICAL)
 
     def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
