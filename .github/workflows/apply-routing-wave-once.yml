@@ -36,6 +36,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(git branch --show-current)" = "feat/whatsapp-dual-transport-production-final"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           python - <<'PY'
           from pathlib import Path
           path = Path("scripts/maintenance/apply_routing_wave_once.py")
@@ -47,7 +48,6 @@ jobs:
           path.write_text(text.replace(old, new), encoding="utf-8")
           PY
           python scripts/maintenance/apply_routing_wave_once.py
-          git checkout -- scripts/maintenance/apply_routing_wave_once.py
           git diff --check
       - name: Verify routing authority and repository contracts
         shell: bash
@@ -73,18 +73,23 @@ jobs:
             backend/tests/test_production_readiness_convergence.py \
             backend/tests/test_repository_contract_suites.py
           python -m pytest -q scripts/release/tests/test_controlled_image_assurance_order.py
-      - name: Commit only converged product files
+      - name: Commit converged product and remove executor
         shell: bash
         env:
           EXPECTED_PARENT: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
-          git checkout -- .github/workflows/apply-routing-wave-once.yml
+          rm -f \
+            .github/workflows/apply-routing-wave-once.yml \
+            scripts/maintenance/apply_routing_wave_once.py
           git status --short
           test -n "$(git status --porcelain)"
           git config user.name "nexus-routing-convergence"
           git config user.email "nexus-routing-convergence@users.noreply.github.com"
+          git add -A \
+            .github/workflows/apply-routing-wave-once.yml \
+            scripts/maintenance/apply_routing_wave_once.py
           git add \
             .github/workflows/canonical-acceptance.yml \
             backend \
