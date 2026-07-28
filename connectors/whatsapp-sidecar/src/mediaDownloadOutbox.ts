@@ -14,6 +14,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -157,7 +158,7 @@ export class DurableMediaDownloadOutbox {
       }
       try {
         await sender(envelope);
-        renameSync(path, `${path}.delivered-${randomUUID()}`);
+        rmSync(path, { force: true });
         delivered += 1;
       } catch (error) {
         envelope.attempts += 1;
