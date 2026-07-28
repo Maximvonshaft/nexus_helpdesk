@@ -465,19 +465,23 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: connectors/whatsapp-sidecar/package-lock.json
-      - name: Verify Sidecar and build exact image
+      - name: Verify Sidecar and generate dependency SBOM
         working-directory: connectors/whatsapp-sidecar
         run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-sidecar
           npm ci --ignore-scripts --no-audit --no-fund
           npm run typecheck
           npm test
           npm run build
           npm audit --audit-level=high
+          npm sbom --sbom-format cyclonedx > /tmp/nexus-sidecar/sidecar.raw.cdx.json
+          node -e 'JSON.parse(require("fs").readFileSync("/tmp/nexus-sidecar/sidecar.raw.cdx.json", "utf8"))'
       - name: Build Sidecar image
         env:
           SOURCE_SHA: ${{ needs.candidate-identity.outputs.source_sha }}
         run: |
-          mkdir -p /tmp/nexus-sidecar
+          set -Eeuo pipefail
           docker build --pull=false \
             --file connectors/whatsapp-sidecar/Dockerfile \
             --build-arg GIT_SHA="$SOURCE_SHA" \
@@ -485,8 +489,19 @@ jobs:
             --build-arg APP_VERSION="pr-$SOURCE_SHA" \
             --tag "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" \
             connectors/whatsapp-sidecar
+          test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$SOURCE_SHA"
           test "$(docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" --format '{{ .Config.User }}')" = "node"
           docker image inspect "nexus-whatsapp-sidecar-ci:$SOURCE_SHA" > /tmp/nexus-sidecar/image-inspect.json
+      - name: Capture Sidecar image vulnerability evidence
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: json
+          output: /tmp/nexus-sidecar/sidecar-trivy.raw.json
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
       - name: Block Sidecar high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
@@ -497,13 +512,22 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: '1'
+      - name: Generate Sidecar image CycloneDX
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: nexus-whatsapp-sidecar-ci:${{ needs.candidate-identity.outputs.source_sha }}
+          format: cyclonedx
+          output: /tmp/nexus-sidecar/sidecar-image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: '0'
       - name: Upload Sidecar evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sidecar-supply-chain-${{ needs.candidate-identity.outputs.source_sha }}
           path: /tmp/nexus-sidecar
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
   security-supply-chain:
