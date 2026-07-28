@@ -114,7 +114,13 @@ export async function fulfillResponsiveApi(route: Route) {
   if (path === '/api/admin/users') return json(route, responsiveAdminUsers)
   if (path === '/api/admin/operator-queue/my-scopes') {
     return json(route, {
-      items: [{ tenant_key: 'default', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
+      items: [{
+        tenant_key: 'default',
+        tenant_hash: '123456789abc',
+        country_code: 'CH',
+        channel_key: 'webchat',
+        queue_key: 'legacy',
+      }],
       requires_explicit_admin_scope: false,
     })
   }
@@ -122,7 +128,12 @@ export async function fulfillResponsiveApi(route: Route) {
     return json(route, {
       items: [],
       next_cursor: null,
-      scope: { tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' },
+      scope: {
+        tenant_hash: '123456789abc',
+        country_code: 'CH',
+        channel_key: 'webchat',
+        queue_key: 'legacy',
+      },
       filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
     })
   }
