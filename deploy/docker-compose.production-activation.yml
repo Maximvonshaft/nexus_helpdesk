@@ -71,7 +71,7 @@ services:
       - --environment
 
   clamav-controlled:
-    image: ${WHATSAPP_CLAMAV_IMAGE:?set immutable ClamAV image digest}
+    image: ${WHATSAPP_CLAMAV_IMAGE:?set immutable ClamAV image as name@sha256:<64-hex>}
     profiles:
       - whatsapp-media
     restart: unless-stopped
