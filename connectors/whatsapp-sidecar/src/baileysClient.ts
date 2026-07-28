@@ -32,6 +32,7 @@ import { SessionStore, type AccountOwnerLease } from "./sessionStore.js";
 
 type InboundHandler = (message: NormalizedInboundMessage) => Promise<void>;
 type StatusHandler = (accountId: string, snapshot: AccountSnapshot) => Promise<void>;
+type DeliveryHandler = (accountId: string, payload: Record<string, unknown>) => Promise<void>;
 type MediaHandler = (options: {
   accountId: string;
   messageId: string;
@@ -40,6 +41,7 @@ type MediaHandler = (options: {
   filename?: string | null;
   content: Buffer;
 }) => Promise<void>;
+type RecipientDeliveryStatus = "delivered" | "read";
 
 const PAIRING_CODE_ATTEMPTS = 5;
 const PAIRING_CODE_READY_DELAY_MS = 1500;
@@ -117,6 +119,50 @@ function mediaDownloadError(message: string, retryable: boolean): Error & { retr
   return Object.assign(new Error(message), { retryable });
 }
 
+function timestampNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const candidate = value as { toNumber?: () => number; low?: number } | null | undefined;
+  if (candidate && typeof candidate.toNumber === "function") {
+    const parsed = candidate.toNumber();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (candidate && typeof candidate.low === "number") return candidate.low;
+  return null;
+}
+
+function providerTimestampIso(value: unknown): string {
+  const numeric = timestampNumber(value);
+  if (numeric === null || numeric <= 0) return new Date().toISOString();
+  const milliseconds = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+export function deliveryStatusFromMessageUpdate(update: any): RecipientDeliveryStatus | null {
+  const raw = update?.status;
+  if (typeof raw === "string") {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized.includes("read") || normalized.includes("played")) return "read";
+    if (normalized.includes("deliver")) return "delivered";
+  }
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric >= 4) return "read";
+  if (numeric === 3) return "delivered";
+  return null;
+}
+
+export function deliveryStatusFromReceiptUpdate(receipt: any): RecipientDeliveryStatus | null {
+  if (receipt?.playedTimestamp || receipt?.readTimestamp) return "read";
+  if (receipt?.receiptTimestamp || receipt?.deliveredTimestamp) return "delivered";
+  return null;
+}
+
 export class BaileysConnector implements WhatsAppConnector {
   private readonly accounts = new Map<string, RuntimeAccount>();
   private readonly mediaDownloads: DurableMediaDownloadOutbox;
@@ -129,7 +175,8 @@ export class BaileysConnector implements WhatsAppConnector {
     private readonly onInbound: InboundHandler,
     private readonly onMedia: MediaHandler,
     private readonly onStatus: StatusHandler,
-    private readonly config: SidecarConfig
+    private readonly config: SidecarConfig,
+    private readonly onDelivery: DeliveryHandler = async () => undefined
   ) {
     this.mediaDownloads = new DurableMediaDownloadOutbox(
       join(config.callbackSpoolRoot, "media-downloads"),
@@ -144,6 +191,7 @@ export class BaileysConnector implements WhatsAppConnector {
 
   async start(accountId: string, generation?: number): Promise<AccountSnapshot> {
     const account = this.account(accountId);
+    const previousGeneration = account.generation;
     if (generation !== undefined) account.generation = Math.max(0, generation);
     account.status.generation = account.generation;
     account.stopped = false;
@@ -151,6 +199,7 @@ export class BaileysConnector implements WhatsAppConnector {
       account.socket &&
       ["connected", "connecting", "qr_pending", "auth_persisting"].includes(account.status.status)
     ) {
+      if (account.generation !== previousGeneration) await this.emitStatus(account);
       return account.status;
     }
     this.clearReconnectTimer(account);
@@ -214,6 +263,16 @@ export class BaileysConnector implements WhatsAppConnector {
       socket.ev.on("messages.upsert", ({ messages }) => {
         void this.handleMessages(account, messages || []).catch((error) => {
           this.logger.error({ account_id: accountId, error }, "whatsapp_messages_upsert_failed");
+        });
+      });
+      (socket.ev as any).on("messages.update", (updates: any[]) => {
+        void this.handleMessageUpdates(account, updates || []).catch((error) => {
+          this.logger.error({ account_id: accountId, error }, "whatsapp_messages_update_failed");
+        });
+      });
+      (socket.ev as any).on("message-receipt.update", (updates: any[]) => {
+        void this.handleReceiptUpdates(account, updates || []).catch((error) => {
+          this.logger.error({ account_id: accountId, error }, "whatsapp_message_receipt_update_failed");
         });
       });
       if (socket.ws && typeof (socket.ws as any).on === "function") {
@@ -616,6 +675,51 @@ export class BaileysConnector implements WhatsAppConnector {
       account.status.last_transport_activity_at = occurredAt;
       await this.emitStatus(account);
     }
+  }
+
+  private async handleMessageUpdates(account: RuntimeAccount, updates: any[]): Promise<void> {
+    for (const item of updates) {
+      const status = deliveryStatusFromMessageUpdate(item?.update);
+      if (!status) continue;
+      await this.publishDeliveryReceipt(
+        account,
+        item?.key,
+        status,
+        providerTimestampIso(item?.update?.messageTimestamp || item?.update?.timestamp)
+      );
+    }
+  }
+
+  private async handleReceiptUpdates(account: RuntimeAccount, updates: any[]): Promise<void> {
+    for (const item of updates) {
+      const status = deliveryStatusFromReceiptUpdate(item?.receipt);
+      if (!status) continue;
+      const timestamp =
+        item?.receipt?.playedTimestamp ||
+        item?.receipt?.readTimestamp ||
+        item?.receipt?.receiptTimestamp ||
+        item?.receipt?.deliveredTimestamp;
+      await this.publishDeliveryReceipt(account, item?.key, status, providerTimestampIso(timestamp));
+    }
+  }
+
+  private async publishDeliveryReceipt(
+    account: RuntimeAccount,
+    key: any,
+    status: RecipientDeliveryStatus,
+    occurredAt: string
+  ): Promise<void> {
+    const providerMessageId = String(key?.id || "").trim();
+    if (!providerMessageId || key?.fromMe === false) return;
+    account.status.last_transport_activity_at = occurredAt;
+    await this.onDelivery(account.accountId, {
+      account_id: account.accountId,
+      provider_message_id: providerMessageId,
+      status,
+      occurred_at: occurredAt,
+      idempotency_key: `baileys-receipt:${providerMessageId}:${status}`,
+      metadata: {}
+    });
   }
 
   private async drainAllMediaDownloads(): Promise<void> {
