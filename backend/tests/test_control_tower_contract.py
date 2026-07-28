@@ -42,12 +42,17 @@ from app.models import (  # noqa: E402
     MarketBulletin,
     OutboundEmailAccount,
     Team,
+    Tenant,
     Ticket,
     TicketOutboundMessage,
     User,
     UserCapabilityOverride,
 )
 from app.operator_models import OperatorTask  # noqa: E402
+from app.services.agent_resource_authority import (  # noqa: E402
+    AI_CONFIG_RESOURCE,
+    bind_resource,
+)
 from app.utils.time import utc_now  # noqa: E402
 from app.voice_models import WebchatVoiceSession  # noqa: E402
 from app.webchat_models import WebchatConversation  # noqa: E402
@@ -283,14 +288,24 @@ def _seed_control_tower(db_session):
             ),
         ]
     )
-    db_session.add(
-        AIConfigResource(
-            resource_key="persona.control_tower",
-            config_type="persona",
-            name="Draft persona",
-            is_active=True,
-            published_version=0,
-        )
+    draft_config = AIConfigResource(
+        resource_key="persona.control_tower",
+        config_type="persona",
+        name="Draft persona",
+        market_id=team.market_id,
+        is_active=True,
+        published_version=0,
+    )
+    db_session.add(draft_config)
+    db_session.flush()
+    tenant = db_session.get(Tenant, manager.tenant_id)
+    assert tenant is not None
+    bind_resource(
+        db_session,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=draft_config.id,
+        tenant_key=tenant.tenant_key,
+        actor_id=manager.id,
     )
     db_session.add(
         AdminAuditLog(
