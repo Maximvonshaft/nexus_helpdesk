@@ -113,6 +113,7 @@ def authorize_operator_scope(
     tenant_key: str,
     country_code: str,
     channel_key: str,
+    queue_key: str,
 ) -> tuple[str, str, str, OperatorQueueScopeGrant]:
     ensure_capability(
         current_user,
@@ -126,6 +127,7 @@ def authorize_operator_scope(
         country_code=country_code,
         channel_key=channel_key,
     )
+    queue = normalize_queue_key(queue_key)
     if tenant != actor_scope.tenant_key:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -137,6 +139,7 @@ def authorize_operator_scope(
         tenant_key=tenant,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
     )
     if grant is None:
         raise HTTPException(
