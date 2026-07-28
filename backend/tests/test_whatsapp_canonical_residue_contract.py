@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -15,18 +16,6 @@ _SCANNED_ROOTS = (
     ROOT / "scripts" / "qualification",
     ROOT / "scripts" / "release",
     ROOT / "webapp" / "src",
-)
-_FORBIDDEN = (
-    "WHATSAPP_NATIVE_ENABLED",
-    "WHATSAPP_DISPATCH_MODE",
-    "WHATSAPP_SIDECAR_URL",
-    "WHATSAPP_SIDECAR_TOKEN",
-    "whatsapp_native_",
-    "/api/admin/whatsapp/accounts",
-    "/api/integrations/whatsapp/native",
-    "docker-compose.whatsapp-sidecar.example.yml",
-    "worker-handoff-snapshot",
-    "NEXUS_WORKER_QUEUE: handoff-snapshot",
 )
 _TEXT_SUFFIXES = {
     ".css",
@@ -46,6 +35,33 @@ _TEXT_SUFFIXES = {
 }
 _SELF = Path(__file__).resolve()
 
+# Match executable configuration/import/route surfaces only. Security preflight,
+# rollback and deployment-authority code must remain free to name retired values
+# in explicit rejection and cleanup lists.
+_ACTIVE_RESIDUE_PATTERNS = {
+    "legacy_env_assignment": re.compile(
+        r"(?m)^\s*(?:-\s*e\s+)?(?:WHATSAPP_NATIVE_ENABLED|WHATSAPP_DISPATCH_MODE|WHATSAPP_SIDECAR_URL|WHATSAPP_SIDECAR_TOKEN)\s*[:=]"
+    ),
+    "legacy_python_import": re.compile(
+        r"(?m)^\s*(?:from|import)\s+[^\n]*(?:whatsapp_native|outbound_adapters\.whatsapp_native)"
+    ),
+    "legacy_runtime_symbol": re.compile(
+        r"\b(?:ingest_whatsapp_native_inbound|dispatch_whatsapp_native_outbound|whatsappNativeStatus)\b"
+    ),
+    "legacy_admin_route": re.compile(
+        r"/api/admin/whatsapp/accounts(?:/|['\"`])"
+    ),
+    "legacy_integration_route": re.compile(
+        r"/api/integrations/whatsapp/native(?:/|['\"`])"
+    ),
+    "legacy_worker_service": re.compile(
+        r"(?m)^\s*worker-handoff-snapshot(?:-controlled|-rc)?:\s*$"
+    ),
+    "legacy_worker_command": re.compile(
+        r"--queue(?:=|\s+)handoff-snapshot\b"
+    ),
+}
+
 
 def test_retired_whatsapp_and_handoff_runtime_residues_are_absent() -> None:
     findings: list[str] = []
@@ -63,19 +79,24 @@ def test_retired_whatsapp_and_handoff_runtime_residues_are_absent() -> None:
             ):
                 continue
             text = path.read_text(encoding="utf-8", errors="strict")
-            for token in _FORBIDDEN:
-                if token in text:
-                    findings.append(f"{path.relative_to(ROOT)}:{token}")
+            for label, pattern in _ACTIVE_RESIDUE_PATTERNS.items():
+                if pattern.search(text):
+                    findings.append(f"{path.relative_to(ROOT)}:{label}")
     assert findings == [], "retired runtime residue:\n" + "\n".join(findings)
 
 
 def test_only_canonical_whatsapp_frontend_api_surface_exists() -> None:
-    api = ROOT / "webapp" / "src" / "lib" / "whatsappApi.ts"
-    assert api.is_file()
-    source = api.read_text(encoding="utf-8")
-    assert "/api/admin/whatsapp/connections" in source
-    assert "/api/admin/whatsapp/embedded-signup" in source
-    assert "/native" not in source
+    legacy_api = ROOT / "webapp" / "src" / "lib" / "supportApi.ts"
+    canonical_api = ROOT / "webapp" / "src" / "lib" / "whatsappApi.ts"
+    assert canonical_api.is_file()
+    legacy_source = legacy_api.read_text(encoding="utf-8")
+    canonical_source = canonical_api.read_text(encoding="utf-8")
+    assert "WhatsAppNativeAccountStatus" not in legacy_source
+    assert "whatsappNativeStatus" not in legacy_source
+    assert "/api/admin/whatsapp/accounts" not in legacy_source
+    assert "/api/admin/whatsapp/connections" in canonical_source
+    assert "/api/admin/whatsapp/embedded-signup" in canonical_source
+    assert "/native" not in canonical_source
 
 
 def test_retired_files_are_physically_absent() -> None:
