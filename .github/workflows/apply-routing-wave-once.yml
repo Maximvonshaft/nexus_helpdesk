@@ -5,13 +5,13 @@ on:
     branches: [main]
     types: [synchronize]
     paths:
-      - scripts/maintenance/apply-routing-wave-once.py
+      - scripts/maintenance/apply_routing_wave_once.py
       - .github/workflows/apply-routing-wave-once.yml
   push:
     branches:
       - feat/whatsapp-dual-transport-production-final
     paths:
-      - scripts/maintenance/apply-routing-wave-once.py
+      - scripts/maintenance/apply_routing_wave_once.py
       - .github/workflows/apply-routing-wave-once.yml
 
 concurrency:
@@ -41,7 +41,7 @@ jobs:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Apply exact fail-closed patch
+      - name: Apply exact fail-closed patch and create local verification commit
         shell: bash
         run: |
           exec > >(tee /tmp/routing-wave-once.log) 2>&1
@@ -58,8 +58,26 @@ jobs:
           path.write_text(text.replace(old, new), encoding="utf-8")
           PY
           python scripts/maintenance/apply_routing_wave_once.py
-          mv .github/workflows/apply-routing-wave-once.yml /tmp/apply-routing-wave-once.yml
+          rm -f \
+            .github/workflows/apply-routing-wave-once.yml \
+            scripts/maintenance/apply_routing_wave_once.py \
+            artifacts/routing-wave-once-failure.txt
           git diff --check
+          git config user.name "nexus-routing-verifier"
+          git config user.email "nexus-routing-verifier@users.noreply.github.com"
+          git add -A \
+            .github/workflows/apply-routing-wave-once.yml \
+            scripts/maintenance/apply_routing_wave_once.py \
+            artifacts/routing-wave-once-failure.txt
+          git add \
+            .github/workflows/canonical-acceptance.yml \
+            backend \
+            deploy
+          git diff --cached --check
+          git commit -m "verification: scenario-governed handoff routing"
+          verified_head="$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain)"
+          printf 'VERIFIED_HEAD=%s\n' "$verified_head" >> "$GITHUB_ENV"
       - name: Verify routing authority and repository contracts
         shell: bash
         env:
@@ -71,10 +89,12 @@ jobs:
         run: |
           exec > >(tee -a /tmp/routing-wave-once.log) 2>&1
           set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$VERIFIED_HEAD"
+          test -z "$(git status --porcelain)"
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
           python -m compileall -q backend/app backend/tests scripts/release
           python scripts/verify_repository.py --static-only \
-            --expected-sha "$EXACT_HEAD" \
+            --expected-sha "$VERIFIED_HEAD" \
             --evidence-out /tmp/routing-wave-static.json
           python -m pytest -q \
             backend/tests/test_audit_838_r5_case_scenario_authority.py \
@@ -97,23 +117,27 @@ jobs:
           mkdir -p "$root/files"
           cp /tmp/routing-wave-once.log "$root/routing-wave-once.log" 2>/dev/null || true
           cp /tmp/routing-wave-static.json "$root/routing-wave-static.json" 2>/dev/null || true
-          git rev-parse HEAD > "$root/base-commit-sha.txt"
-          git rev-parse 'HEAD^{tree}' > "$root/base-tree-sha.txt"
-          git diff --binary -- .github/workflows/canonical-acceptance.yml backend deploy \
+          printf '%s\n' "$EXACT_HEAD" > "$root/base-commit-sha.txt"
+          git rev-parse "$EXACT_HEAD^{tree}" > "$root/base-tree-sha.txt"
+          verified_head="${VERIFIED_HEAD:-$(git rev-parse HEAD)}"
+          printf '%s\n' "$verified_head" > "$root/verified-commit-sha.txt"
+          git diff --binary "$EXACT_HEAD..$verified_head" -- \
+            .github/workflows/canonical-acceptance.yml backend deploy \
             > "$root/product.patch"
-          git diff --name-only --diff-filter=ACMRT -- \
+          git diff --name-only --diff-filter=ACMRT "$EXACT_HEAD..$verified_head" -- \
             .github/workflows/canonical-acceptance.yml backend deploy \
             | sort -u > "$root/product-files.txt"
-          git diff --name-only --diff-filter=D -- \
+          git diff --name-only --diff-filter=D "$EXACT_HEAD..$verified_head" -- \
             .github/workflows/canonical-acceptance.yml backend deploy \
             | sort -u > "$root/product-deleted-files.txt"
           while IFS= read -r path; do
             test -n "$path" || continue
             mkdir -p "$root/files/$(dirname "$path")"
-            cp "$path" "$root/files/$path"
+            git show "$verified_head:$path" > "$root/files/$path"
           done < "$root/product-files.txt"
           {
             printf 'exact_head=%s\n' "$EXACT_HEAD"
+            printf 'verified_head=%s\n' "$verified_head"
             printf 'product_file_count=%s\n' "$(wc -l < "$root/product-files.txt")"
             printf 'product_deleted_count=%s\n' "$(wc -l < "$root/product-deleted-files.txt")"
           } > "$root/manifest.txt"
