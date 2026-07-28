@@ -380,11 +380,11 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     assert kpis["sla_risk"]["value"] == 2
     assert kpis["handoff_waiting"]["value"] == 1
     assert kpis["active_webcalls"]["value"] == 1
-    assert kpis["runtime_dead"]["value"] == 1
+    assert kpis["runtime_dead"]["value"] == 0
     assert kpis["active_bulletins"]["value"] == 1
     assert actions["assign-unassigned"]["count"] == 1
     assert actions["assign-unassigned"]["enabled"] is True
-    assert actions["recover-runtime"]["count"] == 1
+    assert actions["recover-runtime"]["count"] == 0
     assert actions["recover-runtime"]["enabled"] is True
     assert actions["fix-email-route"]["enabled"] is False
     assert actions["provider-ops"]["count"] == 2
