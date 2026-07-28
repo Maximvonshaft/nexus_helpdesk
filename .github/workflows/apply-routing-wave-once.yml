@@ -10,10 +10,11 @@ on:
 
 concurrency:
   group: apply-routing-wave-once
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   apply:
@@ -34,6 +35,7 @@ jobs:
       - name: Apply exact fail-closed patch
         shell: bash
         run: |
+          exec > >(tee /tmp/routing-wave-once.log) 2>&1
           set -Eeuo pipefail
           test "$(git branch --show-current)" = "feat/whatsapp-dual-transport-production-final"
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
@@ -58,6 +60,7 @@ jobs:
           SEED_DEMO_DATA: 'false'
           ALLOW_DEV_AUTH: 'false'
         run: |
+          exec > >(tee -a /tmp/routing-wave-once.log) 2>&1
           set -Eeuo pipefail
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
           python -m compileall -q backend/app backend/tests scripts/release
@@ -78,6 +81,7 @@ jobs:
         env:
           EXPECTED_PARENT: ${{ github.sha }}
         run: |
+          exec > >(tee -a /tmp/routing-wave-once.log) 2>&1
           set -Eeuo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
           rm -f \
@@ -97,3 +101,27 @@ jobs:
           git diff --cached --check
           git commit -m "feat(routing): converge scenario-governed handoff authority"
           git push origin HEAD:feat/whatsapp-dual-transport-production-final
+      - name: Report bounded failure to audit ledger
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          tail -n 180 /tmp/routing-wave-once.log 2>/dev/null \
+            | sed -E 's/(TOKEN|SECRET|PASSWORD|API_KEY)=([^[:space:]]+)/\1=[REDACTED]/g' \
+            > /tmp/routing-wave-once-tail.txt || true
+          {
+            printf '%s\n' '<!-- nexus-routing-once-diagnostic -->'
+            printf '### R6 Routing one-time executor failed\n\n'
+            printf -- '- Exact Head: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Result: fail-closed; no generated product commit was pushed.\n\n'
+            printf '```text\n'
+            cat /tmp/routing-wave-once-tail.txt
+            printf '\n```\n'
+          } > /tmp/routing-wave-once-comment.md
+          gh api \
+            --method POST \
+            repos/Maximvonshaft/nexus_helpdesk/issues/838/comments \
+            -f body="$(cat /tmp/routing-wave-once-comment.md)"
