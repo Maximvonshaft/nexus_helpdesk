@@ -334,7 +334,7 @@ def test_admin_reply_to_whatsapp_inbox_queues_canonical_outbound(db_session):
     assert outbound.provider_status == "whatsapp_agent_reply_queued"
     assert outbound.created_by == agent.id
     assert outbound.max_retries == message_dispatch.settings.outbox_max_retries
-    assert outbound.provider_message_id == f"nexusdesk-outbound-{outbound.id}"
+    assert outbound.provider_message_id is None
 
     event = (
         db_session.query(TicketEvent)
@@ -593,7 +593,7 @@ def test_whatsapp_ai_reply_queues_canonical_outbound(db_session, monkeypatch):
         "Hi, I can help with the information available here."
     )
     assert outbound.max_retries == message_dispatch.settings.outbox_max_retries
-    assert outbound.provider_message_id == f"nexusdesk-outbound-{outbound.id}"
+    assert outbound.provider_message_id is None
 
 
 def test_whatsapp_job_uses_fast_ai_runtime_for_reply(db_session, monkeypatch):
