@@ -537,6 +537,16 @@ def _eligible_text_request_for_agent(
     _core.WebchatConversation,
     _core.ConversationControl,
 ] | None:
+    declined_exists = (
+        db.query(_core.WebchatHandoffDecision.id)
+        .filter(
+            _core.WebchatHandoffDecision.request_id
+            == _core.WebchatHandoffRequest.id,
+            _core.WebchatHandoffDecision.actor_id == user.id,
+            _core.WebchatHandoffDecision.decision == "declined",
+        )
+        .exists()
+    )
     voice_exists = (
         db.query(_core.WebchatVoiceSession.id)
         .filter(
@@ -568,6 +578,7 @@ def _eligible_text_request_for_agent(
             _core.WebchatHandoffRequest.status == "requested",
             _core.WebchatConversation.status == "open",
             _core.ConversationControl.country_code.is_not(None),
+            ~declined_exists,
             ~voice_exists,
         )
         .order_by(
