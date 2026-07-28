@@ -114,10 +114,11 @@ def test_deployment_templates_prevent_parallel_topology_drift():
         "worker-outbound-controlled",
         "worker-background-controlled",
         "worker-webchat-ai-controlled",
-        "worker-handoff-snapshot-controlled",
     ):
         assert service in controlled
         assert service not in local_db
+    assert "worker-handoff-snapshot-controlled" not in controlled
+    assert "--queue\n      - handoff-snapshot" not in controlled
     assert "postgres-controlled:" in local_db
     assert "sync-daemon" not in controlled
     assert "event-daemon" not in controlled
