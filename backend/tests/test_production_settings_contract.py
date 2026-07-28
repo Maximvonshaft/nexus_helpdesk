@@ -27,6 +27,7 @@ def production_env(**overrides: str) -> dict[str, str]:
     key_name = "SECRET" + "_KEY"
     env = {
         "APP_ENV": "production",
+        "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
         "NEXUS_PROCESS_ROLE": "web",
         key_name: "ci-value-for-production-settings-contract",
         "DATABASE_URL": (
