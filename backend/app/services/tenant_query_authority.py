@@ -95,7 +95,18 @@ class ActorTenantQueryScope:
         )
 
     def operator_tasks(self, db: Session) -> Query:
-        return self.query(db, OperatorTask)
+        """Return Tenant-scoped tasks with the optional Ticket relation available.
+
+        Operator tasks may be ticketless, so this is deliberately a LEFT JOIN.
+        Centralizing the relation prevents downstream Team/Assignee filters from
+        adding an uncorrelated ``tickets`` table and multiplying task counts.
+        """
+
+        return (
+            db.query(OperatorTask)
+            .outerjoin(Ticket, Ticket.id == OperatorTask.ticket_id)
+            .filter(self.model_predicate(OperatorTask))
+        )
 
     def background_jobs(
         self,
