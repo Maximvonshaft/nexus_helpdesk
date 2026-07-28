@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   phoneJidFromAccountSnapshot,
@@ -52,4 +53,15 @@ test("projects fromMe self-test inbound to the account phone JID", () => {
     (projected.raw_message as any).nexus_self_test_original_chat_jid,
     "174488096354391@lid"
   );
+});
+
+test("persists media retrieval before publishing the inbound callback", () => {
+  const source = readFileSync(new URL("./baileysClient.ts", import.meta.url), "utf8");
+  const enqueue = source.indexOf("this.mediaDownloads.enqueue({");
+  const callback = source.indexOf("await this.onInbound(projected);");
+  assert.ok(enqueue >= 0, "durable media download enqueue must exist");
+  assert.ok(callback > enqueue, "media download work must be durable before inbound callback");
+  assert.equal(source.includes("baileys_media_download_failed\"\n      );\n      return;"), false);
+  assert.ok(source.includes("void this.drainMediaDownloads(account);"));
+  assert.ok(source.includes("this.mediaRetryTimer = setInterval"));
 });
