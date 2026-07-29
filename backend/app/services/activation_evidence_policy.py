@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .activation_runtime_configuration import (
+    activation_runtime_configuration_digest,
+)
+
 _PROFILE_VALUES = {"controlled", "provider_canary", "full"}
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -93,13 +97,22 @@ def _candidate_binding(
     evidence_image_digest = str(
         environment.get("ACTIVATION_EVIDENCE_IMAGE_DIGEST") or ""
     ).strip().lower()
-    configuration_digest = str(
+    declared_configuration_digest = str(
         environment.get("ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST") or ""
     ).strip().lower()
     environment_id = str(
         environment.get("ACTIVATION_EVIDENCE_ENVIRONMENT_ID") or ""
     ).strip()
     reason_codes: list[str] = []
+
+    runtime_configuration_digest: str | None = None
+    try:
+        runtime_configuration_digest = activation_runtime_configuration_digest(
+            profile=profile,
+            environment=environment,
+        )
+    except ValueError as exc:
+        reason_codes.append(str(exc))
 
     if not _SHA40.fullmatch(source_sha):
         reason_codes.append("activation_candidate_source_sha_invalid")
@@ -122,11 +135,16 @@ def _candidate_binding(
         "runtime_image_digest": image_digest,
     }
     if require_signed_manifest:
-        if not _SHA256.fullmatch(configuration_digest):
+        if not _SHA256.fullmatch(declared_configuration_digest):
             reason_codes.append("activation_evidence_configuration_digest_invalid")
+        elif (
+            runtime_configuration_digest is not None
+            and declared_configuration_digest != runtime_configuration_digest
+        ):
+            reason_codes.append("activation_evidence_configuration_digest_mismatch")
         if not _ENVIRONMENT_ID.fullmatch(environment_id):
             reason_codes.append("activation_evidence_environment_id_invalid")
-        candidate["configuration_digest"] = configuration_digest or None
+        candidate["configuration_digest"] = runtime_configuration_digest
         candidate["environment_id"] = environment_id or None
 
     return candidate, reason_codes
