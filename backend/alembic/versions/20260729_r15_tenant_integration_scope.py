@@ -68,8 +68,49 @@ def _duplicate_exists(bind, statement: str) -> bool:
     return bind.execute(sa.text(statement)).first() is not None
 
 
+def _assert_no_casefold_reference_collisions(bind) -> None:
+    """Reject incompatible legacy data before any schema or data mutation."""
+
+    conflicts = {
+        "teams.tenant_name": (
+            "SELECT tenant_id, lower(name) FROM teams "
+            "WHERE tenant_id IS NOT NULL "
+            "GROUP BY tenant_id, lower(name) HAVING count(*) > 1 LIMIT 1"
+        ),
+        "teams.shadow_name": (
+            "SELECT lower(name) FROM teams WHERE tenant_id IS NULL "
+            "GROUP BY lower(name) HAVING count(*) > 1 LIMIT 1"
+        ),
+        "markets.tenant_code": (
+            "SELECT tenant_id, lower(code) FROM markets "
+            "WHERE tenant_id IS NOT NULL "
+            "GROUP BY tenant_id, lower(code) HAVING count(*) > 1 LIMIT 1"
+        ),
+        "markets.shadow_code": (
+            "SELECT lower(code) FROM markets WHERE tenant_id IS NULL "
+            "GROUP BY lower(code) HAVING count(*) > 1 LIMIT 1"
+        ),
+        "markets.tenant_name": (
+            "SELECT tenant_id, lower(name) FROM markets "
+            "WHERE tenant_id IS NOT NULL "
+            "GROUP BY tenant_id, lower(name) HAVING count(*) > 1 LIMIT 1"
+        ),
+        "markets.shadow_name": (
+            "SELECT lower(name) FROM markets WHERE tenant_id IS NULL "
+            "GROUP BY lower(name) HAVING count(*) > 1 LIMIT 1"
+        ),
+    }
+    blocked = [key for key, sql in conflicts.items() if _duplicate_exists(bind, sql)]
+    if blocked:
+        raise RuntimeError(
+            "r15_tenant_reference_uniqueness_upgrade_blocked:"
+            + ",".join(blocked)
+        )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+    _assert_no_casefold_reference_collisions(bind)
 
     op.create_table(
         "integration_client_scopes",
