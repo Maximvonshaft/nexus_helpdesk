@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
+import time
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from io import BytesIO
@@ -35,6 +36,8 @@ _DOCX_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _XLSX_NAMESPACE = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _LABEL_RE = re.compile(r"^\s*([^:：]{1,32})\s*[:：]\s*(.+?)\s*$")
 _CH_WAYBILL_RE = re.compile(r"\bCH\b|CH\s*(?:开头|prefix|starts?)", re.I)
+PDF_MAX_PAGES = 250
+PDF_EXTRACTION_TIMEOUT_SECONDS = 8.0
 
 
 @dataclass(frozen=True)
@@ -272,9 +275,35 @@ def _extract_pdf_text(content: bytes) -> str:
     except ImportError as exc:
         raise HTTPException(status_code=503, detail="PDF text extraction dependency is not installed") from exc
 
+    limits = archive_limits_for_upload(get_settings().max_upload_bytes)
+    started = time.monotonic()
     try:
-        reader = PdfReader(BytesIO(content))
-        return "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
+        reader = PdfReader(BytesIO(content), strict=False)
+        if getattr(reader, "is_encrypted", False):
+            raise HTTPException(status_code=400, detail="Encrypted Knowledge PDF documents are not supported")
+        page_count = len(reader.pages)
+        if page_count <= 0:
+            return ""
+        if page_count > PDF_MAX_PAGES:
+            raise HTTPException(status_code=400, detail="Knowledge PDF exceeds the page extraction budget")
+
+        extracted: list[str] = []
+        total_chars = 0
+        for page in reader.pages:
+            if time.monotonic() - started > PDF_EXTRACTION_TIMEOUT_SECONDS:
+                raise HTTPException(status_code=408, detail="Knowledge PDF extraction exceeded the time budget")
+            page_text = (page.extract_text() or "").strip()
+            if not page_text:
+                continue
+            total_chars += len(page_text)
+            if total_chars > limits.max_extracted_text_chars:
+                raise HTTPException(status_code=400, detail="Knowledge document text exceeds the extraction budget")
+            extracted.append(page_text)
+        return enforce_extracted_text_budget("\n\n".join(extracted).strip(), limits=limits)
+    except HTTPException:
+        raise
+    except (MemoryError, RecursionError, OverflowError) as exc:
+        raise HTTPException(status_code=400, detail="Knowledge PDF exceeds the safe parsing budget") from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Unable to extract text from PDF knowledge document") from exc
 
