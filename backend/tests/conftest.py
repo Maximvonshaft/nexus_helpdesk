@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import Base
 from app.models import Market, Tenant
+from app.operator_models import OperatorQueueScopeGrant
 from app.settings import get_settings
 from app.services import background_job_execution_scope, background_jobs
 from app.services.whatsapp_embedded_signup_settings import (
@@ -171,6 +172,7 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
 
     cache_key = f"nexus.test.tenant:{tenant_key}"
     market_cache_key = f"{cache_key}:default-market"
+    pending_handoff_users_key = f"{cache_key}:pending-handoff-users"
 
     def ensure_market(session: Session, tenant_id: int) -> Market:
         market = session.info.get(market_cache_key)
@@ -208,7 +210,8 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 tenant_id = int(result.inserted_primary_key[0])
             session.info[cache_key] = int(tenant_id)
 
-        for row in tuple(session.new) + tuple(session.dirty):
+        new_rows = tuple(session.new)
+        for row in new_rows + tuple(session.dirty):
             model_name = row.__class__.__name__
             if model_name in _TENANT_IDENTITY_MODELS:
                 if getattr(row, "tenant_id", None) is None:
@@ -252,6 +255,16 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
             ):
                 row.case_type = "tracking_status_inquiry"
 
+            # Queue grants need a persisted User id. Record only newly-created
+            # legacy Handoff users and insert their exact selected-Scenario scopes
+            # in after_flush_postexec, inside the same test transaction.
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "User"
+                and row in new_rows
+            ):
+                session.info.setdefault(pending_handoff_users_key, []).append(row)
+
             # Historical WebCall tests create Ticket and scope rows directly
             # instead of using production factories. Their fixture vocabulary is
             # normalized to the same published Scenario and exact Queue contract;
@@ -270,11 +283,37 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 ):
                     row.queue_key = "customer_support"
 
+    def after_flush_postexec(session: Session, _flush_context) -> None:
+        pending = session.info.pop(pending_handoff_users_key, [])
+        values = []
+        for user in pending:
+            if user.id is None:
+                continue
+            for channel_key in ("website", "whatsapp"):
+                values.append(
+                    {
+                        "user_id": int(user.id),
+                        "tenant_key": tenant_key,
+                        "country_code": "ZZ",
+                        "channel_key": channel_key,
+                        "queue_key": "customer_support",
+                        "enabled": True,
+                        "granted_by": int(user.id),
+                    }
+                )
+        if values:
+            session.connection().execute(
+                insert(OperatorQueueScopeGrant.__table__),
+                values,
+            )
+
     event.listen(Session, "before_flush", before_flush)
+    event.listen(Session, "after_flush_postexec", after_flush_postexec)
     try:
         yield
     finally:
         event.remove(Session, "before_flush", before_flush)
+        event.remove(Session, "after_flush_postexec", after_flush_postexec)
 
 
 @pytest.fixture(autouse=True)
