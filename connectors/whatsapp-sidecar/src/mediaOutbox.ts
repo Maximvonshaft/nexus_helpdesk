@@ -133,11 +133,16 @@ export class DurableMediaOutbox {
   ): Promise<{ delivered: number; pending: number }> {
     const files = readdirSync(this.root)
       .filter((name) => name.endsWith(".media"))
-      .sort()
-      .slice(0, Math.max(1, Math.min(limit, 100)));
+      .sort();
+    const batchLimit = Math.max(1, Math.min(limit, 100));
+    let selectedDue = 0;
     let delivered = 0;
     let pending = 0;
     for (const file of files) {
+      if (selectedDue >= batchLimit) {
+        pending += 1;
+        continue;
+      }
       const path = resolve(join(this.root, file));
       let envelope: InboundMediaEnvelope;
       try {
@@ -157,6 +162,7 @@ export class DurableMediaOutbox {
         pending += 1;
         continue;
       }
+      selectedDue += 1;
       try {
         await sender(envelope);
         rmSync(path, { force: true });

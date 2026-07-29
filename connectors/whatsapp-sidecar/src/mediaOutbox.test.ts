@@ -63,3 +63,39 @@ test("retains encrypted media bytes after retry exhaustion and later recovers", 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("fills the batch with due uploads instead of starving behind future retries", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-media-outbox-due-selection-"));
+  const secret = "media-outbox-secret-" + "y".repeat(48);
+  const now = Date.parse("2026-07-29T00:00:00Z");
+  try {
+    const outbox = new DurableMediaOutbox(root, logger, secret, () => now);
+    for (let index = 0; index < 21; index += 1) {
+      outbox.enqueue({
+        accountId: "wa-main",
+        externalMessageId: `message-${index.toString().padStart(2, "0")}`,
+        mediaKind: "document",
+        mediaType: "application/pdf",
+        fileName: `proof-${index}.pdf`,
+        content: Buffer.from(`bytes-${index}`, "utf8")
+      });
+    }
+
+    const first = await outbox.drain(async () => {
+      throw new Error("backend unavailable");
+    }, 20);
+    assert.equal(first.delivered, 0);
+    assert.equal(first.pending, 21);
+
+    const delivered: string[] = [];
+    const second = await outbox.drain(async (envelope) => {
+      delivered.push(envelope.external_message_id);
+    }, 20);
+    assert.equal(second.delivered, 1);
+    assert.equal(second.pending, 20);
+    assert.equal(delivered.length, 1);
+    assert.equal(outbox.count(), 20);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
