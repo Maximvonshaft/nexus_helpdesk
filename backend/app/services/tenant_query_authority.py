@@ -26,6 +26,26 @@ class TenantQueryScopeError(RuntimeError):
     pass
 
 
+class TenantOperatorTaskQuery(Query):
+    """OperatorTask Query whose canonical Ticket relation is idempotent.
+
+    The Tenant Query Authority owns the single LEFT JOIN needed by ticket-backed
+    and ticketless tasks. Legacy consumers may still request the same join while
+    they are being converged; this subclass absorbs only that exact duplicate and
+    delegates every other join to SQLAlchemy unchanged.
+    """
+
+    _nexus_ticket_joined: bool = False
+
+    def outerjoin(self, target, *props, **kwargs):  # noqa: ANN001
+        if target is Ticket and self._nexus_ticket_joined:
+            return self
+        query = super().outerjoin(target, *props, **kwargs)
+        if target is Ticket:
+            query._nexus_ticket_joined = True
+        return query
+
+
 @dataclass(frozen=True)
 class ActorTenantQueryScope:
     """The only Tenant boundary for actor-facing read models.
@@ -95,18 +115,17 @@ class ActorTenantQueryScope:
         )
 
     def operator_tasks(self, db: Session) -> Query:
-        """Return Tenant-scoped tasks with the optional Ticket relation available.
+        """Return Tenant-scoped tasks with one optional Ticket relation.
 
         Operator tasks may be ticketless, so this is deliberately a LEFT JOIN.
-        Centralizing the relation prevents downstream Team/Assignee filters from
-        adding an uncorrelated ``tickets`` table and multiplying task counts.
+        The specialized Query makes the exact relation idempotent, preventing a
+        downstream bounded-visibility filter from generating a second same-name
+        ``tickets`` join while preserving the historical public method contract.
         """
 
-        return (
-            db.query(OperatorTask)
-            .outerjoin(Ticket, Ticket.id == OperatorTask.ticket_id)
-            .filter(self.model_predicate(OperatorTask))
-        )
+        query = TenantOperatorTaskQuery([OperatorTask], session=db)
+        query = query.outerjoin(Ticket, Ticket.id == OperatorTask.ticket_id)
+        return query.filter(self.model_predicate(OperatorTask))
 
     def background_jobs(
         self,
@@ -165,6 +184,7 @@ def actor_tenant_query_scope(
 
 __all__ = [
     "ActorTenantQueryScope",
+    "TenantOperatorTaskQuery",
     "TenantQueryScopeError",
     "actor_tenant_query_scope",
 ]
