@@ -153,6 +153,7 @@ def test_integration_business_failure_rolls_back(monkeypatch):
     client = SimpleNamespace(
         client_id=1,
         is_legacy=False,
+        is_platform=False,
         scopes=frozenset({"task.write"}),
         scope_type="tenant",
         tenant_id=1,
