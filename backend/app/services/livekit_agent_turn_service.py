@@ -42,7 +42,10 @@ def _session_context(
         or session.status not in ACTIVE_AGENT_STATUSES
         or session.ended_at is not None
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid LiveKit Agent session")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="invalid LiveKit Agent session",
+        )
     return conversation, session
 
 
@@ -56,19 +59,25 @@ def _record_segment(
     text: str,
     language: str | None,
 ) -> None:
-    if session.transcript_status != "active":
+    if session.transcript_status not in {"authorized", "start_requested", "active"}:
         return
     exists = (
         db.query(WebchatVoiceTranscriptSegment.id)
         .filter(
             WebchatVoiceTranscriptSegment.voice_session_id == session.id,
             WebchatVoiceTranscriptSegment.segment_id == segment_id,
-            WebchatVoiceTranscriptSegment.participant_identity == participant_identity,
+            WebchatVoiceTranscriptSegment.participant_identity
+            == participant_identity,
         )
         .first()
     )
     if exists:
         return
+    # A verified final Provider segment is the first evidence that transcript
+    # persistence is actually active. Authorization alone never sets this state.
+    if session.transcript_status != "active":
+        session.transcript_status = "active"
+        session.updated_at = utc_now()
     db.add(
         WebchatVoiceTranscriptSegment(
             voice_session_id=session.id,
@@ -79,7 +88,9 @@ def _record_segment(
             provider_item_id=segment_id,
             participant_identity=participant_identity,
             speaker_type=speaker_type,
-            speaker_label="Customer" if speaker_type == "visitor" else AI_AUTHOR_LABEL,
+            speaker_label=(
+                "Customer" if speaker_type == "visitor" else AI_AUTHOR_LABEL
+            ),
             segment_id=segment_id,
             language=language,
             is_final=True,
@@ -131,9 +142,12 @@ def process_livekit_agent_turn(
         )
         return {
             "ok": bool(existing_reply),
-            "reply": (existing_reply.body_text or existing_reply.body) if existing_reply else None,
+            "reply": (
+                existing_reply.body_text or existing_reply.body
+            ) if existing_reply else None,
             "idempotent": True,
-            "handoff_requested": conversation.handoff_status in {"requested", "accepted"},
+            "handoff_requested": conversation.handoff_status
+            in {"requested", "accepted"},
         }
 
     message_result = add_visitor_message_to_conversation(
@@ -144,7 +158,10 @@ def process_livekit_agent_turn(
         message_type="voice_transcript",
         origin="livekit_agent",
     )
-    visitor_message = db.get(WebchatMessage, int(message_result["message"]["id"]))
+    visitor_message = db.get(
+        WebchatMessage,
+        int(message_result["message"]["id"]),
+    )
     if visitor_message is None:
         raise RuntimeError("LiveKit Agent visitor message was not persisted")
     _record_segment(
@@ -152,7 +169,11 @@ def process_livekit_agent_turn(
         session=voice_session,
         segment_id=f"{turn_id}:visitor",
         speaker_type="visitor",
-        participant_identity=participant_identity or voice_session.provider_call_id or "customer",
+        participant_identity=(
+            participant_identity
+            or voice_session.provider_call_id
+            or "customer"
+        ),
         text=transcript,
         language=stt_language,
     )
@@ -185,7 +206,11 @@ def process_livekit_agent_turn(
         ticket_id=conversation.ticket_id,
         visitor_message_id=visitor_message.id,
     )
-    reply = db.get(WebchatMessage, int(result["message_id"])) if result.get("message_id") else None
+    reply = (
+        db.get(WebchatMessage, int(result["message_id"]))
+        if result.get("message_id")
+        else None
+    )
     history = (
         db.query(WebchatMessage.body)
         .filter(
@@ -198,7 +223,9 @@ def process_livekit_agent_turn(
     )
     language = resolve_conversation_language(
         transcript,
-        previous_customer_messages=[row[0] for row in reversed(history) if row[0] != transcript],
+        previous_customer_messages=[
+            row[0] for row in reversed(history) if row[0] != transcript
+        ],
     ).language
     if reply is not None:
         reply.message_type = "voice_transcript"
@@ -225,7 +252,8 @@ def process_livekit_agent_turn(
         "reply_source": result.get("reply_source"),
         "language": language,
         "status": result.get("status") or ("done" if reply else "null_reply"),
-        "handoff_requested": conversation.handoff_status in {"requested", "accepted"},
+        "handoff_requested": conversation.handoff_status
+        in {"requested", "accepted"},
         "active_agent_id": conversation.active_agent_id,
         "idempotent": False,
     }
