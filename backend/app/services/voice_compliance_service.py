@@ -240,6 +240,74 @@ def record_evidence(
     return row
 
 
+def _required_state(policy: str) -> str:
+    if policy == "disabled":
+        return "disabled"
+    if policy == "notice":
+        return "notice_required"
+    return "consent_required"
+
+
+def _set_capability_state(
+    session: WebchatVoiceSession,
+    *,
+    capability: str,
+    state: str,
+) -> None:
+    if capability == "recording":
+        session.recording_status = state
+    elif capability == "transcript_persistence":
+        session.transcript_status = state
+    else:
+        raise ValueError("voice_compliance_capability_invalid")
+    session.updated_at = utc_now()
+
+
+def mark_capability_start_requested(
+    session: WebchatVoiceSession,
+    *,
+    capability: str,
+) -> None:
+    _set_capability_state(
+        session,
+        capability=capability,
+        state="start_requested",
+    )
+
+
+def mark_capability_active(
+    session: WebchatVoiceSession,
+    *,
+    capability: str,
+) -> None:
+    _set_capability_state(session, capability=capability, state="active")
+
+
+def mark_capability_stop_requested(
+    session: WebchatVoiceSession,
+    *,
+    capability: str,
+) -> None:
+    _set_capability_state(
+        session,
+        capability=capability,
+        state="stop_requested",
+    )
+
+
+def mark_capability_terminal(
+    session: WebchatVoiceSession,
+    *,
+    capability: str,
+    succeeded: bool,
+) -> None:
+    _set_capability_state(
+        session,
+        capability=capability,
+        state="completed" if succeeded else "failed",
+    )
+
+
 def apply_session_compliance_state(
     db: Session,
     *,
@@ -247,6 +315,13 @@ def apply_session_compliance_state(
     recording_policy: str,
     transcription_policy: str,
 ) -> None:
+    """Project authorization without claiming Provider execution.
+
+    Notice or consent evidence moves a capability only to ``authorized``. A
+    command/request then moves it to ``start_requested`` and an actual Provider
+    event or persisted transcript segment is required before ``active``.
+    """
+
     recording_allowed = capability_authorized(
         db,
         session=session,
@@ -260,30 +335,10 @@ def apply_session_compliance_state(
         policy=transcription_policy,
     )
     session.recording_status = (
-        "requested"
-        if recording_allowed
-        else (
-            "disabled"
-            if recording_policy == "disabled"
-            else (
-                "notice_required"
-                if recording_policy == "notice"
-                else "consent_required"
-            )
-        )
+        "authorized" if recording_allowed else _required_state(recording_policy)
     )
     session.transcript_status = (
-        "active"
-        if transcript_allowed
-        else (
-            "disabled"
-            if transcription_policy == "disabled"
-            else (
-                "notice_required"
-                if transcription_policy == "notice"
-                else "consent_required"
-            )
-        )
+        "authorized" if transcript_allowed else _required_state(transcription_policy)
     )
     session.updated_at = utc_now()
     db.flush()
@@ -301,3 +356,22 @@ def evidence_projection(row: VoiceComplianceEvidence) -> dict[str, Any]:
         "confirmation_id": row.confirmation_public_id,
         "evidence_at": row.evidence_at.isoformat() if row.evidence_at else None,
     }
+
+
+__all__ = [
+    "POLICY_VERSION",
+    "VoiceComplianceEvidenceError",
+    "apply_session_compliance_state",
+    "capability_authorized",
+    "evidence_projection",
+    "expected_authorizing_decision",
+    "latest_evidence",
+    "mark_capability_active",
+    "mark_capability_start_requested",
+    "mark_capability_stop_requested",
+    "mark_capability_terminal",
+    "participant_identity_hash",
+    "policy_bundle",
+    "policy_prompt",
+    "record_evidence",
+]
