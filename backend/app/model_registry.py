@@ -152,7 +152,7 @@ def validate_model_registry() -> tuple[str, ...]:
 
 
 def register_all_models() -> tuple[str, ...]:
-    """Import every required model family and every explicitly enabled plugin."""
+    """Import every required model family and install metadata invariants."""
 
     modules = validate_model_registry()
     imported: list[str] = []
@@ -166,4 +166,13 @@ def register_all_models() -> tuple[str, ...]:
                 f"missing module or dependency {missing_name!r}"
             ) from exc
         imported.append(module_name)
+
+    try:
+        from app.tenant_reference_schema import install_tenant_reference_schema
+
+        install_tenant_reference_schema()
+    except Exception as exc:
+        raise ModelRegistryError(
+            f"failed to install Tenant reference schema: {type(exc).__name__}"
+        ) from exc
     return tuple(imported)
