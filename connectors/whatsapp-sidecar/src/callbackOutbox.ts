@@ -25,7 +25,7 @@ const STORED_SCHEMA = "nexus.whatsapp.callback.encrypted.v1";
 const ENVELOPE_SCHEMA = "nexus.whatsapp.callback.v1";
 const MAX_CALLBACK_FILE_BYTES = 256 * 1024;
 const MAX_CALLBACK_ATTEMPTS = 20;
-const EXHAUSTED_INBOUND_RETRY_MS = 60 * 60 * 1000;
+const EXHAUSTED_AUTHORITY_RETRY_MS = 60 * 60 * 1000;
 
 export type CallbackKind = "inbound" | "status" | "delivery";
 
@@ -178,9 +178,9 @@ export class DurableCallbackOutbox {
           continue;
         }
         if (envelope.attempts >= MAX_CALLBACK_ATTEMPTS) {
-          if (envelope.kind === "inbound") {
+          if (envelope.kind === "inbound" || envelope.kind === "status") {
             envelope.attempts = MAX_CALLBACK_ATTEMPTS;
-            envelope.next_attempt_at = this.now() + EXHAUSTED_INBOUND_RETRY_MS;
+            envelope.next_attempt_at = this.now() + EXHAUSTED_AUTHORITY_RETRY_MS;
             this.write(envelope);
             pending += 1;
             this.logger.error(
