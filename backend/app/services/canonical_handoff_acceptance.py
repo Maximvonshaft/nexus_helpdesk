@@ -7,6 +7,9 @@ from ..models import Ticket, User
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from . import agent_routing_service
 from . import webchat_handoff_service
+from .handoff_convergence_authority import install_handoff_convergence
+
+install_handoff_convergence(agent_routing_service)
 
 
 def accept_handoff_request(
@@ -77,7 +80,6 @@ def accept_handoff_request(
     if note:
         request_row.decision_note = " ".join(str(note).strip().split())[:1000] or None
     db.flush()
-    # The canonical assignment result is already the public Handoff projection.
     return result
 
 
