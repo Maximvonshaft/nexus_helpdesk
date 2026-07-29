@@ -256,6 +256,7 @@ def complete_embedded_signup_session(
 
     intent = _intent(payload)
     resume_access_token: str | None = None
+    claim_acquired = False
     try:
         with managed_session(db):
             _signup_session(
@@ -286,6 +287,7 @@ def complete_embedded_signup_session(
                 phone_number_id=payload.phone_number_id,
             )
             db.flush()
+        claim_acquired = True
         assets = exchange_and_validate_signup(
             code=payload.code,
             business_account_id=payload.business_account_id,
@@ -294,27 +296,31 @@ def complete_embedded_signup_session(
             access_token=resume_access_token,
         )
     except EmbeddedSignupError as exc:
-        with managed_session(db):
-            signup = _signup_session(
-                db,
-                session_id=session_id,
-                tenant_id=tenant_id,
-                requested_by=current_user.id,
-                for_update=True,
-            )
-            if signup is not None and signup.status == "exchanging":
-                if exc.retryable:
-                    if exc.resume_access_token:
-                        persist_signup_exchange_checkpoint(
+        if claim_acquired:
+            with managed_session(db):
+                signup = _signup_session(
+                    db,
+                    session_id=session_id,
+                    tenant_id=tenant_id,
+                    requested_by=current_user.id,
+                    for_update=True,
+                )
+                if signup is not None and signup.status == "exchanging":
+                    if exc.retryable:
+                        if exc.resume_access_token:
+                            persist_signup_exchange_checkpoint(
+                                db,
+                                session=signup,
+                                access_token=exc.resume_access_token,
+                            )
+                        _restore_retryable_signup(signup, code=exc.code)
+                    else:
+                        clear_signup_exchange_checkpoint(
                             db,
-                            session=signup,
-                            access_token=exc.resume_access_token,
+                            session_id=signup.id,
                         )
-                    _restore_retryable_signup(signup, code=exc.code)
-                else:
-                    clear_signup_exchange_checkpoint(db, session_id=signup.id)
-                    mark_signup_failed(signup, code=exc.code)
-                db.flush()
+                        mark_signup_failed(signup, code=exc.code)
+                    db.flush()
         raise _http_error(exc) from exc
 
     settings = get_whatsapp_embedded_signup_settings()
