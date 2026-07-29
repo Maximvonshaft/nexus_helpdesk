@@ -17,12 +17,15 @@ from ..models import SpeedafAddressUpdateIdempotency, Ticket, TicketEvent
 from ..settings import get_settings
 from ..services.admin_action_rate_limit import enforce_admin_action_rate_limit
 from ..services.background_jobs import enqueue_speedaf_address_update_job, enqueue_speedaf_work_order_create_job
+from ..services.data_subject_action_service import DataProcessingRestricted
 from ..services.permissions import (
-    CAP_SPEEDAF_ADDRESS_UPDATE_WRITE,
-    CAP_SPEEDAF_WORK_ORDER_WRITE,
     ensure_can_create_speedaf_work_order,
     ensure_can_update_speedaf_address,
     ensure_ticket_visible,
+)
+from ..services.processing_purpose_enforcement import (
+    PURPOSE_PROVIDER_TOOL_EXECUTION,
+    ensure_ticket_processing_allowed_fresh,
 )
 from ..services.speedaf.adapter import SpeedafCoreAdapter
 from ..services.speedaf.redactor import safe_caller_payload, safe_waybill_payload
@@ -162,6 +165,45 @@ def _reserve_address_update(db: Session, *, dedupe_key: str, ticket_id: int, way
         ) from exc
 
 
+def _require_speedaf_provider_processing(
+    db: Session,
+    *,
+    ticket_id: int,
+    actor_id: int,
+) -> None:
+    """Re-read the latest committed restriction immediately before network I/O."""
+
+    try:
+        ensure_ticket_processing_allowed_fresh(
+            ticket_id=ticket_id,
+            purpose=PURPOSE_PROVIDER_TOOL_EXECUTION,
+        )
+    except DataProcessingRestricted as exc:
+        _append_event(
+            db,
+            ticket_id=ticket_id,
+            actor_id=actor_id,
+            field_name="speedaf_waybill_lookup",
+            new_value="blocked",
+            note="Speedaf lookup blocked by active data-processing restriction.",
+            payload={
+                "blocked": True,
+                "reason_code": "data_processing_restricted",
+                "purpose": PURPOSE_PROVIDER_TOOL_EXECUTION,
+                "restriction_id": exc.restriction_id,
+                "contains_customer_data": False,
+            },
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "data_processing_restricted",
+                "purpose": PURPOSE_PROVIDER_TOOL_EXECUTION,
+            },
+        ) from exc
+
+
 @router.post("/{ticket_id}/speedaf/waybills/query", response_model=SpeedafWaybillLookupResponse)
 def query_speedaf_waybills(ticket_id: int, payload: SpeedafWaybillLookupRequest, request: Request, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
     _require_feature("SPEEDAF_MCP_ENABLED", "speedaf_mcp_disabled")
@@ -169,6 +211,11 @@ def query_speedaf_waybills(ticket_id: int, payload: SpeedafWaybillLookupRequest,
     _load_visible_ticket(db, ticket_id=ticket_id, user=current_user)
     caller = _clean(payload.callerID, limit=80)
     country = _clean(payload.countryCode, limit=8).upper() or "CH"
+    _require_speedaf_provider_processing(
+        db,
+        ticket_id=ticket_id,
+        actor_id=current_user.id,
+    )
     result = SpeedafCoreAdapter().query_waybills_by_caller(caller_id=caller, country_code=country)
     if not result.ok:
         return SpeedafWaybillLookupResponse(
