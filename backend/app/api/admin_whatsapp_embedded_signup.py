@@ -85,11 +85,16 @@ def _intent(payload) -> EmbeddedSignupAccountIntent:
 
 
 def _http_error(exc: EmbeddedSignupError) -> HTTPException:
+    conflict_codes = {"embedded_signup_exchange_in_progress"}
     return HTTPException(
         status_code=(
-            status.HTTP_503_SERVICE_UNAVAILABLE
-            if exc.retryable
-            else status.HTTP_409_CONFLICT
+            status.HTTP_409_CONFLICT
+            if exc.code in conflict_codes
+            else (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if exc.retryable
+                else status.HTTP_409_CONFLICT
+            )
         ),
         detail={
             "error_code": exc.code,
