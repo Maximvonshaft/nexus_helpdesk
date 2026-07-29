@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -34,12 +35,16 @@ LOCAL_HOSTS = {
     "postgres-controlled",
     "db",
 }
-POSTGRES_TESTS = (
-    "backend/tests/test_support_conversations_postgres.py",
+POSTGRES_REQUIRED_MARKERS = (
+    "requires PostgreSQL DATABASE_URL",
+    "DATABASE_URL.startswith(\"postgresql\")",
+    "DATABASE_URL.startswith('postgresql')",
+    "dialect.name.startswith(\"postgresql\")",
+)
+POSTGRES_ALWAYS_REQUIRED = {
     "backend/tests/test_support_conversation_privacy.py",
     "backend/tests/test_support_sensitive_access.py",
-    "backend/tests/resilience/test_postgres_worker_recovery.py",
-)
+}
 FAIL_CLOSED_ENV = {
     "APP_ENV": "test",
     "AUTO_INIT_DB": "false",
@@ -102,6 +107,23 @@ def _validate_database_url(database_url: str, *, allow_remote: bool) -> None:
         raise ValueError("remote_database_requires_explicit_confirmation")
 
 
+def discover_postgres_tests() -> tuple[str, ...]:
+    """Discover every repository pytest module that declares PostgreSQL behavior."""
+
+    discovered = set(POSTGRES_ALWAYS_REQUIRED)
+    for path in sorted((BACKEND / "tests").rglob("test*.py")):
+        text_value = path.read_text(encoding="utf-8", errors="replace")
+        if any(marker in text_value for marker in POSTGRES_REQUIRED_MARKERS):
+            discovered.add(path.relative_to(ROOT).as_posix())
+    required = tuple(sorted(discovered))
+    missing = [relative for relative in required if not (ROOT / relative).is_file()]
+    if missing:
+        raise ValueError("postgres_test_inventory_missing:" + ",".join(missing))
+    if not required:
+        raise ValueError("postgres_test_inventory_empty")
+    return required
+
+
 def _command(
     label: str,
     command: list[str],
@@ -129,6 +151,18 @@ def _command(
         ),
         "output_included": False,
     }
+
+
+def _junit_counts(path: Path) -> dict[str, int]:
+    if not path.is_file():
+        return {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    root = ET.parse(path).getroot()
+    suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+    result = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    for suite in suites:
+        for key in result:
+            result[key] += int(suite.attrib.get(key, 0) or 0)
+    return result
 
 
 def _current_revision(database_url: str) -> str | None:
@@ -206,14 +240,8 @@ def run_acceptance(
             )
         )
 
-    all_migrations_passed = all(
-        row["passed"] for row in migration_commands
-    )
-    final_revision = (
-        _current_revision(database_url)
-        if all_migrations_passed
-        else None
-    )
+    all_migrations_passed = all(row["passed"] for row in migration_commands)
+    final_revision = _current_revision(database_url) if all_migrations_passed else None
     migration_passed = (
         len(migration_commands) == 3
         and all_migrations_passed
@@ -227,14 +255,8 @@ def run_acceptance(
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "database_disposable": True,
         "upgrade_passed": bool(migration_commands[0]["passed"]),
-        "downgrade_passed": (
-            len(migration_commands) > 1
-            and bool(migration_commands[1]["passed"])
-        ),
-        "reupgrade_passed": (
-            len(migration_commands) > 2
-            and bool(migration_commands[2]["passed"])
-        ),
+        "downgrade_passed": len(migration_commands) > 1 and bool(migration_commands[1]["passed"]),
+        "reupgrade_passed": len(migration_commands) > 2 and bool(migration_commands[2]["passed"]),
         "final_revision": final_revision,
         "commands": migration_commands,
         "sanitized": True,
@@ -243,23 +265,53 @@ def run_acceptance(
     }
     _write(directory / "migration-rehearsal.json", migration_payload)
 
+    postgres_tests = discover_postgres_tests()
+    inventory_payload = {
+        "schema": "nexus.postgres-test-inventory.v1",
+        "source_sha": source_sha,
+        "tree_sha": tree_sha,
+        "tests": list(postgres_tests),
+        "count": len(postgres_tests),
+    }
+    _write(directory / "postgres-test-inventory.json", inventory_payload)
+
     tests_result = None
+    junit_path = directory / "postgres-pytest.xml"
     if migration_passed:
         tests_result = _command(
-            "postgres_privacy_and_worker_tests",
-            [sys.executable, "-m", "pytest", "-q", *POSTGRES_TESTS],
+            "postgres_discovered_contract_tests",
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-rs",
+                f"--junitxml={junit_path}",
+                *postgres_tests,
+            ],
             cwd=ROOT,
             env=env,
         )
-    tests_passed = bool(tests_result and tests_result["passed"])
+    junit = _junit_counts(junit_path)
+    tests_passed = bool(
+        tests_result
+        and tests_result["passed"]
+        and junit["tests"] > 0
+        and junit["failures"] == 0
+        and junit["errors"] == 0
+        and junit["skipped"] == 0
+    )
     postgres_payload: dict[str, object] = {
-        "schema": "nexus.postgres-qualification.v1",
+        "schema": "nexus.postgres-qualification.v2",
         "status": "pass" if tests_passed else "fail",
         "source_sha": source_sha,
         "tree_sha": tree_sha,
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "database_disposable": True,
         "tests_passed": tests_passed,
+        "discovered_module_count": len(postgres_tests),
+        "junit": junit,
+        "unexpected_skips": junit["skipped"],
         "cross_scope_existence_safe": tests_passed,
         "lists_minimized": tests_passed,
         "sensitive_access_audited": tests_passed,
@@ -309,12 +361,14 @@ def run_acceptance(
 
     passed = migration_passed and tests_passed and capacity_passed
     return {
-        "schema": "nexus.postgres-acceptance-run.v1",
+        "schema": "nexus.postgres-acceptance-run.v2",
         "status": "pass" if passed else "fail",
         "source_sha": source_sha,
         "tree_sha": tree_sha,
         "migration_passed": migration_passed,
         "postgres_tests_passed": tests_passed,
+        "postgres_test_modules": len(postgres_tests),
+        "postgres_test_skips": junit["skipped"],
         "database_capacity_passed": capacity_passed,
         "evidence_dir": str(directory),
         "database_url_included": False,
@@ -324,11 +378,7 @@ def run_acceptance(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--database-url",
-        default=os.getenv("DATABASE_URL", ""),
-        required=False,
-    )
+    parser.add_argument("--database-url", default=os.getenv("DATABASE_URL", ""), required=False)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--tree-sha", required=True)
@@ -342,9 +392,7 @@ def main() -> int:
         and os.getenv("NEXUS_ACCEPTANCE_REMOTE_DATABASE_CONFIRM")
         != "I_UNDERSTAND_DISPOSABLE_ONLY"
     ):
-        raise SystemExit(
-            "remote disposable database requires explicit confirmation"
-        )
+        raise SystemExit("remote disposable database requires explicit confirmation")
     payload = run_acceptance(
         database_url=args.database_url,
         evidence_dir=args.evidence_dir,
@@ -352,10 +400,7 @@ def main() -> int:
         tree_sha=args.tree_sha,
         allow_remote=args.allow_remote_database,
     )
-    rendered = (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n"
-    )
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         output = args.output.expanduser().resolve()
         if _inside_repository(output):
