@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import base64
 import hashlib
-import hmac
 import importlib.util
 import json
 import stat
 from pathlib import Path
 
 import pytest
-
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "sign_activation_evidence.py"
 SPEC = importlib.util.spec_from_file_location("sign_activation_evidence", MODULE_PATH)
@@ -19,7 +20,7 @@ SPEC.loader.exec_module(signer)
 
 def _unsigned() -> dict[str, object]:
     return {
-        "schema": "nexus.activation-evidence.v2",
+        "schema": "nexus.activation-evidence.v3",
         "candidate": {
             "source_sha": "a" * 40,
             "image_digest": "sha256:" + "b" * 64,
@@ -50,28 +51,42 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _private_key_file(path: Path) -> Ed25519PrivateKey:
+    private_key = Ed25519PrivateKey.generate()
+    path.write_bytes(
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    return private_key
+
+
 def test_signer_writes_atomic_private_deterministic_manifest(tmp_path: Path) -> None:
     input_path = tmp_path / "unsigned.json"
-    key_path = tmp_path / "signing.key"
+    key_path = tmp_path / "signing-private.pem"
     output_path = tmp_path / "manifest.json"
     unsigned = _unsigned()
-    key = b"activation-evidence-key-0123456789abcdef"
+    private_key = _private_key_file(key_path)
     input_path.write_text(json.dumps(unsigned), encoding="utf-8")
-    key_path.write_bytes(key)
 
     receipt = signer.run(
         input_path=input_path,
-        key_path=key_path,
+        private_key_path=key_path,
+        key_id="activation-test-2026-01",
         output_path=output_path,
     )
     signed = json.loads(output_path.read_text(encoding="utf-8"))
-    expected = hmac.new(key, _canonical(unsigned), hashlib.sha256).hexdigest()
+    signature_bytes = base64.urlsafe_b64decode(
+        signed["signature"]["value"] + "=="
+    )
+    private_key.public_key().verify(signature_bytes, _canonical(unsigned))
 
-    assert signed["signature"] == {
-        "algorithm": "hmac-sha256",
-        "value": expected,
-    }
+    assert signed["signature"]["algorithm"] == "ed25519"
+    assert signed["signature"]["key_id"] == "activation-test-2026-01"
     assert receipt["status"] == "pass"
+    assert receipt["signature_algorithm"] == "ed25519"
     assert receipt["contains_secrets"] is False
     assert receipt["manifest_sha256"] == (
         "sha256:" + hashlib.sha256(_canonical(signed)).hexdigest()
@@ -80,16 +95,22 @@ def test_signer_writes_atomic_private_deterministic_manifest(tmp_path: Path) -> 
     assert not list(tmp_path.glob(".manifest.json.*.tmp"))
 
 
-def test_signer_rejects_existing_signature_and_short_key(tmp_path: Path) -> None:
+def test_signer_rejects_existing_signature_and_non_ed25519_key(
+    tmp_path: Path,
+) -> None:
     input_path = tmp_path / "unsigned.json"
-    key_path = tmp_path / "signing.key"
+    key_path = tmp_path / "signing-private.pem"
     output_path = tmp_path / "manifest.json"
     already_signed = {
         **_unsigned(),
-        "signature": {"algorithm": "hmac-sha256", "value": "0" * 64},
+        "signature": {
+            "algorithm": "ed25519",
+            "key_id": "existing-key",
+            "value": "A" * 86,
+        },
     }
     input_path.write_text(json.dumps(already_signed), encoding="utf-8")
-    key_path.write_text("short", encoding="utf-8")
+    _private_key_file(key_path)
 
     with pytest.raises(
         signer.SignActivationEvidenceError,
@@ -97,18 +118,30 @@ def test_signer_rejects_existing_signature_and_short_key(tmp_path: Path) -> None
     ):
         signer.run(
             input_path=input_path,
-            key_path=key_path,
+            private_key_path=key_path,
+            key_id="activation-test-2026-01",
             output_path=output_path,
         )
 
+    from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
+
+    rsa_key = generate_private_key(public_exponent=65537, key_size=2048)
+    key_path.write_bytes(
+        rsa_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
     input_path.write_text(json.dumps(_unsigned()), encoding="utf-8")
     with pytest.raises(
         signer.SignActivationEvidenceError,
-        match="signing_key_too_short",
+        match="private_key_algorithm_invalid",
     ):
         signer.run(
             input_path=input_path,
-            key_path=key_path,
+            private_key_path=key_path,
+            key_id="activation-test-2026-01",
             output_path=output_path,
         )
     assert not output_path.exists()
