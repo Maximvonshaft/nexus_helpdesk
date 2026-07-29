@@ -211,6 +211,31 @@ def list_unified_operator_queue(
     if not isinstance(limit, int) or limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="invalid_operator_queue_limit")
 
+    # A source-specific Ticket request cannot contain Ticketless work. Delegate
+    # directly to the one private queue authority so authorization, tenant scope,
+    # cursor validation and the bounded data query execute exactly once per page.
+    if source_type == "ticket":
+        return project_unified_queue_display(
+            db,
+            _core.list_unified_operator_queue(
+                db,
+                current_user=current_user,
+                tenant_key=tenant_key,
+                country_code=country_code,
+                channel_key=channel_key,
+                queue_key=queue_key,
+                state=state,
+                source_type=source_type,
+                owner=owner,
+                priority=priority,
+                sla=sla,
+                retry=retry,
+                sort=sort,
+                cursor=cursor,
+                limit=limit,
+            ),
+        )
+
     tenant, country, channel, grant = authorize_operator_scope(
         db,
         current_user=current_user,
