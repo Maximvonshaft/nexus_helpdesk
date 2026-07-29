@@ -14,6 +14,8 @@ def install_handoff_convergence(agent_routing_service_module) -> None:  # noqa: 
     if getattr(agent_routing_service_module, "_r15_convergence_installed", False):
         return
 
+    from .handoff_routing_authority import routing_plan_for_request
+
     service = agent_routing_service_module
     core = service._core
     original_prior_voice_offer = core._agent_has_prior_voice_offer
@@ -24,7 +26,7 @@ def install_handoff_convergence(agent_routing_service_module) -> None:  # noqa: 
         handoff_request_id: int,
         agent_id: int,
     ) -> bool:  # noqa: ANN001
-        plan = service.routing_plan_for_request(
+        plan = routing_plan_for_request(
             db,
             request_id=int(handoff_request_id),
         )
