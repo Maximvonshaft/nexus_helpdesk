@@ -15,9 +15,6 @@ from ..services.read_model_contracts import install_read_model_contracts
 from ..services.tenant_reference_runtime_contract import (
     install_tenant_reference_runtime_contract,
 )
-from ..services.voice_runtime_state_contract import (
-    install_voice_runtime_state_contract,
-)
 from ..services.whatsapp_media_events import install_whatsapp_media_events
 
 _INSTALLED = False
@@ -35,7 +32,6 @@ def register_runtime_contracts() -> None:
     install_golden_journey_portfolio_guard()
     install_handoff_assignment_contract()
     install_tenant_reference_runtime_contract()
-    install_voice_runtime_state_contract()
     install_knowledge_pdf_safety()
     install_read_model_contracts()
     _INSTALLED = True
