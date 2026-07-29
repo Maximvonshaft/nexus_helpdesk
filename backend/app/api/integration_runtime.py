@@ -11,9 +11,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..db import get_db
 from ..enums import SourceChannel, TicketPriority, TicketSource, TicketStatus
-from ..models import Customer, IntegrationClient, Market, Team, Ticket, User
+from ..models import Customer, IntegrationClient, Market, Team, Tenant, Ticket, User
 from ..schemas import CustomerInput, TicketCreate
-from ..services.ticket_service import create_ticket
 from ..services.integration_auth import (
     AuthenticatedIntegrationClient,
     authenticate_integration_client,
@@ -25,6 +24,7 @@ from ..services.integration_auth import (
     stable_request_hash,
 )
 from ..services.permissions import CAP_TICKET_ASSIGN, resolve_capabilities
+from ..services.ticket_service import create_ticket
 from ..settings import get_settings
 from ..unit_of_work import managed_session
 from ..utils.normalize import normalize_email, normalize_phone
@@ -32,7 +32,11 @@ from ..utils.time import utc_now
 
 router = APIRouter(prefix="/api/v1/integration", tags=["integration"])
 settings = get_settings()
-TERMINAL_STATUSES = {TicketStatus.resolved, TicketStatus.closed, TicketStatus.canceled}
+TERMINAL_STATUSES = {
+    TicketStatus.resolved,
+    TicketStatus.closed,
+    TicketStatus.canceled,
+}
 
 
 class IntegrationTaskRequest(BaseModel):
@@ -45,6 +49,7 @@ class IntegrationTaskRequest(BaseModel):
     metadata: Optional[dict] = None
     country_code: Optional[str] = None
     market_code: Optional[str] = None
+    tenant_key: Optional[str] = None
 
 
 def get_authenticated_integration_client(
@@ -75,6 +80,53 @@ def _normalize_channel(channel: str | None) -> SourceChannel:
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"Unsupported integration channel: {channel}",
     )
+
+
+def _principal_tenant(
+    db: Session,
+    *,
+    client: AuthenticatedIntegrationClient,
+    requested_tenant_key: str | None,
+) -> Tenant:
+    requested = str(requested_tenant_key or "").strip().lower()
+    if client.scope_type == "tenant":
+        tenant = db.get(Tenant, int(client.tenant_id)) if client.tenant_id else None
+        if tenant is None or not tenant.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="integration_principal_tenant_unavailable",
+            )
+        if requested and requested != tenant.tenant_key:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="integration_requested_tenant_not_authorized",
+            )
+        return tenant
+
+    if client.scope_type != "platform":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="integration_principal_scope_invalid",
+        )
+    if not requested:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="platform_integration_requires_tenant_key",
+        )
+    tenant = (
+        db.query(Tenant)
+        .filter(
+            Tenant.tenant_key == requested,
+            Tenant.is_active.is_(True),
+        )
+        .first()
+    )
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="integration_target_tenant_not_found",
+        )
+    return tenant
 
 
 def _contact_match_filters(contact_id: str):
@@ -120,15 +172,25 @@ def _customer_contact_filters(contact_id: str):
 def _ticket_duplicate_contact_filters(contact_id: str):
     cleaned = (contact_id or "").strip()
     phone_norm = normalize_phone(cleaned)
+    email_norm = normalize_email(cleaned)
     filters = [
         Ticket.preferred_reply_contact == cleaned,
         Ticket.source_chat_id == cleaned,
+        Ticket.customer.has(Customer.external_ref == cleaned),
     ]
-    if phone_norm and phone_norm != cleaned:
+    if phone_norm:
         filters.extend(
             [
                 Ticket.preferred_reply_contact == phone_norm,
                 Ticket.source_chat_id == phone_norm,
+                Ticket.customer.has(Customer.phone_normalized == phone_norm),
+            ]
+        )
+    if email_norm:
+        filters.extend(
+            [
+                Ticket.preferred_reply_contact == email_norm,
+                Ticket.customer.has(Customer.email_normalized == email_norm),
             ]
         )
     return filters
@@ -149,28 +211,36 @@ def _normalize_priority(priority: str | None) -> TicketPriority:
     return mapping.get(value, TicketPriority.medium)
 
 
-def _pick_actor(db: Session) -> User:
+def _pick_actor(db: Session, *, tenant_id: int) -> User:
     candidates = (
         db.query(User)
-        .filter(User.is_active.is_(True))
+        .filter(
+            User.tenant_id == tenant_id,
+            User.is_active.is_(True),
+        )
         .order_by(User.id.asc())
         .all()
     )
     for actor in candidates:
         if CAP_TICKET_ASSIGN in resolve_capabilities(actor, db):
             return actor
-    raise RuntimeError(
-        "No active user with ticket.assign is available for integration-created tickets"
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="integration_tenant_actor_unavailable",
     )
 
 
 def _resolve_market(
     db: Session,
     *,
+    tenant_id: int,
     country_code: str | None = None,
     market_code: str | None = None,
 ) -> Optional[Market]:
-    query = db.query(Market).filter(Market.is_active.is_(True))
+    query = db.query(Market).filter(
+        Market.tenant_id == tenant_id,
+        Market.is_active.is_(True),
+    )
     if market_code:
         market = query.filter(Market.code == market_code.upper()).first()
         if market:
@@ -189,10 +259,14 @@ def _resolve_market(
 def _pick_support_team(
     db: Session,
     *,
+    tenant_id: int,
     country_code: str | None = None,
     market: Optional[Market] = None,
 ) -> Optional[Team]:
-    query = db.query(Team).filter(Team.is_active.is_(True))
+    query = db.query(Team).filter(
+        Team.tenant_id == tenant_id,
+        Team.is_active.is_(True),
+    )
     if market is not None:
         team = query.filter(Team.market_id == market.id).order_by(Team.id.asc()).first()
         if team:
@@ -200,21 +274,33 @@ def _pick_support_team(
     if country_code:
         team = (
             query.join(Team.market)
-            .filter(Market.country_code == country_code.upper())
+            .filter(
+                Market.tenant_id == tenant_id,
+                Market.country_code == country_code.upper(),
+            )
             .order_by(Team.id.asc())
             .first()
         )
         if team:
             return team
     return (
-        db.query(Team)
-        .filter(
-            Team.is_active.is_(True),
-            or_(Team.team_type == "support", Team.name.ilike("%support%")),
+        query.filter(
+            or_(Team.team_type == "support", Team.name.ilike("%support%"))
         )
         .order_by(Team.id.asc())
         .first()
     )
+
+
+def _customer_input(contact_id: str) -> CustomerInput:
+    cleaned = str(contact_id or "").strip()
+    email = normalize_email(cleaned)
+    phone = normalize_phone(cleaned)
+    if email:
+        return CustomerInput(name=cleaned, email=email)
+    if phone:
+        return CustomerInput(name=cleaned, phone=phone)
+    return CustomerInput(name=cleaned, external_ref=cleaned)
 
 
 def _ticket_brief(ticket: Ticket) -> dict:
@@ -222,14 +308,22 @@ def _ticket_brief(ticket: Ticket) -> dict:
         "id": ticket.id,
         "case_ref": ticket.ticket_no,
         "title": ticket.title,
-        "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status),
-        "priority": ticket.priority.value if hasattr(ticket.priority, "value") else str(ticket.priority),
+        "status": (
+            ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
+        ),
+        "priority": (
+            ticket.priority.value
+            if hasattr(ticket.priority, "value")
+            else str(ticket.priority)
+        ),
         "tracking_number": ticket.tracking_number,
         "team": ticket.team.name if ticket.team else None,
         "assignee": ticket.assignee.display_name if ticket.assignee else None,
-        "updated_at": ticket.updated_at.isoformat()
-        if isinstance(ticket.updated_at, datetime)
-        else None,
+        "updated_at": (
+            ticket.updated_at.isoformat()
+            if isinstance(ticket.updated_at, datetime)
+            else None
+        ),
     }
 
 
@@ -251,7 +345,7 @@ def _record_integration_error(
     exc: HTTPException,
 ) -> None:
     if client.client_id is not None:
-        row = db.query(IntegrationClient).filter(IntegrationClient.id == client.client_id).first()
+        row = db.get(IntegrationClient, int(client.client_id))
         if row is not None:
             row.last_used_at = utc_now()
     record_integration_response(
@@ -303,13 +397,21 @@ def _idempotency_begin_response(
 def nexusdesk_customer_profile(
     contact_id: str,
     channel: str = Query(default="whatsapp"),
+    tenant_key: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    client: AuthenticatedIntegrationClient = Depends(get_authenticated_integration_client),
+    client: AuthenticatedIntegrationClient = Depends(
+        get_authenticated_integration_client
+    ),
 ):
     try:
         with managed_session(db):
             require_scope(client, "profile.read")
             enforce_rate_limit(db, client, "integration.profile")
+            tenant = _principal_tenant(
+                db,
+                client=client,
+                requested_tenant_key=tenant_key,
+            )
             normalized_channel = _normalize_channel(channel)
 
             tickets = (
@@ -319,15 +421,22 @@ def nexusdesk_customer_profile(
                     joinedload(Ticket.team),
                     joinedload(Ticket.assignee),
                 )
-                .filter(or_(*_contact_match_filters(contact_id)))
-                .order_by(Ticket.updated_at.desc())
+                .filter(
+                    Ticket.tenant_id == tenant.id,
+                    or_(*_contact_match_filters(contact_id)),
+                )
+                .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
                 .limit(20)
                 .all()
             )
 
             customer = (
                 db.query(Customer)
-                .filter(or_(*_customer_contact_filters(contact_id)))
+                .filter(
+                    Customer.tenant_id == tenant.id,
+                    or_(*_customer_contact_filters(contact_id)),
+                )
+                .order_by(Customer.id.asc())
                 .first()
             )
             if not customer and tickets:
@@ -350,7 +459,6 @@ def nexusdesk_customer_profile(
                     status_code=200,
                     response_payload=response,
                 )
-                db.flush()
                 return response
 
             active_tasks = [
@@ -366,7 +474,7 @@ def nexusdesk_customer_profile(
                 "customer": {
                     "id": customer.id if customer else None,
                     "name": customer.name if customer else None,
-                    "phone": customer.phone if customer else contact_id,
+                    "phone": customer.phone if customer else None,
                     "email": customer.email if customer else None,
                     "external_ref": customer.external_ref if customer else None,
                 },
@@ -383,7 +491,6 @@ def nexusdesk_customer_profile(
                 status_code=200,
                 response_payload=response,
             )
-            db.flush()
             return response
     except HTTPException as exc:
         if client.client_id is not None or client.is_legacy:
@@ -404,7 +511,9 @@ def nexusdesk_escalate_task(
     payload: IntegrationTaskRequest,
     request: Request,
     db: Session = Depends(get_db),
-    client: AuthenticatedIntegrationClient = Depends(get_authenticated_integration_client),
+    client: AuthenticatedIntegrationClient = Depends(
+        get_authenticated_integration_client
+    ),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     request_hash = stable_request_hash(payload.model_dump())
@@ -412,6 +521,11 @@ def nexusdesk_escalate_task(
         with managed_session(db):
             require_scope(client, "task.write")
             enforce_rate_limit(db, client, "integration.task")
+            tenant = _principal_tenant(
+                db,
+                client=client,
+                requested_tenant_key=payload.tenant_key,
+            )
             if settings.integration_require_idempotency_key and not idempotency_key:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -435,19 +549,22 @@ def nexusdesk_escalate_task(
                 if begin_response is not None:
                     return begin_response
 
-            actor = _pick_actor(db)
+            actor = _pick_actor(db, tenant_id=tenant.id)
             market = _resolve_market(
                 db,
+                tenant_id=tenant.id,
                 country_code=payload.country_code,
                 market_code=payload.market_code,
             )
             team = _pick_support_team(
                 db,
+                tenant_id=tenant.id,
                 country_code=payload.country_code,
                 market=market,
             )
 
             filters = [
+                Ticket.tenant_id == tenant.id,
                 or_(*_ticket_duplicate_contact_filters(payload.contact_id)),
                 Ticket.status.notin_(list(TERMINAL_STATUSES)),
             ]
@@ -457,7 +574,7 @@ def nexusdesk_escalate_task(
             existing = (
                 db.query(Ticket)
                 .filter(*filters)
-                .order_by(Ticket.updated_at.desc())
+                .order_by(Ticket.updated_at.desc(), Ticket.id.desc())
                 .first()
             )
             if existing:
@@ -477,7 +594,6 @@ def nexusdesk_escalate_task(
                     status_code=200,
                     response_payload=response,
                 )
-                db.flush()
                 return response
 
             channel = _normalize_channel(payload.channel)
@@ -499,13 +615,12 @@ def nexusdesk_escalate_task(
                     market_id=market.id if market else None,
                     country_code=payload.country_code
                     or (market.country_code if market else None),
-                    customer=CustomerInput(
-                        name=payload.contact_id,
-                        phone=payload.contact_id,
+                    customer=_customer_input(payload.contact_id),
+                    case_type=(
+                        "Complaint Escalation"
+                        if "投诉" in summary_text
+                        else "Manual Escalation"
                     ),
-                    case_type="Complaint Escalation"
-                    if "投诉" in summary_text
-                    else "Manual Escalation",
                     issue_summary=payload.summary,
                     customer_request=description,
                     source_chat_id=payload.contact_id,
@@ -515,13 +630,20 @@ def nexusdesk_escalate_task(
                     last_human_update="Created by NexusDesk integration endpoint",
                     preferred_reply_channel=channel.value,
                     preferred_reply_contact=payload.contact_id,
-                    ai_summary=f"Escalated by {metadata.get('source')}"
-                    if metadata.get("source")
-                    else None,
+                    ai_summary=(
+                        f"Escalated by {metadata.get('source')}"
+                        if metadata.get("source")
+                        else None
+                    ),
                     ai_classification="manual_escalation",
                 ),
                 actor,
             )
+            if ticket.tenant_id != tenant.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="integration_ticket_tenant_conflict",
+                )
 
             response = {
                 "ok": True,
@@ -539,7 +661,6 @@ def nexusdesk_escalate_task(
                 status_code=200,
                 response_payload=response,
             )
-            db.flush()
             return response
     except HTTPException as exc:
         if client.client_id is not None or client.is_legacy:
