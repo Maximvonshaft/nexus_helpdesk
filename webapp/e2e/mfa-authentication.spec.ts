@@ -59,7 +59,13 @@ test('password login does not store an access token until MFA challenge verifica
     if (path === '/api/admin/operator-queue/my-scopes') {
       workspaceScopeRequests += 1
       return json(route, {
-        items: [{ tenant_key: 'tenant-mfa', tenant_hash: '123456789abc', country_code: 'ME', channel_key: 'webchat' }],
+        items: [{
+          tenant_key: 'tenant-mfa',
+          tenant_hash: '123456789abc',
+          country_code: 'ME',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        }],
         requires_explicit_admin_scope: false,
       })
     }
@@ -67,7 +73,12 @@ test('password login does not store an access token until MFA challenge verifica
       return json(route, {
         items: [],
         next_cursor: null,
-        scope: { tenant_hash: '123456789abc', country_code: 'ME', channel_key: 'webchat' },
+        scope: {
+          tenant_hash: '123456789abc',
+          country_code: 'ME',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        },
         filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
       })
     }

@@ -22,6 +22,7 @@ services:
       WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL: ${WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL:-}
       TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL: ${TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL:-}
       OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL: ${OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL:-}
+      WHATSAPP_PRODUCTION_E2E_EVIDENCE_URL: ${WHATSAPP_PRODUCTION_E2E_EVIDENCE_URL:-}
       OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL: ${OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL:-}
       PROVIDER_RUNTIME_ENABLED: ${PROVIDER_RUNTIME_ENABLED:-false}
       PROVIDER_RUNTIME_TRAFFIC_MODE: ${PROVIDER_RUNTIME_TRAFFIC_MODE:-control}
@@ -45,12 +46,57 @@ services:
       NEXUS_VOICE_TTS_MODEL: ${NEXUS_VOICE_TTS_MODEL:-}
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_SIDECAR_IMAGE: ${WHATSAPP_SIDECAR_IMAGE:-}
+      WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
+      WHATSAPP_EMBEDDED_SIGNUP_ENABLED: ${WHATSAPP_EMBEDDED_SIGNUP_ENABLED:-false}
+      WHATSAPP_META_APP_ID: ${WHATSAPP_META_APP_ID:-}
+      WHATSAPP_META_APP_SECRET_FILE: ${WHATSAPP_META_APP_SECRET_FILE:-/run/nexus/whatsapp_meta_app_secret}
+      WHATSAPP_META_CONFIGURATION_ID: ${WHATSAPP_META_CONFIGURATION_ID:-}
+      WHATSAPP_META_GRAPH_API_VERSION: ${WHATSAPP_META_GRAPH_API_VERSION:-}
+      WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN: ${WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN:-}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
+      WHATSAPP_CLAMAV_TIMEOUT_SECONDS: ${WHATSAPP_CLAMAV_TIMEOUT_SECONDS:-20}
+      WHATSAPP_MEDIA_MAX_TOTAL_BYTES: ${WHATSAPP_MEDIA_MAX_TOTAL_BYTES:-104857600}
+      WHATSAPP_CLAMAV_IMAGE: ${WHATSAPP_CLAMAV_IMAGE:-}
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
       OPERATIONS_DISPATCH_MODE: ${OPERATIONS_DISPATCH_MODE:-disabled}
       OPERATIONS_DISPATCH_ADAPTER: ${OPERATIONS_DISPATCH_ADAPTER:-disabled}
     command:
       - python
       - /app/scripts/deploy/validate_production_activation.py
       - --environment
+
+  clamav-controlled:
+    image: ${WHATSAPP_CLAMAV_IMAGE:?set immutable ClamAV image as name@sha256:<64-hex>}
+    profiles:
+      - whatsapp-media
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+      - /run/clamav:rw,noexec,nosuid,size=64m
+    pids_limit: 256
+    networks:
+      - controlled
+    volumes:
+      - clamav-database:/var/lib/clamav
+    healthcheck:
+      test:
+        - CMD
+        - clamdscan
+        - --ping=1
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   app-controlled:
     environment:
@@ -62,9 +108,64 @@ services:
       WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL: ${WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL:-}
       TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL: ${TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL:-}
       OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL: ${OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL:-}
+      WHATSAPP_PRODUCTION_E2E_EVIDENCE_URL: ${WHATSAPP_PRODUCTION_E2E_EVIDENCE_URL:-}
       OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL: ${OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL:-}
+      ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
+      OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
+      WHATSAPP_EMBEDDED_SIGNUP_ENABLED: ${WHATSAPP_EMBEDDED_SIGNUP_ENABLED:-false}
+      WHATSAPP_META_APP_ID: ${WHATSAPP_META_APP_ID:-}
+      WHATSAPP_META_APP_SECRET_FILE: ${WHATSAPP_META_APP_SECRET_FILE:-/run/nexus/whatsapp_meta_app_secret}
+      WHATSAPP_META_CONFIGURATION_ID: ${WHATSAPP_META_CONFIGURATION_ID:-}
+      WHATSAPP_META_GRAPH_API_VERSION: ${WHATSAPP_META_GRAPH_API_VERSION:-}
+      WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN: ${WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN:-}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
+      WHATSAPP_CLAMAV_TIMEOUT_SECONDS: ${WHATSAPP_CLAMAV_TIMEOUT_SECONDS:-20}
+      WHATSAPP_MEDIA_MAX_TOTAL_BYTES: ${WHATSAPP_MEDIA_MAX_TOTAL_BYTES:-104857600}
     depends_on:
       migrate-controlled:
         condition: service_completed_successfully
       production-activation-preflight:
         condition: service_completed_successfully
+      clamav-controlled:
+        condition: service_healthy
+        required: false
+
+  worker-outbound-controlled:
+    environment:
+      ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
+      OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+      production-activation-preflight:
+        condition: service_completed_successfully
+
+  worker-background-controlled:
+    environment:
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
+      WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
+      WHATSAPP_CLAMAV_HOST: ${WHATSAPP_CLAMAV_HOST:-clamav-controlled}
+      WHATSAPP_CLAMAV_PORT: ${WHATSAPP_CLAMAV_PORT:-3310}
+      WHATSAPP_CLAMAV_TIMEOUT_SECONDS: ${WHATSAPP_CLAMAV_TIMEOUT_SECONDS:-20}
+      WHATSAPP_MEDIA_MAX_TOTAL_BYTES: ${WHATSAPP_MEDIA_MAX_TOTAL_BYTES:-104857600}
+    volumes:
+      - ${NEXUS_WHATSAPP_SECRETS_HOST_PATH:?set WhatsApp secrets directory}:/run/nexus:ro
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+      production-activation-preflight:
+        condition: service_completed_successfully
+      clamav-controlled:
+        condition: service_healthy
+        required: false
+
+volumes:
+  clamav-database:

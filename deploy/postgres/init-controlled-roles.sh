@@ -14,8 +14,6 @@ required=(
   NEXUS_DB_BACKGROUND_PASSWORD
   NEXUS_DB_WEBCHAT_AI_USER
   NEXUS_DB_WEBCHAT_AI_PASSWORD
-  NEXUS_DB_HANDOFF_USER
-  NEXUS_DB_HANDOFF_PASSWORD
 )
 
 for name in "${required[@]}"; do
@@ -39,9 +37,7 @@ psql \
   --set background_user="$NEXUS_DB_BACKGROUND_USER" \
   --set background_password="$NEXUS_DB_BACKGROUND_PASSWORD" \
   --set webchat_ai_user="$NEXUS_DB_WEBCHAT_AI_USER" \
-  --set webchat_ai_password="$NEXUS_DB_WEBCHAT_AI_PASSWORD" \
-  --set handoff_user="$NEXUS_DB_HANDOFF_USER" \
-  --set handoff_password="$NEXUS_DB_HANDOFF_PASSWORD" <<'SQL'
+  --set webchat_ai_password="$NEXUS_DB_WEBCHAT_AI_PASSWORD" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'migration_user', :'migration_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'migration_user')
 \gexec
@@ -57,9 +53,6 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'background_user')
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'webchat_ai_user', :'webchat_ai_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'webchat_ai_user')
 \gexec
-SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'handoff_user', :'handoff_password')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'handoff_user')
-\gexec
 
 SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', current_database(), :'migration_user')
 \gexec
@@ -71,8 +64,7 @@ FROM (VALUES
   (:'app_user'),
   (:'outbound_user'),
   (:'background_user'),
-  (:'webchat_ai_user'),
-  (:'handoff_user')
+  (:'webchat_ai_user')
 ) AS runtime_roles(runtime_user)
 \gexec
 
@@ -81,8 +73,7 @@ FROM (VALUES
   (:'app_user'),
   (:'outbound_user'),
   (:'background_user'),
-  (:'webchat_ai_user'),
-  (:'handoff_user')
+  (:'webchat_ai_user')
 ) AS runtime_roles(runtime_user)
 \gexec
 
@@ -95,8 +86,7 @@ FROM (VALUES
   (:'app_user'),
   (:'outbound_user'),
   (:'background_user'),
-  (:'webchat_ai_user'),
-  (:'handoff_user')
+  (:'webchat_ai_user')
 ) AS runtime_roles(runtime_user)
 \gexec
 
@@ -109,8 +99,7 @@ FROM (VALUES
   (:'app_user'),
   (:'outbound_user'),
   (:'background_user'),
-  (:'webchat_ai_user'),
-  (:'handoff_user')
+  (:'webchat_ai_user')
 ) AS runtime_roles(runtime_user)
 \gexec
 SQL

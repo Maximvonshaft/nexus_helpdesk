@@ -13,6 +13,22 @@ class ControlledImageAssuranceOrderTests(unittest.TestCase):
     def test_shell_syntax_is_valid(self) -> None:
         subprocess.run(["bash", "-n", str(SCRIPT_PATH)], check=True)
 
+    def test_assurance_owns_complete_raw_and_runtime_inputs(self) -> None:
+        sanitize = SCRIPT.index("python scripts/security/sanitize_image_sbom.py")
+        for marker in (
+            "trivy image \\",
+            '--format json \\',
+            '--format cyclonedx \\',
+            "npm sbom --package-lock-only --sbom-format=cyclonedx",
+            "NEXUS_RUNTIME_SMOKE_SUMMARY=",
+            'ensure_assurance_input "${RELEASE_IMAGE_DIR}/trivy.raw.json"',
+            'ensure_assurance_input "${RELEASE_IMAGE_DIR}/image.raw.cdx.json"',
+            'ensure_assurance_input "${RELEASE_IMAGE_DIR}/frontend.raw.cdx.json"',
+            'ensure_assurance_input "${RELEASE_IMAGE_DIR}/runtime-smoke-summary.txt"',
+        ):
+            self.assertIn(marker, SCRIPT)
+            self.assertLess(SCRIPT.index(marker), sanitize)
+
     def test_cleanup_and_scan_markers_precede_structured_validation(self) -> None:
         cleanup_marker = 'printf \'%s\\n\' "${cleanup_code}" > "${RELEASE_IMAGE_DIR}/raw-cleanup-exit-code"'
         scan_marker = 'printf \'%s\\n\' "${artifact_scan_code}" > "${RELEASE_IMAGE_DIR}/artifact-scan-exit-code"'

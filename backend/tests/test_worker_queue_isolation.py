@@ -9,7 +9,10 @@ import pytest
 pytestmark = pytest.mark.fast_lane_v2_2_2
 
 SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2] / "backend" / "scripts" / "run_worker.py"
+    Path(__file__).resolve().parents[2]
+    / "backend"
+    / "scripts"
+    / "run_worker.py"
 )
 
 
@@ -28,7 +31,11 @@ def _load_module():
 def test_worker_queue_isolation(monkeypatch):
     run_worker = _load_module()
     calls = []
-    monkeypatch.setattr(run_worker, "record_worker_poll", lambda worker_id: None)
+    monkeypatch.setattr(
+        run_worker,
+        "record_worker_poll",
+        lambda worker_id: None,
+    )
     monkeypatch.setattr(run_worker, "log_event", lambda *a, **k: None)
     monkeypatch.setattr(
         run_worker,
@@ -42,17 +49,11 @@ def test_worker_queue_isolation(monkeypatch):
     )
     monkeypatch.setattr(
         run_worker,
-        "_run_handoff_snapshot",
-        lambda worker_id: calls.append("handoff-snapshot") or 1,
-    )
-    monkeypatch.setattr(
-        run_worker,
         "_run_webchat_ai",
         lambda worker_id: calls.append("webchat-ai") or 1,
     )
 
     expectations = {
-        "handoff-snapshot": ["handoff-snapshot"],
         "outbound": ["outbound"],
         "background": ["background"],
         "webchat-ai": ["webchat-ai"],
@@ -64,10 +65,14 @@ def test_worker_queue_isolation(monkeypatch):
         assert calls == expected
         assert processed == len(expected)
 
-    calls.clear()
-    with pytest.raises(ValueError, match="unsupported worker queue: all"):
-        run_worker.run_queue_once("worker-test", "all")
-    assert calls == []
+    for retired in ("all", "handoff-snapshot"):
+        calls.clear()
+        with pytest.raises(
+            ValueError,
+            match=f"unsupported worker queue: {retired}",
+        ):
+            run_worker.run_queue_once("worker-test", retired)
+        assert calls == []
 
 
 def test_webchat_ai_reconciler_idle_cycle_does_not_log_info(monkeypatch):
@@ -141,8 +146,16 @@ def test_webchat_ai_worker_claims_one_llm_turn_per_cycle(monkeypatch):
         "dispatch_pending_webchat_ai_reply_jobs",
         fake_dispatch,
     )
-    monkeypatch.setattr(run_worker, "record_worker_result", lambda *a, **k: None)
-    monkeypatch.setattr(run_worker, "record_queue_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(
+        run_worker,
+        "record_worker_result",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        run_worker,
+        "record_queue_snapshot",
+        lambda *a, **k: None,
+    )
     monkeypatch.setattr(
         run_worker,
         "_run_webchat_ai_reconciler_watchdog",

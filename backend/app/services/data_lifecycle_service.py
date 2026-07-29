@@ -22,7 +22,6 @@ from ..models import (
     TicketInboundEmailMessage,
     TicketInternalNote,
     TicketOutboundMessage,
-    WhatsAppInboundMessage,
 )
 from ..models_agent_routing import ConversationControl
 from ..models_case_governance import (
@@ -38,6 +37,11 @@ from .secret_crypto import SecretCryptoService
 from .tenant_authority import (
     ensure_resource_tenant,
     resolve_actor_tenant_id,
+)
+from .whatsapp_privacy_lifecycle import (
+    WhatsAppPrivacyLifecycleError,
+    collect_whatsapp_subject_export,
+    redact_whatsapp_subject_records,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -437,6 +441,15 @@ def build_data_subject_export(
         ),
         "conversations",
     )
+    try:
+        whatsapp_export = collect_whatsapp_subject_export(
+            db,
+            ticket_ids=ticket_ids,
+            conversation_ids=list(graph.conversation_ids),
+            max_rows=MAX_EXPORT_ROWS_PER_COLLECTION,
+        )
+    except WhatsAppPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
     payload = {
         "schema": "nexus.data-subject-export.v1",
         "request_id": request.id,
@@ -524,6 +537,7 @@ def build_data_subject_export(
             }
             for row in messages
         ],
+        **whatsapp_export,
         "attachments": [
             {"id": attachment_id, "external_blob": True}
             for attachment_id in graph.attachment_ids
@@ -543,7 +557,9 @@ def build_data_subject_export(
     }
     request.result_manifest_json = manifest
     request.result_sha256 = digest
-    request.status = "completed" if request.request_type in {"access", "export"} else "processing"
+    request.status = (
+        "completed" if request.request_type in {"access", "export"} else "processing"
+    )
     request.completed_at = utc_now() if request.status == "completed" else None
     request.updated_at = utc_now()
     log_admin_audit(
@@ -694,7 +710,11 @@ def _anonymize_subject_graph(
     related = 0
     message_count = 0
     customer = graph.customer
-    customer.name = _anonymized(customer.name, namespace="customer", record_id=customer.id)
+    customer.name = _anonymized(
+        customer.name,
+        namespace="customer",
+        record_id=customer.id,
+    )
     customer.email = None
     customer.email_normalized = None
     customer.phone = None
@@ -725,15 +745,27 @@ def _anonymize_subject_graph(
         ticket.updated_at = utc_now()
 
     if ticket_ids:
-        comments = db.query(TicketComment).filter(TicketComment.ticket_id.in_(ticket_ids)).all()
+        comments = (
+            db.query(TicketComment)
+            .filter(TicketComment.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in comments:
             row.body = "[redacted by privacy request]"
         related += len(comments)
-        notes = db.query(TicketInternalNote).filter(TicketInternalNote.ticket_id.in_(ticket_ids)).all()
+        notes = (
+            db.query(TicketInternalNote)
+            .filter(TicketInternalNote.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in notes:
             row.body = "[redacted by privacy request]"
         related += len(notes)
-        events = db.query(TicketEvent).filter(TicketEvent.ticket_id.in_(ticket_ids)).all()
+        events = (
+            db.query(TicketEvent)
+            .filter(TicketEvent.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in events:
             row.old_value = None
             row.new_value = None
@@ -746,7 +778,11 @@ def _anonymize_subject_graph(
                 separators=(",", ":"),
             )
         related += len(events)
-        outbound = db.query(TicketOutboundMessage).filter(TicketOutboundMessage.ticket_id.in_(ticket_ids)).all()
+        outbound = (
+            db.query(TicketOutboundMessage)
+            .filter(TicketOutboundMessage.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in outbound:
             row.subject = None
             row.body = "[redacted by privacy request]"
@@ -759,21 +795,36 @@ def _anonymize_subject_graph(
             row.delivery_detail = None
             row.delivery_payload_json = None
         related += len(outbound)
-        inbound = db.query(TicketInboundEmailMessage).filter(TicketInboundEmailMessage.ticket_id.in_(ticket_ids)).all()
+        inbound = (
+            db.query(TicketInboundEmailMessage)
+            .filter(TicketInboundEmailMessage.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in inbound:
-            row.from_address = _anonymized(row.from_address, namespace="email", record_id=row.id) + "@invalid"
+            row.from_address = (
+                _anonymized(row.from_address, namespace="email", record_id=row.id)
+                + "@invalid"
+            )
             row.from_name = None
             row.to_address = None
             row.cc = None
             row.subject = None
             row.body = "[redacted by privacy request]"
             row.body_preview = None
-            row.mailbox_thread_id = _anonymized(row.mailbox_thread_id, namespace="thread", record_id=row.id)
+            row.mailbox_thread_id = _anonymized(
+                row.mailbox_thread_id,
+                namespace="thread",
+                record_id=row.id,
+            )
             row.mailbox_message_id = None
             row.mailbox_references = None
             row.in_reply_to = None
         related += len(inbound)
-        intakes = db.query(TicketAIIntake).filter(TicketAIIntake.ticket_id.in_(ticket_ids)).all()
+        intakes = (
+            db.query(TicketAIIntake)
+            .filter(TicketAIIntake.ticket_id.in_(ticket_ids))
+            .all()
+        )
         for row in intakes:
             row.summary = "[redacted by privacy request]"
             row.missing_fields_json = None
@@ -782,17 +833,23 @@ def _anonymize_subject_graph(
             row.raw_payload_json = None
             row.human_override_reason = None
         related += len(intakes)
-        whatsapp = db.query(WhatsAppInboundMessage).filter(WhatsAppInboundMessage.ticket_id.in_(ticket_ids)).all()
-        for row in whatsapp:
-            row.chat_jid = _anonymized(row.chat_jid, namespace="chat", record_id=row.id)
-            row.sender_jid = _anonymized(row.sender_jid, namespace="sender", record_id=row.id)
-            row.sender_phone = None
-            row.body_text = "[redacted by privacy request]"
-            row.raw_payload_json = None
-        related += len(whatsapp)
+
+    try:
+        related += redact_whatsapp_subject_records(
+            db,
+            ticket_ids=ticket_ids,
+            conversation_ids=list(graph.conversation_ids),
+            anonymize=_anonymized,
+        )
+    except WhatsAppPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
 
     if graph.conversation_ids:
-        conversations = db.query(WebchatConversation).filter(WebchatConversation.id.in_(graph.conversation_ids)).all()
+        conversations = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.id.in_(graph.conversation_ids))
+            .all()
+        )
         for row in conversations:
             row.visitor_name = _anonymized(
                 row.visitor_name or "visitor",
@@ -809,7 +866,11 @@ def _anonymize_subject_graph(
             row.last_handoff_reason = None
             row.updated_at = utc_now()
         related += len(conversations)
-        messages = db.query(WebchatMessage).filter(WebchatMessage.conversation_id.in_(graph.conversation_ids)).all()
+        messages = (
+            db.query(WebchatMessage)
+            .filter(WebchatMessage.conversation_id.in_(graph.conversation_ids))
+            .all()
+        )
         for row in messages:
             row.body = "[redacted by privacy request]"
             row.body_text = None
@@ -819,7 +880,11 @@ def _anonymize_subject_graph(
             row.safety_reasons_json = None
         message_count = len(messages)
         related += message_count
-        turns = db.query(WebchatAITurn).filter(WebchatAITurn.conversation_id.in_(graph.conversation_ids)).all()
+        turns = (
+            db.query(WebchatAITurn)
+            .filter(WebchatAITurn.conversation_id.in_(graph.conversation_ids))
+            .all()
+        )
         for row in turns:
             row.status_reason = None
             row.runtime_trace_json = None

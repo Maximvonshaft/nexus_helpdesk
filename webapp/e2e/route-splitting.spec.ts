@@ -64,7 +64,13 @@ async function setAuthenticatedSession(page: Page) {
     }
     if (url.pathname === '/api/admin/operator-queue/my-scopes') {
       return json(route, {
-        items: [{ tenant_key: 'tenant-route', tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' }],
+        items: [{
+          tenant_key: 'tenant-route',
+          tenant_hash: '123456789abc',
+          country_code: 'CH',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        }],
         requires_explicit_admin_scope: false,
       })
     }
@@ -72,7 +78,12 @@ async function setAuthenticatedSession(page: Page) {
       return json(route, {
         items: [],
         next_cursor: null,
-        scope: { tenant_hash: '123456789abc', country_code: 'CH', channel_key: 'webchat' },
+        scope: {
+          tenant_hash: '123456789abc',
+          country_code: 'CH',
+          channel_key: 'webchat',
+          queue_key: 'customer_support',
+        },
         filters: { state: 'active', source_type: null, owner: null, priority: null, sla: null, retry: null, sort: 'oldest' },
       })
     }

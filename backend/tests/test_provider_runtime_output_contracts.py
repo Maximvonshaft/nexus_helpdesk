@@ -173,11 +173,13 @@ def test_signed_customer_reply_contract_remains_independent_transport_envelope()
         channel="web_chat",
     )
     payload = contract.payload_dict(body=body)
+    validation_args = contract_validation_args_from_payload(payload)
 
-    assert validate_ai_reply_contract(
-        body=body,
-        **contract_validation_args_from_payload(payload),
-    ) is None
+    # Origin belongs to the transport/persistence envelope and is validated
+    # against the outbound row separately. It is deliberately not signed into
+    # the transport-independent customer reply contract.
+    assert validation_args.pop("origin") == "provider_runtime"
+    assert validate_ai_reply_contract(**validation_args) is None
     assert payload["reply"]["text"] == body
     with pytest.raises(ValueError, match="Unsupported output contract"):
         OutputContracts.validate_and_parse("nexus.ai_reply.v3", json.dumps(payload))

@@ -43,24 +43,51 @@ async function mockSupportingRoutes(page: Page) {
         updated_at: '2026-07-14T12:00:00Z',
       }])
     }
-    if (url.pathname === '/api/admin/whatsapp/accounts/wa-primary-private/status') {
-      return json(route, {
+    if (url.pathname === '/api/admin/whatsapp/connections') {
+      return json(route, [{
+        id: 11,
+        tenant_id: 1,
+        channel_account_id: 1,
         account_id: 'wa-primary-private',
-        status: 'connected',
-        qr_status: 'not_required',
-        qr: null,
-        qr_data_url: null,
-        phone_number: '+41790001234',
-        jid: 'private-jid',
+        display_name: 'WhatsApp 主线路',
+        market_id: 1,
+        priority: 10,
+        channel_active: true,
+        transport: 'baileys_sidecar',
+        desired_state: 'active',
+        observed_state: 'connected',
+        authentication_state: 'linked',
+        listener_state: 'active',
+        verification_state: 'verified',
+        desired_generation: 3,
+        observed_generation: 3,
+        phone_number_mask: '•••• 1234',
+        business_account_id: null,
+        waba_id: null,
+        phone_number_id: null,
+        graph_api_version: null,
+        sidecar_session_key: 'wa-primary-private',
+        session_generation: 2,
+        access_token_configured: false,
+        app_secret_configured: false,
+        verify_token_configured: false,
         last_qr_generated_at: null,
+        qr_expires_at: null,
         last_connected_at: '2026-07-14T12:00:00Z',
         last_disconnected_at: null,
+        last_inbound_at: '2026-07-14T12:05:00Z',
+        last_outbound_at: '2026-07-14T12:06:00Z',
+        last_probe_at: '2026-07-14T12:07:00Z',
+        last_probe_status: 'ok',
+        reconnect_count: 1,
         last_error_code: null,
         last_error_message: null,
-        reconnect_count: 1,
-        channel_account_id: 1,
-        channel_health_status: 'connected',
-      })
+        inbound_tested_at: '2026-07-14T12:05:00Z',
+        outbound_tested_at: '2026-07-14T12:06:00Z',
+        verified_at: '2026-07-14T12:06:00Z',
+        created_at: '2026-07-14T10:00:00Z',
+        updated_at: '2026-07-14T12:07:00Z',
+      }])
     }
     if (url.pathname === '/api/admin/provider-runtime/status') {
       return json(route, {
@@ -119,10 +146,10 @@ test('Channels is a canonical route in the shared shell and keeps identifiers se
   await expect(page).toHaveURL(/\/channels$/)
   await expect(page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '渠道管理', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('heading', { level: 1, name: '渠道管理' })).toBeVisible()
-  await expect(page.getByText('WhatsApp 主线路')).toBeVisible()
+  await expect(page.getByText('WhatsApp 主线路').first()).toBeVisible()
   await expect(page.getByText('•••• 1234')).toBeVisible()
   await expect(page.getByText('+41790001234')).toHaveCount(0)
-  await expect(page.getByText('wa-primary-private')).toBeHidden()
+  await expect(page.getByText('wa-primary-private').first()).toBeHidden()
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
 

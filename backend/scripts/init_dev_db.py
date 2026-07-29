@@ -15,6 +15,41 @@ from app.services.ticket_service import create_ticket
 from app.webchat_models import WebchatConversation, WebchatMessage  # noqa: F401 - ensure metadata registration
 
 
+_REQUIRED_MARKETS = (
+    ("PH", "Philippines", "PH"),
+    ("CH", "Switzerland", "CH"),
+)
+
+
+def _ensure_required_markets(db) -> dict[str, Market]:
+    """Create each canonical demo Market independently and fail on identity drift."""
+
+    for code, name, country_code in _REQUIRED_MARKETS:
+        market = db.query(Market).filter(Market.code == code).one_or_none()
+        if market is not None:
+            if market.name != name or market.country_code != country_code:
+                raise RuntimeError(f"dev_seed_market_identity_conflict:{code}")
+            continue
+        name_owner = db.query(Market).filter(Market.name == name).one_or_none()
+        if name_owner is not None:
+            raise RuntimeError(
+                f"dev_seed_market_name_conflict:{name}:{name_owner.code}"
+            )
+        db.add(Market(code=code, name=name, country_code=country_code))
+    db.commit()
+
+    markets = {
+        market.code: market
+        for market in db.query(Market)
+        .filter(Market.code.in_([row[0] for row in _REQUIRED_MARKETS]))
+        .all()
+    }
+    missing = sorted({row[0] for row in _REQUIRED_MARKETS} - set(markets))
+    if missing:
+        raise RuntimeError(f"dev_seed_required_markets_missing:{','.join(missing)}")
+    return markets
+
+
 def seed_data() -> None:
     db = SessionLocal()
     try:
@@ -42,13 +77,8 @@ def seed_data() -> None:
             customer = Customer(name='Alice Brown', email='alice-brown@email.com', email_normalized='alice-brown@email.com', phone='+12345678901', phone_normalized='+12345678901')
             db.add(customer)
             db.commit()
-        if not db.query(Market).count():
-            db.add_all([
-                Market(code='PH', name='Philippines', country_code='PH'),
-                Market(code='CH', name='Switzerland', country_code='CH'),
-            ])
-            db.commit()
-        markets = {m.code: m for m in db.query(Market).all()}
+
+        markets = _ensure_required_markets(db)
         if not db.query(Customer).join(Customer.tickets).count():
             creator = db.query(User).filter(User.username == 'lead').first()
             create_ticket(

@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTROLLED = ROOT / "deploy" / "docker-compose.controlled.yml"
+PRODUCTION_ACTIVATION = ROOT / "deploy" / "docker-compose.production-activation.yml"
 LOCAL_DB = ROOT / "deploy" / "docker-compose.controlled-postgres.yml"
 CONTROLLED_ENV = ROOT / "deploy" / ".env.controlled.example"
 LOCAL_ENV = ROOT / "deploy" / ".env.controlled.local-postgres.example"
@@ -38,6 +39,7 @@ def test_retired_deployment_aliases_are_physically_absent():
     for relative in (
         "deploy/docker-compose.server.yml",
         "deploy/docker-compose.candidate.yml",
+        "deploy/docker-compose.whatsapp-sidecar.example.yml",
         "deploy/.env.prod.example",
         "deploy/.env.prod.local-postgres.example",
         "deploy/.env.prod.external-postgres.example",
@@ -55,10 +57,10 @@ def test_canonical_app_worker_topology_exists_in_one_file_only():
         "worker-outbound-controlled",
         "worker-background-controlled",
         "worker-webchat-ai-controlled",
-        "worker-handoff-snapshot-controlled",
     }
     assert expected_runtime.issubset(controlled)
     assert expected_runtime.isdisjoint(local_db)
+    assert "worker-handoff-snapshot-controlled" not in controlled
     assert "postgres-controlled" not in controlled
     assert "postgres-controlled" in local_db
     assert "migrate-controlled" in local_db
@@ -77,7 +79,6 @@ def test_external_and_local_controlled_envs_use_distinct_service_identities():
         "DATABASE_URL_OUTBOUND": "nexus_outbound",
         "DATABASE_URL_BACKGROUND": "nexus_background",
         "DATABASE_URL_WEBCHAT_AI": "nexus_webchat_ai",
-        "DATABASE_URL_HANDOFF": "nexus_handoff",
     }
     for path, expected_host in (
         (CONTROLLED_ENV, "10.2.64.2"),
@@ -96,6 +97,8 @@ def test_external_and_local_controlled_envs_use_distinct_service_identities():
             found_users.add(match.group(1))
         assert len(found_users) == len(expected_users)
         assert not re.search(r"(?m)^DATABASE_URL=", text)
+        assert "DATABASE_URL_HANDOFF" not in text
+        assert "NEXUS_DB_HANDOFF" not in text
 
 
 def test_local_postgres_overlay_bootstraps_only_database_authority():
@@ -109,6 +112,8 @@ def test_local_postgres_overlay_bootstraps_only_database_authority():
     assert "ALTER DEFAULT PRIVILEGES" in bootstrap
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES" in bootstrap
     assert "GRANT USAGE, SELECT ON SEQUENCES" in bootstrap
+    assert "NEXUS_DB_HANDOFF" not in compose
+    assert "handoff_user" not in bootstrap
     assert "DROP DATABASE" not in bootstrap
     assert "DROP ROLE" not in bootstrap
 
@@ -119,6 +124,18 @@ def _secret_holders(services: dict[str, dict], key: str) -> set[str]:
         for service_name, service in services.items()
         if key in (service.get("environment") or {})
     }
+
+
+def _volume_targets(service: dict) -> set[str]:
+    targets: set[str] = set()
+    for value in service.get("volumes") or []:
+        if isinstance(value, str):
+            parts = value.rsplit(":", 2)
+            if len(parts) >= 2:
+                targets.add(parts[-2])
+        elif isinstance(value, dict) and value.get("target"):
+            targets.add(str(value["target"]))
+    return targets
 
 
 def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_scoped():
@@ -133,13 +150,18 @@ def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_sco
         "PROVIDER_RUNTIME_CANARY_PERCENT": "0",
         "ENABLE_OUTBOUND_DISPATCH": "false",
         "OUTBOUND_PROVIDER": "disabled",
-        "WHATSAPP_NATIVE_ENABLED": "false",
-        "WHATSAPP_DISPATCH_MODE": "disabled",
+        "WHATSAPP_ENABLED": "false",
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED": "false",
+        "WHATSAPP_MEDIA_ENABLED": "false",
+        "WHATSAPP_MEDIA_SCANNER": "disabled",
         "WEBCHAT_HUMAN_CALL_ENABLED": "false",
         "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
     }
     for key, value in expected_disabled.items():
         assert env[key] == value
+    for retired in ("WHATSAPP_NATIVE_ENABLED", "WHATSAPP_DISPATCH_MODE"):
+        assert retired not in env
+        assert retired not in _read(CONTROLLED)
     assert "WEBCHAT_VOICE_ENABLED" not in env
 
     expected_secret_holders = {
@@ -193,11 +215,45 @@ def test_controlled_profile_keeps_external_effects_disabled_and_secrets_role_sco
             if "--queue" in command:
                 queue_index = command.index("--queue")
                 assert command[queue_index + 1] != "all", service_name
+                assert command[queue_index + 1] != "handoff-snapshot", service_name
 
     raw = _read(CONTROLLED).lower()
     for forbidden in (
         "/run/secrets",
         "ai_runtime_token",
         "live_voice_token",
+        "worker-handoff-snapshot",
+        "database_url_handoff",
     ):
         assert forbidden not in raw
+
+
+def test_whatsapp_production_overlay_closes_signup_media_and_secret_runtime():
+    activation = _compose(PRODUCTION_ACTIVATION)
+    services = activation["services"]
+    app_env = services["app-controlled"]["environment"]
+    preflight_env = services["production-activation-preflight"]["environment"]
+    background = services["worker-background-controlled"]
+
+    for key in (
+        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED",
+        "WHATSAPP_META_APP_ID",
+        "WHATSAPP_META_APP_SECRET_FILE",
+        "WHATSAPP_META_CONFIGURATION_ID",
+        "WHATSAPP_META_GRAPH_API_VERSION",
+        "WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN",
+        "WHATSAPP_MEDIA_ENABLED",
+        "WHATSAPP_MEDIA_SCANNER",
+        "WHATSAPP_CLAMAV_HOST",
+        "WHATSAPP_CLAMAV_PORT",
+        "WHATSAPP_CLAMAV_TIMEOUT_SECONDS",
+        "WHATSAPP_MEDIA_MAX_TOTAL_BYTES",
+    ):
+        assert key in app_env, key
+        assert key in preflight_env, key
+
+    assert "WHATSAPP_SIDECAR_IMAGE" in preflight_env
+    assert "COMPOSE_PROFILES" in preflight_env
+    assert "/run/nexus" in _volume_targets(background)
+    assert services["clamav-controlled"]["profiles"] == ["whatsapp-media"]
+    assert "@sha256:" in str(services["clamav-controlled"]["image"])

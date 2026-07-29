@@ -33,6 +33,7 @@ register_all_models()
 TENANT = "tenant-policy-a"
 COUNTRY = "ME"
 CHANNEL = "webchat"
+QUEUE = "legacy"
 
 
 @pytest.fixture()
@@ -71,16 +72,17 @@ def _grant(
     db,
     *,
     user: User,
-    tenant: str = TENANT,
     country: str = COUNTRY,
     channel: str = CHANNEL,
+    queue: str = QUEUE,
     enabled: bool = True,
 ) -> OperatorQueueScopeGrant:
     row = OperatorQueueScopeGrant(
         user_id=user.id,
-        tenant_key=tenant,
+        tenant_key=TENANT,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
         enabled=enabled,
         granted_by=user.id,
     )
@@ -89,13 +91,22 @@ def _grant(
     return row
 
 
-def _authorize(db, user: User, *, tenant: str = TENANT, country: str = COUNTRY, channel: str = CHANNEL):
+def _authorize(
+    db,
+    user: User,
+    *,
+    tenant: str = TENANT,
+    country: str = COUNTRY,
+    channel: str = CHANNEL,
+    queue: str = QUEUE,
+):
     return authorize_operator_scope(
         db,
         current_user=user,
         tenant_key=tenant,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
     )
 
 
@@ -121,6 +132,7 @@ def test_normal_queue_authority_is_capability_plus_active_grant_not_role(db_sess
 
     assert (tenant, country, channel) == (TENANT, COUNTRY, CHANNEL)
     assert resolved.id == grant.id
+    assert resolved.queue_key == QUEUE
 
 
 def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> None:
@@ -137,11 +149,15 @@ def test_disabled_wrong_user_and_wrong_scope_grants_fail_closed(db_session) -> N
     db_session.flush()
     with pytest.raises(HTTPException) as wrong_tenant:
         _authorize(db_session, user, tenant="tenant-other")
-    assert wrong_tenant.value.detail == "operator_queue_scope_not_granted"
+    assert wrong_tenant.value.detail == "operator_queue_cross_tenant_scope_forbidden"
 
     with pytest.raises(HTTPException) as wrong_channel:
         _authorize(db_session, user, channel="email")
     assert wrong_channel.value.detail == "operator_queue_scope_not_granted"
+
+    with pytest.raises(HTTPException) as wrong_queue:
+        _authorize(db_session, user, queue="claims_review")
+    assert wrong_queue.value.detail == "operator_queue_scope_not_granted"
 
 
 def test_grant_country_is_authoritative_without_team_or_role_inference(db_session) -> None:
@@ -187,27 +203,29 @@ def test_team_relationship_changes_scope_cursor_authority_fingerprint(db_session
 def test_current_scope_projection_contains_only_active_current_user_grants(db_session) -> None:
     user = _user(db_session, username="projection-user", role=UserRole.auditor)
     other = _user(db_session, username="projection-other", role=UserRole.auditor)
-    _grant(db_session, user=user, tenant="tenant-z", country="CH", channel="email")
-    _grant(db_session, user=user, tenant="tenant-a", country="ME", channel="webchat")
-    _grant(db_session, user=user, tenant="tenant-disabled", enabled=False)
-    _grant(db_session, user=other, tenant="tenant-other")
+    _grant(db_session, user=user, country="CH", channel="email")
+    _grant(db_session, user=user, country="ME", channel="webchat")
+    _grant(db_session, user=user, country="DE", channel="whatsapp", enabled=False)
+    _grant(db_session, user=other, country="FR", channel="webchat")
 
     result = list_current_scope_grants(db_session, current_user=user)
 
     assert result == {
         "items": [
             {
-                "tenant_key": "tenant-z",
+                "tenant_key": TENANT,
                 "tenant_hash": result["items"][0]["tenant_hash"],
                 "country_code": "CH",
                 "channel_key": "email",
+                "queue_key": QUEUE,
             },
             {
-                "tenant_key": "tenant-a",
+                "tenant_key": TENANT,
                 "tenant_hash": result["items"][1]["tenant_hash"],
                 "country_code": "ME",
                 "channel_key": "webchat",
+                "queue_key": QUEUE,
             },
         ]
     }
-    assert all(item["tenant_key"] not in {"tenant-disabled", "tenant-other"} for item in result["items"])
+    assert all(item["country_code"] not in {"DE", "FR"} for item in result["items"])

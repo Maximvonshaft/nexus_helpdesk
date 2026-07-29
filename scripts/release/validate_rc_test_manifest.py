@@ -13,7 +13,10 @@ from typing import Any
 SCHEMA = "nexus.osr.rc-test-candidate.v1"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-MIGRATION_RE = re.compile(r"^[0-9]{8}_[0-9]{4}$")
+# Nexus revisions are date-prefixed and may use a descriptive authority suffix,
+# for example 20260728_r5_scenario. Keep the grammar bounded and reject aliases
+# such as "head" so the manifest always records one concrete Alembic revision.
+MIGRATION_RE = re.compile(r"^[0-9]{8}_[A-Za-z0-9][A-Za-z0-9_.-]{0,70}$")
 IMAGE_DIGEST_RE = re.compile(r"^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$")
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_EVIDENCE_BYTES = 512 * 1024
@@ -207,6 +210,16 @@ def _safe_token(value: str) -> str:
 
 def _reason_code(exc: Exception) -> str:
     message = str(exc)
+    stable_contract_codes = (
+        ("candidate.image_id ", "candidate_image_id_invalid"),
+        ("required checks are not pass:", "checks_not_pass"),
+        ("safety.", "safety_contract_invalid"),
+        ("missing evidence:", "missing_evidence"),
+        ("unexpected evidence:", "unexpected_evidence"),
+    )
+    for prefix, code in stable_contract_codes:
+        if message.startswith(prefix):
+            return code
     evidence_match = re.match(r"^evidence\.([a-z0-9_]+)(?:\.| )", message)
     if evidence_match:
         name = _safe_token(evidence_match.group(1))
@@ -218,79 +231,39 @@ def _reason_code(exc: Exception) -> str:
             return f"evidence_{name}_digest_mismatch"
         if ".sha256 must" in message:
             return f"evidence_{name}_digest_format_invalid"
-        if "reuses another" in message:
-            return f"evidence_{name}_path_reused"
-        if ".path" in message:
+        if "reuses" in message:
+            return f"evidence_{name}_reused"
+        if "path" in message:
             return f"evidence_{name}_path_invalid"
-        if "must be an object" in message:
-            return f"evidence_{name}_type_invalid"
-    candidate_match = re.match(r"^candidate\.([a-z0-9_]+)", message)
-    if candidate_match:
-        return f"candidate_{_safe_token(candidate_match.group(1))}_invalid"
-    if message.startswith("schema must"):
-        return "schema_invalid"
-    if message.startswith("release_class must"):
-        return "release_class_invalid"
-    if message.startswith("decision must"):
-        return "decision_invalid"
-    if message.startswith("required checks"):
-        return "checks_not_pass"
-    if message.startswith("safety.") or message.startswith("safety fields"):
-        return "safety_contract_invalid"
-    if message.startswith("missing evidence:"):
-        return "missing_evidence"
-    if message.startswith("unexpected evidence:"):
-        return "unexpected_evidence"
-    if message.startswith("manifest not found"):
-        return "manifest_missing_or_irregular"
-    if message.startswith("manifest exceeds"):
-        return "manifest_too_large"
-    if message.startswith("manifest is not valid"):
-        return "manifest_json_invalid"
-    if message.startswith("manifest root"):
-        return "manifest_root_invalid"
-    if message.startswith("duplicate JSON key"):
-        return "manifest_duplicate_key"
-    if message.endswith("must be an object"):
-        return f"{_safe_token(message.split(' ', 1)[0])}_type_invalid"
-    return "manifest_validation_failed"
-
-
-def _write_failure(path: Path, *, reason_code: str) -> None:
-    root = path.parent
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "failure-summary.json").write_text(
-        json.dumps(
-            {
-                "schema": "nexus.osr.rc-test-failure-summary.v1",
-                "status": "failed",
-                "stage": "manifest-validate",
-                "exit_code": 2,
-                "reason_code": reason_code,
-                "service_states": {},
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    return _safe_token(message) or "manifest_invalid"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
+    parser.add_argument("--failure-json", type=Path)
     args = parser.parse_args()
     try:
-        manifest_path = args.manifest.resolve(strict=True)
-        payload = load_manifest(manifest_path)
-        validate_manifest(payload, manifest_path)
-    except (ManifestError, OSError) as exc:
-        reason_code = _reason_code(exc)
-        _write_failure(args.manifest, reason_code=reason_code)
-        print(f"RC_MANIFEST_VALID=false reason_code={reason_code}")
-        return 2
-    print("RC_MANIFEST_VALID=true")
+        payload = load_manifest(args.manifest)
+        validate_manifest(payload, args.manifest)
+    except (ManifestError, OSError, UnicodeError) as exc:
+        if args.failure_json:
+            args.failure_json.parent.mkdir(parents=True, exist_ok=True)
+            args.failure_json.write_text(
+                json.dumps(
+                    {
+                        "schema": "nexus.osr.rc-test-validation-failure.v1",
+                        "status": "fail",
+                        "reason_code": _reason_code(exc),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        raise SystemExit(str(exc)) from exc
+    print("RC_TEST_MANIFEST_VALID=true")
     return 0
 
 

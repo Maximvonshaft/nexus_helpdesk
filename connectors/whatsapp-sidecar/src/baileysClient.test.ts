@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { phoneJidFromAccountSnapshot, projectSelfTestInboundToPhoneJid, targetToWhatsAppJid } from "./baileysClient.js";
+import {
+  deliveryStatusFromMessageUpdate,
+  deliveryStatusFromReceiptUpdate,
+  phoneJidFromAccountSnapshot,
+  projectSelfTestInboundToPhoneJid,
+  targetToWhatsAppJid
+} from "./baileysClient.js";
 
 test("normalizes send targets without corrupting WhatsApp JIDs", () => {
   assert.equal(targetToWhatsAppJid("+1 (555) 123-4567"), "15551234567@s.whatsapp.net");
@@ -13,11 +20,18 @@ test("normalizes send targets without corrupting WhatsApp JIDs", () => {
 });
 
 test("projects fromMe self-test inbound to the account phone JID", () => {
-  assert.equal(phoneJidFromAccountSnapshot({ phone_number: "+41 79 855 97 37", jid: null }), "41798559737@s.whatsapp.net");
-  assert.equal(phoneJidFromAccountSnapshot({ phone_number: null, jid: "41798559737:19@s.whatsapp.net" }), "41798559737@s.whatsapp.net");
+  assert.equal(
+    phoneJidFromAccountSnapshot({ phone_number: "+41 79 855 97 37", jid: null }),
+    "41798559737@s.whatsapp.net"
+  );
+  assert.equal(
+    phoneJidFromAccountSnapshot({ phone_number: null, jid: "41798559737:19@s.whatsapp.net" }),
+    "41798559737@s.whatsapp.net"
+  );
 
   const projected = projectSelfTestInboundToPhoneJid(
     {
+      transport: "baileys_sidecar",
       account_id: "wa-main",
       external_message_id: "self-1",
       chat_jid: "174488096354391@lid",
@@ -25,7 +39,7 @@ test("projects fromMe self-test inbound to the account phone JID", () => {
       sender_phone: null,
       message_type: "conversation",
       body_text: "/ai hello",
-      raw_payload: { key: { remoteJid: "174488096354391@lid" } },
+      raw_message: { key: { remoteJid: "174488096354391@lid" } },
       received_at: "2026-07-03T13:00:00Z",
       from_me: true,
       projection_mode: "test_visitor",
@@ -37,5 +51,40 @@ test("projects fromMe self-test inbound to the account phone JID", () => {
   assert.equal(projected.chat_jid, "41798559737@s.whatsapp.net");
   assert.equal(projected.sender_jid, "41798559737@s.whatsapp.net");
   assert.equal(projected.sender_phone, "+41798559737");
-  assert.equal((projected.raw_payload as any).nexus_self_test_original_chat_jid, "174488096354391@lid");
+  assert.equal(
+    (projected.raw_message as any).nexus_self_test_original_chat_jid,
+    "174488096354391@lid"
+  );
+});
+
+test("maps asynchronous Baileys receipts monotonically", () => {
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 2 }), null);
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 3 }), "delivered");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: 4 }), "read");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: "DELIVERY_ACK" }), "delivered");
+  assert.equal(deliveryStatusFromMessageUpdate({ status: "READ" }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({ receiptTimestamp: 1781179200 }), "delivered");
+  assert.equal(deliveryStatusFromReceiptUpdate({ readTimestamp: 1781179201 }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({ playedTimestamp: 1781179202 }), "read");
+  assert.equal(deliveryStatusFromReceiptUpdate({}), null);
+});
+
+test("publishes changed generation even when the socket is already active", () => {
+  const source = readFileSync(new URL("./baileysClient.ts", import.meta.url), "utf8");
+  const guard = source.indexOf('account.generation !== previousGeneration');
+  const publish = source.indexOf('await this.emitStatus(account);', guard);
+  const earlyReturn = source.indexOf('return account.status;', guard);
+  assert.ok(guard >= 0);
+  assert.ok(publish > guard && publish < earlyReturn);
+});
+
+test("persists media retrieval before publishing the inbound callback", () => {
+  const source = readFileSync(new URL("./baileysClient.ts", import.meta.url), "utf8");
+  const enqueue = source.indexOf("this.mediaDownloads.enqueue({");
+  const callback = source.indexOf("await this.onInbound(projected);");
+  assert.ok(enqueue >= 0, "durable media download enqueue must exist");
+  assert.ok(callback > enqueue, "media download work must be durable before inbound callback");
+  assert.equal(source.includes("baileys_media_download_failed\"\n      );\n      return;"), false);
+  assert.ok(source.includes("void this.drainMediaDownloads(account);"));
+  assert.ok(source.includes("this.mediaRetryTimer = setInterval"));
 });

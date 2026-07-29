@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OperatorTaskRead(BaseModel):
     id: int
+    tenant_id: int | None = Field(default=None, gt=0)
     source_type: str
     source_id: str | None = None
     source_version: int | None = None
@@ -20,7 +21,10 @@ class OperatorTaskRead(BaseModel):
     reason_code: str | None = None
     payload_json: dict[str, Any] = Field(
         default_factory=dict,
-        description="Admin-only redacted payload; never includes raw visitor token, session key, email, phone, or full raw error.",
+        description=(
+            "Admin-only redacted payload; never includes raw visitor token, "
+            "session key, email, phone, or full raw error."
+        ),
     )
     created_at: str | None = None
     updated_at: str | None = None
@@ -57,6 +61,7 @@ class OperatorQueueScopeGrantUpsert(BaseModel):
     tenant_key: str = Field(min_length=1, max_length=80)
     country_code: str = Field(min_length=2, max_length=16)
     channel_key: str = Field(min_length=1, max_length=40)
+    queue_key: str = Field(default="legacy", min_length=1, max_length=160)
     enabled: bool = True
 
 
@@ -66,6 +71,7 @@ class OperatorQueueScopeGrantRead(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str
     channel_key: str
+    queue_key: str
     enabled: bool
     created_at: str
     updated_at: str
@@ -76,6 +82,7 @@ class OperatorQueueCurrentScopeRead(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str = Field(min_length=2, max_length=16)
     channel_key: str = Field(min_length=1, max_length=40)
+    queue_key: str = Field(min_length=1, max_length=160)
 
 
 class OperatorQueueCurrentScopesResponse(BaseModel):
@@ -151,6 +158,7 @@ class UnifiedQueueScope(BaseModel):
     tenant_hash: str = Field(min_length=12, max_length=12)
     country_code: str = Field(max_length=16)
     channel_key: str = Field(max_length=40)
+    queue_key: str = Field(min_length=2, max_length=160)
 
 
 class UnifiedQueueFilters(BaseModel):

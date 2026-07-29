@@ -13,8 +13,10 @@ def _service_blocks(text: str) -> dict[str, str]:
     matches = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", services_text))
     blocks: dict[str, str] = {}
     for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(services_text)
-        blocks[match.group(1)] = services_text[match.end():end]
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(
+            services_text
+        )
+        blocks[match.group(1)] = services_text[match.end() : end]
     return blocks
 
 
@@ -26,9 +28,9 @@ def test_each_controlled_service_uses_its_database_identity():
         "worker-outbound-controlled": "DATABASE_URL_OUTBOUND",
         "worker-background-controlled": "DATABASE_URL_BACKGROUND",
         "worker-webchat-ai-controlled": "DATABASE_URL_WEBCHAT_AI",
-        "worker-handoff-snapshot-controlled": "DATABASE_URL_HANDOFF",
     }
     assert set(expected).issubset(blocks)
+    assert "worker-handoff-snapshot-controlled" not in blocks
     for service, variable in expected.items():
         block = blocks[service]
         assert f"DATABASE_URL: ${{{variable}:?" in block
@@ -45,17 +47,22 @@ def test_controlled_environment_declares_distinct_database_users():
         "DATABASE_URL_OUTBOUND",
         "DATABASE_URL_BACKGROUND",
         "DATABASE_URL_WEBCHAT_AI",
-        "DATABASE_URL_HANDOFF",
     ):
         match = re.search(rf"(?m)^{variable}=postgresql\+psycopg://([^:]+):", text)
         assert match, variable
         values[variable] = match.group(1)
+    assert "DATABASE_URL_HANDOFF" not in text
     assert len(set(values.values())) == len(values), values
     assert values["DATABASE_URL_MIGRATION"] == "nexus_migration"
-    assert all(user != "nexus_migration" for variable, user in values.items() if variable != "DATABASE_URL_MIGRATION")
+    assert all(
+        user != "nexus_migration"
+        for variable, user in values.items()
+        if variable != "DATABASE_URL_MIGRATION"
+    )
 
 
 def test_shared_database_url_is_not_used_by_controlled_services():
     text = COMPOSE.read_text(encoding="utf-8")
     services_text = text.split("\nservices:\n", 1)[1]
     assert "DATABASE_URL: ${DATABASE_URL:" not in services_text
+    assert "DATABASE_URL_HANDOFF" not in services_text

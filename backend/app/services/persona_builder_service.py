@@ -6,10 +6,18 @@ from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..models_control_plane import PersonaProfile, PersonaProfileReview, PersonaProfileVersion
+from ..models_control_plane import (
+    PersonaProfile,
+    PersonaProfileReview,
+    PersonaProfileVersion,
+)
 from ..utils.time import utc_now
 from . import persona_service
-from .permissions import CAP_AI_CONFIG_MANAGE, CAP_AI_CONFIG_READ, resolve_capabilities
+from .permissions import (
+    CAP_AI_CONFIG_MANAGE,
+    CAP_AI_CONFIG_READ,
+    resolve_capabilities,
+)
 
 PERSONA_BUILDER_CAPABILITIES = {CAP_AI_CONFIG_READ, CAP_AI_CONFIG_MANAGE}
 
@@ -26,15 +34,44 @@ def _tone(value: int, *, danger: int, warning: int = 1) -> str:
     return "success"
 
 
-def _kpi(key: str, label: str, value: int, hint: str, tone: str = "default") -> dict[str, Any]:
+def _kpi(
+    key: str,
+    label: str,
+    value: int,
+    hint: str,
+    tone: str = "default",
+) -> dict[str, Any]:
     return {"key": key, "label": label, "value": value, "hint": hint, "tone": tone}
 
 
-def _template_block(key: str, label: str, backend_contract: str, status_value: str, evidence: str, href: str) -> dict[str, str]:
-    return {"key": key, "label": label, "backend_contract": backend_contract, "status": status_value, "evidence": evidence, "href": href}
+def _template_block(
+    key: str,
+    label: str,
+    backend_contract: str,
+    status_value: str,
+    evidence: str,
+    href: str,
+) -> dict[str, str]:
+    return {
+        "key": key,
+        "label": label,
+        "backend_contract": backend_contract,
+        "status": status_value,
+        "evidence": evidence,
+        "href": href,
+    }
 
 
-def _lifecycle_step(key: str, step: str, owner: str, artifact: str, status_value: str, count: int, href: str, enabled: bool) -> dict[str, Any]:
+def _lifecycle_step(
+    key: str,
+    step: str,
+    owner: str,
+    artifact: str,
+    status_value: str,
+    count: int,
+    href: str,
+    enabled: bool,
+) -> dict[str, Any]:
     return {
         "key": key,
         "step": step,
@@ -48,7 +85,9 @@ def _lifecycle_step(key: str, step: str, owner: str, artifact: str, status_value
 
 
 def _has_draft_content(row: PersonaProfile) -> bool:
-    return bool((row.draft_summary or "").strip()) or bool(row.draft_content_json or {})
+    return bool((row.draft_summary or "").strip()) or bool(
+        row.draft_content_json or {}
+    )
 
 
 def _content(row: PersonaProfile) -> dict[str, Any]:
@@ -60,13 +99,19 @@ def _content(row: PersonaProfile) -> dict[str, Any]:
 
 
 def _identity_ready(content: dict[str, Any]) -> bool:
-    return bool(content.get("brand_name") or content.get("assistant_name") or content.get("identity_statement"))
+    return bool(
+        content.get("brand_name")
+        or content.get("assistant_name")
+        or content.get("identity_statement")
+    )
 
 
 def _boundary_ready(content: dict[str, Any]) -> bool:
-    guardrails = content.get("guardrails")
-    disallowed = content.get("disallowed_identity_claims")
-    return bool(content.get("handoff_boundary") or guardrails or disallowed)
+    return bool(
+        content.get("handoff_boundary")
+        or content.get("guardrails")
+        or content.get("disallowed_identity_claims")
+    )
 
 
 def _guardrail_count(content: dict[str, Any]) -> int:
@@ -81,19 +126,25 @@ def _guardrail_count(content: dict[str, Any]) -> int:
 
 
 def _scope_label(row: PersonaProfile) -> str:
-    return " / ".join([
-        f"market:{row.market_id}" if row.market_id is not None else "market:global",
-        f"channel:{row.channel or 'global'}",
-        f"lang:{row.language or 'global'}",
-    ])
+    return " / ".join(
+        [
+            f"market:{row.market_id}" if row.market_id is not None else "market:global",
+            f"channel:{row.channel or 'global'}",
+            f"lang:{row.language or 'global'}",
+        ]
+    )
 
 
 def _scope_specificity(row: PersonaProfile) -> int:
-    return int(row.market_id is not None) + int(bool(row.channel)) + int(bool(row.language))
+    return int(row.market_id is not None) + int(bool(row.channel)) + int(
+        bool(row.language)
+    )
 
 
 def _draft_changed(row: PersonaProfile) -> bool:
-    return (row.draft_summary or None) != (row.published_summary or None) or (row.draft_content_json or {}) != (row.published_content_json or {})
+    return (row.draft_summary or None) != (row.published_summary or None) or (
+        row.draft_content_json or {}
+    ) != (row.published_content_json or {})
 
 
 def _profile(row: PersonaProfile) -> dict[str, Any]:
@@ -125,18 +176,26 @@ def _profile(row: PersonaProfile) -> dict[str, Any]:
         "published_version": row.published_version,
         "draft_ready": draft_ready,
         "published_ready": published_ready,
-        "needs_publish": draft_ready and (row.published_version == 0 or _draft_changed(row)),
+        "needs_publish": draft_ready
+        and (row.published_version == 0 or _draft_changed(row)),
         "identity_ready": _identity_ready(content),
         "boundary_ready": _boundary_ready(content),
         "guardrail_count": _guardrail_count(content),
         "risk_flags": risk_flags,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "href": "/ai-control",
-        "evidence": "published persona selected by runtime" if published_ready else "draft saved in persona_profiles",
+        "evidence": (
+            "published persona selected by runtime"
+            if published_ready
+            else "draft saved in persona_profiles"
+        ),
     }
 
 
-def _review(row: PersonaProfileReview, profiles: dict[int, PersonaProfile]) -> dict[str, Any]:
+def _review(
+    row: PersonaProfileReview,
+    profiles: dict[int, PersonaProfile],
+) -> dict[str, Any]:
     profile = profiles.get(row.profile_id)
     snapshot = row.snapshot_json or {}
     return {
@@ -148,18 +207,26 @@ def _review(row: PersonaProfileReview, profiles: dict[int, PersonaProfile]) -> d
         "status": row.status,
         "summary": row.summary,
         "notes": row.notes,
-        "scope_label": " / ".join([
-            f"market:{snapshot.get('market_id')}" if snapshot.get("market_id") is not None else "market:global",
-            f"channel:{snapshot.get('channel') or 'global'}",
-            f"lang:{snapshot.get('language') or 'global'}",
-        ]),
+        "scope_label": " / ".join(
+            [
+                f"market:{snapshot.get('market_id')}"
+                if snapshot.get("market_id") is not None
+                else "market:global",
+                f"channel:{snapshot.get('channel') or 'global'}",
+                f"lang:{snapshot.get('language') or 'global'}",
+            ]
+        ),
         "requested_by": row.requested_by,
         "requested_at": row.requested_at.isoformat() if row.requested_at else None,
         "reviewed_by": row.reviewed_by,
         "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
         "decision_note": row.decision_note,
-        "release_window_start": row.release_window_start.isoformat() if row.release_window_start else None,
-        "release_window_end": row.release_window_end.isoformat() if row.release_window_end else None,
+        "release_window_start": (
+            row.release_window_start.isoformat() if row.release_window_start else None
+        ),
+        "release_window_end": (
+            row.release_window_end.isoformat() if row.release_window_end else None
+        ),
         "published_by": row.published_by,
         "published_version": row.published_version,
         "published_at": row.published_at.isoformat() if row.published_at else None,
@@ -168,8 +235,19 @@ def _review(row: PersonaProfileReview, profiles: dict[int, PersonaProfile]) -> d
     }
 
 
-def _resolve(db: Session, *, market_id: int | None, channel: str | None, language: str | None) -> dict[str, Any]:
-    profile, rank = persona_service.resolve_preview(db, market_id=market_id, channel=channel, language=language)
+def _resolve(
+    db: Session,
+    *,
+    market_id: int | None,
+    channel: str | None,
+    language: str | None,
+) -> dict[str, Any]:
+    profile, rank = persona_service.resolve_preview(
+        db,
+        market_id=market_id,
+        channel=channel,
+        language=language,
+    )
     reasons: list[str] = []
     if profile:
         if profile.market_id == market_id and market_id is not None:
@@ -193,57 +271,112 @@ def _resolve(db: Session, *, market_id: int | None, channel: str | None, languag
         "match_rank": rank,
         "published_version": profile.published_version if profile else None,
         "reasons": reasons,
-        "fallback": profile is not None and (profile.market_id is None or profile.channel is None or profile.language is None),
+        "fallback": profile is not None
+        and (
+            profile.market_id is None
+            or profile.channel is None
+            or profile.language is None
+        ),
         "status": "matched" if profile else "no_match",
         "href": "/persona-builder",
     }
 
 
-def _simulation_scenarios(rows: list[PersonaProfile], db: Session) -> list[dict[str, Any]]:
+def _simulation_scenarios(
+    rows: list[PersonaProfile],
+    db: Session,
+) -> list[dict[str, Any]]:
     contexts: list[tuple[int | None, str | None, str | None]] = []
-    for row in sorted(rows, key=lambda item: (-_scope_specificity(item), item.profile_key)):
+    for row in sorted(
+        rows,
+        key=lambda item: (-_scope_specificity(item), item.profile_key),
+    ):
         if row.is_active and row.published_version > 0:
             context = (row.market_id, row.channel, row.language)
             if context not in contexts:
                 contexts.append(context)
         if len(contexts) >= 4:
             break
-    for context in [(None, "webchat", "en"), (None, "email", "en"), (None, "website", None)]:
+    for context in (
+        (None, "webchat", "en"),
+        (None, "email", "en"),
+        (None, "website", None),
+    ):
         if context not in contexts:
             contexts.append(context)
         if len(contexts) >= 6:
             break
-    return [_resolve(db, market_id=market_id, channel=channel, language=language) for market_id, channel, language in contexts[:6]]
+    return [
+        _resolve(
+            db,
+            market_id=market_id,
+            channel=channel,
+            language=language,
+        )
+        for market_id, channel, language in contexts[:6]
+    ]
 
 
 def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
     now = utc_now()
     capabilities = resolve_capabilities(current_user, db)
     if not (capabilities & PERSONA_BUILDER_CAPABILITIES):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="persona_builder_requires_ai_config_capability")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="persona_builder_requires_ai_config_capability",
+        )
 
-    rows = (
-        db.query(PersonaProfile)
-        .order_by(PersonaProfile.is_active.desc(), PersonaProfile.published_version.desc(), PersonaProfile.profile_key.asc())
-        .limit(200)
-        .all()
-    )
+    # Use the same resource-binding authority as the Persona CRUD APIs. Reviews
+    # and versions have no independent Tenant column and must be scoped through
+    # the already-authorized profile IDs; querying either table globally leaks
+    # another Tenant's approval snapshots and lifecycle counts.
+    rows, _total = persona_service.list_profiles(db, limit=200, offset=0)
     profile_map = {row.id: row for row in rows}
-    reviews = (
-        db.query(PersonaProfileReview)
-        .order_by(PersonaProfileReview.requested_at.desc(), PersonaProfileReview.id.desc())
-        .limit(100)
-        .all()
-    )
+    profile_ids = tuple(sorted(profile_map))
+    if profile_ids:
+        reviews = (
+            db.query(PersonaProfileReview)
+            .filter(PersonaProfileReview.profile_id.in_(profile_ids))
+            .order_by(
+                PersonaProfileReview.requested_at.desc(),
+                PersonaProfileReview.id.desc(),
+            )
+            .limit(100)
+            .all()
+        )
+        version_count = int(
+            db.query(func.count(PersonaProfileVersion.id))
+            .filter(PersonaProfileVersion.profile_id.in_(profile_ids))
+            .scalar()
+            or 0
+        )
+    else:
+        reviews = []
+        version_count = 0
+
     total = len(rows)
     active_count = sum(1 for row in rows if row.is_active)
     published_count = sum(1 for row in rows if row.published_version > 0)
     draft_ready_count = sum(1 for row in rows if _has_draft_content(row))
-    needs_publish_count = sum(1 for row in rows if _has_draft_content(row) and (row.published_version == 0 or _draft_changed(row)))
-    global_fallback_count = sum(1 for row in rows if row.is_active and row.published_version > 0 and (row.channel is None or row.language is None or row.market_id is None))
+    needs_publish_count = sum(
+        1
+        for row in rows
+        if _has_draft_content(row)
+        and (row.published_version == 0 or _draft_changed(row))
+    )
+    global_fallback_count = sum(
+        1
+        for row in rows
+        if row.is_active
+        and row.published_version > 0
+        and (
+            row.channel is None
+            or row.language is None
+            or row.market_id is None
+        )
+    )
     identity_ready_count = sum(1 for row in rows if _identity_ready(_content(row)))
     boundary_ready_count = sum(1 for row in rows if _boundary_ready(_content(row)))
-    version_count = int(db.query(func.count(PersonaProfileVersion.id)).scalar() or 0)
     pending_review_count = sum(1 for row in reviews if row.status == "pending")
     approved_review_count = sum(1 for row in reviews if row.status == "approved")
     published_review_count = sum(1 for row in reviews if row.status == "published")
@@ -255,13 +388,55 @@ def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
         "user_id": current_user.id,
         "capabilities": sorted(capabilities),
         "kpis": [
-            _kpi("total_profiles", "Persona", total, "persona_profiles 中的真实人格配置", _tone(total, danger=60, warning=1)),
-            _kpi("published_profiles", "已发布", published_count, "published_version > 0 且可被 resolve-preview 选择", _tone(published_count, danger=60, warning=1)),
-            _kpi("draft_ready", "草稿就绪", draft_ready_count, "存在 draft_summary 或 draft_content_json", _tone(draft_ready_count, danger=60, warning=1)),
-            _kpi("needs_publish", "待发布变更", needs_publish_count, "草稿与已发布版本不一致或尚未发布", _tone(needs_publish_count, danger=3, warning=1)),
-            _kpi("fallback_routes", "Fallback 路由", global_fallback_count, "使用 global market/channel/language 的已发布 fallback", _tone(global_fallback_count, danger=8, warning=1)),
-            _kpi("version_count", "版本记录", version_count, "persona_profile_versions 中的发布/回滚证据", _tone(version_count, danger=80, warning=1)),
-            _kpi("pending_reviews", "待审批", pending_review_count, "persona_profile_reviews status=pending", _tone(pending_review_count, danger=5, warning=1)),
+            _kpi(
+                "total_profiles",
+                "Persona",
+                total,
+                "当前 Tenant 可见的真实人格配置",
+                _tone(total, danger=60, warning=1),
+            ),
+            _kpi(
+                "published_profiles",
+                "已发布",
+                published_count,
+                "published_version > 0 且可被 resolve-preview 选择",
+                _tone(published_count, danger=60, warning=1),
+            ),
+            _kpi(
+                "draft_ready",
+                "草稿就绪",
+                draft_ready_count,
+                "存在 draft_summary 或 draft_content_json",
+                _tone(draft_ready_count, danger=60, warning=1),
+            ),
+            _kpi(
+                "needs_publish",
+                "待发布变更",
+                needs_publish_count,
+                "草稿与已发布版本不一致或尚未发布",
+                _tone(needs_publish_count, danger=3, warning=1),
+            ),
+            _kpi(
+                "fallback_routes",
+                "Fallback 路由",
+                global_fallback_count,
+                "当前 Tenant 使用 global market/channel/language 的 fallback",
+                _tone(global_fallback_count, danger=8, warning=1),
+            ),
+            _kpi(
+                "version_count",
+                "版本记录",
+                version_count,
+                "当前 Tenant persona_profile_versions 发布/回滚证据",
+                _tone(version_count, danger=80, warning=1),
+            ),
+            _kpi(
+                "pending_reviews",
+                "待审批",
+                pending_review_count,
+                "当前 Tenant persona_profile_reviews status=pending",
+                _tone(pending_review_count, danger=5, warning=1),
+            ),
         ],
         "profiles": [_profile(row) for row in rows[:50]],
         "approval_queue": [_review(row, profile_map) for row in reviews[:50]],
@@ -277,12 +452,12 @@ def build_persona_builder(db: Session, current_user) -> dict[str, Any]:
             _lifecycle_step("runtime-evidence", "Runtime Evidence", "AI Ops / Auditor", "POST /api/persona-profiles/runtime-evidence", "implemented", identity_ready_count + boundary_ready_count, "/persona-builder", True),
         ],
         "template_blocks": [
-            _template_block("persona-list", "Persona List", "GET /api/persona-profiles", "implemented", "读取真实 PersonaProfile 列表、scope、启用状态和版本字段", "/persona-builder"),
+            _template_block("persona-list", "Persona List", "GET /api/persona-profiles", "implemented", "读取当前 Tenant 可见 PersonaProfile 列表、scope、启用状态和版本", "/persona-builder"),
             _template_block("persona-editor", "Editor / Draft Save", "POST/PATCH /api/persona-profiles", "implemented", "草稿摘要、身份字段、边界和 guardrails 保存到后端表", "/ai-control"),
-            _template_block("resolve-preview", "Simulation / Resolve Preview", "POST /api/persona-profiles/resolve-preview", "implemented", "按 market/channel/language 返回真实匹配 profile 和 match_rank", "/persona-builder"),
+            _template_block("resolve-preview", "Simulation / Resolve Preview", "POST /api/persona-profiles/resolve-preview", "implemented", "按 market/channel/language 返回当前 Tenant 匹配 profile 和 match_rank", "/persona-builder"),
             _template_block("publish-rollback", "Publish / Rollback", "POST /api/persona-profiles/{id}/publish|rollback", "implemented", "发布创建 PersonaProfileVersion；回滚复制旧快照为新版本", "/ai-control"),
-            _template_block("approval", "Approval / Release Window", "POST /api/persona-profiles/{id}/submit-review + /reviews/{id}/approve|reject|publish", "implemented", "审批流写入 persona_profile_reviews，并可按 release window 发布已审批快照", "/persona-builder"),
-            _template_block("runtime-evidence", "Runtime Evidence", "POST /api/persona-profiles/runtime-evidence", "implemented", "专用查询端点返回脱敏 runtime_context、persona_context、identity evidence 和 match rank", "/persona-builder"),
+            _template_block("approval", "Approval / Release Window", "POST /api/persona-profiles/{id}/submit-review + /reviews/{id}/approve|reject|publish", "implemented", "审批流按可见 profile IDs 读取 persona_profile_reviews", "/persona-builder"),
+            _template_block("runtime-evidence", "Runtime Evidence", "POST /api/persona-profiles/runtime-evidence", "implemented", "返回脱敏 runtime_context、persona_context、identity evidence 和 match rank", "/persona-builder"),
         ],
         "facts": {
             "active_profiles": active_count,

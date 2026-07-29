@@ -22,7 +22,16 @@ from app import voice_models as _voice_models  # noqa: E402,F401
 from app import webchat_models as _webchat_models  # noqa: E402,F401
 from app.auth_service import create_access_token  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
-from app.enums import ConversationState, JobStatus, MessageStatus, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
+from app.enums import (  # noqa: E402
+    ConversationState,
+    JobStatus,
+    MessageStatus,
+    SourceChannel,
+    TicketPriority,
+    TicketSource,
+    TicketStatus,
+    UserRole,
+)
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
     AIConfigResource,
@@ -33,12 +42,17 @@ from app.models import (  # noqa: E402
     MarketBulletin,
     OutboundEmailAccount,
     Team,
+    Tenant,
     Ticket,
     TicketOutboundMessage,
     User,
     UserCapabilityOverride,
 )
 from app.operator_models import OperatorTask  # noqa: E402
+from app.services.agent_resource_authority import (  # noqa: E402
+    AI_CONFIG_RESOURCE,
+    bind_resource,
+)
 from app.utils.time import utc_now  # noqa: E402
 from app.voice_models import WebchatVoiceSession  # noqa: E402
 from app.webchat_models import WebchatConversation  # noqa: E402
@@ -48,7 +62,13 @@ def _headers(user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(str(user.id))}"}
 
 
-def _user(db_session, *, role: UserRole, team_id: int | None = None, suffix: str = "") -> User:
+def _user(
+    db_session,
+    *,
+    role: UserRole,
+    team_id: int | None = None,
+    suffix: str = "",
+) -> User:
     row = User(
         username=f"{role.value}_tower{suffix}",
         display_name=f"{role.value.title()} Tower",
@@ -76,7 +96,11 @@ def _ticket(
     conversation_state: ConversationState = ConversationState.ai_active,
     category: str | None = None,
 ) -> Ticket:
-    customer = Customer(name=f"Customer {ticket_no}", email=f"{ticket_no.lower()}@example.test", phone="+41790000000")
+    customer = Customer(
+        name=f"Customer {ticket_no}",
+        email=f"{ticket_no.lower()}@example.test",
+        phone="+41790000000",
+    )
     db_session.add(customer)
     db_session.flush()
     now = utc_now()
@@ -87,14 +111,26 @@ def _ticket(
         customer_id=customer.id,
         source=TicketSource.user_message,
         source_channel=source_channel,
-        priority=TicketPriority.high if minutes_to_due is not None else TicketPriority.medium,
+        priority=(
+            TicketPriority.high
+            if minutes_to_due is not None
+            else TicketPriority.medium
+        ),
         status=status,
         team_id=team_id,
         assignee_id=assignee_id,
         conversation_state=conversation_state,
         category=category,
-        first_response_due_at=now + timedelta(minutes=minutes_to_due) if minutes_to_due is not None else None,
-        resolution_due_at=now + timedelta(minutes=minutes_to_due + 30) if minutes_to_due is not None else None,
+        first_response_due_at=(
+            now + timedelta(minutes=minutes_to_due)
+            if minutes_to_due is not None
+            else None
+        ),
+        resolution_due_at=(
+            now + timedelta(minutes=minutes_to_due + 30)
+            if minutes_to_due is not None
+            else None
+        ),
         first_response_breached=breached,
         resolution_breached=breached,
         customer_request="Where is my parcel?",
@@ -109,8 +145,19 @@ def _seed_control_tower(db_session):
     db_session.add(team)
     db_session.flush()
     manager = _user(db_session, role=UserRole.manager, team_id=team.id)
-    agent = _user(db_session, role=UserRole.agent, team_id=team.id, suffix="_agent")
-    db_session.add(UserCapabilityOverride(user_id=manager.id, capability="runtime.manage", allowed=True))
+    agent = _user(
+        db_session,
+        role=UserRole.agent,
+        team_id=team.id,
+        suffix="_agent",
+    )
+    db_session.add(
+        UserCapabilityOverride(
+            user_id=manager.id,
+            capability="runtime.manage",
+            allowed=True,
+        )
+    )
 
     risk_ticket = _ticket(
         db_session,
@@ -177,7 +224,18 @@ def _seed_control_tower(db_session):
             ringing_at=utc_now(),
         )
     )
-    db_session.add(MarketBulletin(title="Severe weather delay", body="Expect delays", summary="Delay", severity="critical", category="delay", is_active=True, starts_at=utc_now() - timedelta(hours=1), ends_at=utc_now() + timedelta(hours=2)))
+    db_session.add(
+        MarketBulletin(
+            title="Severe weather delay",
+            body="Expect delays",
+            summary="Delay",
+            severity="critical",
+            category="delay",
+            is_active=True,
+            starts_at=utc_now() - timedelta(hours=1),
+            ends_at=utc_now() + timedelta(hours=2),
+        )
+    )
     db_session.add(
         OutboundEmailAccount(
             display_name="Primary SMTP",
@@ -192,20 +250,87 @@ def _seed_control_tower(db_session):
             last_test_status="failed",
         )
     )
-    db_session.add(ChannelAccount(provider="whatsapp", account_id="wa-control-tower", display_name="WA", is_active=True, health_status="unknown"))
-    db_session.add(BackgroundJob(queue_name="runtime", job_type="probe", payload_json="{}", status=JobStatus.dead, max_attempts=3))
-    db_session.add(TicketOutboundMessage(ticket_id=risk_ticket.id, channel=SourceChannel.email, status=MessageStatus.dead, body="dead email", provider_status="dead"))
-    db_session.add(TicketOutboundMessage(ticket_id=risk_ticket.id, channel=SourceChannel.email, status=MessageStatus.pending, body="pending email", provider_status="queued"))
-    db_session.add(AIConfigResource(resource_key="persona.control_tower", config_type="persona", name="Draft persona", is_active=True, published_version=0))
-    db_session.add(AdminAuditLog(actor_id=manager.id, action="runtime.requeue", target_type="background_job", target_id=1, created_at=utc_now()))
+    db_session.add(
+        ChannelAccount(
+            provider="whatsapp",
+            account_id="wa-control-tower",
+            display_name="WA",
+            is_active=True,
+            health_status="unknown",
+        )
+    )
+    # This deliberately unclassified row proves unscoped work is not promoted
+    # into Tenant runtime recovery metrics.
+    db_session.add(
+        BackgroundJob(
+            queue_name="runtime",
+            job_type="probe",
+            payload_json="{}",
+            status=JobStatus.dead,
+            max_attempts=3,
+        )
+    )
+    db_session.add_all(
+        [
+            TicketOutboundMessage(
+                ticket_id=risk_ticket.id,
+                channel=SourceChannel.email,
+                status=MessageStatus.dead,
+                body="dead email",
+                provider_status="dead",
+            ),
+            TicketOutboundMessage(
+                ticket_id=risk_ticket.id,
+                channel=SourceChannel.email,
+                status=MessageStatus.pending,
+                body="pending email",
+                provider_status="queued",
+            ),
+        ]
+    )
+    draft_config = AIConfigResource(
+        resource_key="persona.control_tower",
+        config_type="persona",
+        name="Draft persona",
+        market_id=team.market_id,
+        is_active=True,
+        published_version=0,
+    )
+    db_session.add(draft_config)
+    db_session.flush()
+    tenant = db_session.get(Tenant, manager.tenant_id)
+    assert tenant is not None
+    bind_resource(
+        db_session,
+        resource_type=AI_CONFIG_RESOURCE,
+        resource_id=draft_config.id,
+        tenant_key=tenant.tenant_key,
+        actor_id=manager.id,
+    )
+    db_session.add(
+        AdminAuditLog(
+            actor_id=manager.id,
+            action="runtime.requeue",
+            target_type="background_job",
+            target_id=1,
+            created_at=utc_now(),
+        )
+    )
     db_session.flush()
     return manager, agent
 
 
 def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     db_file = tmp_path / "control_tower.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
     manager, _agent = _seed_control_tower(db_session)
@@ -229,9 +354,23 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
                 "note": "Create a manager governance task for unassigned cases.",
             },
         )
-        followup = client.get("/api/lite/control-tower", headers=_headers(manager))
-        action_task = db_session.query(OperatorTask).filter(OperatorTask.task_type == "control_tower_action").one()
-        action_audit_count = db_session.query(AdminAuditLog).filter(AdminAuditLog.action == "control_tower.action.submitted", AdminAuditLog.target_id == action_task.id).count()
+        followup = client.get(
+            "/api/lite/control-tower",
+            headers=_headers(manager),
+        )
+        action_task = (
+            db_session.query(OperatorTask)
+            .filter(OperatorTask.task_type == "control_tower_action")
+            .one()
+        )
+        action_audit_count = (
+            db_session.query(AdminAuditLog)
+            .filter(
+                AdminAuditLog.action == "control_tower.action.submitted",
+                AdminAuditLog.target_id == action_task.id,
+            )
+            .count()
+        )
     finally:
         app.dependency_overrides.pop(get_db, None)
         db_session.close()
@@ -244,7 +383,9 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     followup_payload = followup.json()
     kpis = {item["key"]: item for item in payload["kpis"]}
     actions = {item["key"]: item for item in payload["manager_actions"]}
-    followup_actions = {item["key"]: item for item in followup_payload["manager_actions"]}
+    followup_actions = {
+        item["key"]: item for item in followup_payload["manager_actions"]
+    }
     channels = {item["key"]: item for item in payload["channel_health"]}
     lanes = {item["key"]: item for item in payload["governance_lanes"]}
     blocks = {item["key"]: item for item in payload["template_blocks"]}
@@ -254,11 +395,11 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     assert kpis["sla_risk"]["value"] == 2
     assert kpis["handoff_waiting"]["value"] == 1
     assert kpis["active_webcalls"]["value"] == 1
-    assert kpis["runtime_dead"]["value"] == 2
+    assert kpis["runtime_dead"]["value"] == 1
     assert kpis["active_bulletins"]["value"] == 1
     assert actions["assign-unassigned"]["count"] == 1
     assert actions["assign-unassigned"]["enabled"] is True
-    assert actions["recover-runtime"]["count"] == 2
+    assert actions["recover-runtime"]["count"] == 1
     assert actions["recover-runtime"]["enabled"] is True
     assert actions["fix-email-route"]["enabled"] is False
     assert actions["provider-ops"]["count"] == 2
@@ -282,14 +423,23 @@ def test_control_tower_manager_contract_uses_real_operational_counts(tmp_path):
     assert action_task.assignee_id == manager.id
     assert action_audit_count == 1
     assert followup_actions["assign-unassigned"]["action_status"] == "pending"
-    assert followup_actions["assign-unassigned"]["action_task_id"] == action_payload["task_id"]
+    assert followup_actions["assign-unassigned"]["action_task_id"] == action_payload[
+        "task_id"
+    ]
     assert followup_payload["facts"]["active_control_tower_actions"] == 1
 
 
 def test_control_tower_requires_management_capability(tmp_path):
     db_file = tmp_path / "control_tower_forbidden.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    engine = create_engine(
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
+    )
+    TestingSession = sessionmaker(
+        bind=engine,
+        autoflush=False,
+        autocommit=False,
+    )
     Base.metadata.create_all(engine)
     db_session = TestingSession()
     _manager, agent = _seed_control_tower(db_session)

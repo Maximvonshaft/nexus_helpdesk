@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from ..enums import SourceChannel
 from ..models import ChannelAccount, Ticket
+from ..models_whatsapp import WhatsAppConnection
 from ..settings import get_settings
 from .outbound_email_account_service import has_active_outbound_email_account
+from .whatsapp_runtime_settings import get_whatsapp_runtime_settings
 
 
 EXTERNAL_READY_CANDIDATE_CHANNELS = frozenset({
@@ -19,14 +21,9 @@ EXTERNAL_READY_CANDIDATE_CHANNELS = frozenset({
     SourceChannel.telegram.value,
     SourceChannel.sms.value,
 })
-
-EXTERNAL_EXPERIMENTAL_CHANNELS = frozenset({
-    SourceChannel.email.value,
-})
-
+EXTERNAL_EXPERIMENTAL_CHANNELS = frozenset({SourceChannel.email.value})
 LOCAL_CHANNELS = frozenset({SourceChannel.web_chat.value})
 NOT_CUSTOMER_SENDABLE_CHANNELS = frozenset({SourceChannel.internal.value})
-
 E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
@@ -80,7 +77,12 @@ def _target_validation(channel: str) -> str | None:
     }.get(channel)
 
 
-def _has_matching_channel_account(db: Session | None, *, channel: str, ticket: Ticket | None = None) -> bool:
+def _has_matching_channel_account(
+    db: Session | None,
+    *,
+    channel: str,
+    ticket: Ticket | None = None,
+) -> bool:
     if db is None:
         return False
     query = db.query(ChannelAccount).filter(
@@ -88,36 +90,98 @@ def _has_matching_channel_account(db: Session | None, *, channel: str, ticket: T
         ChannelAccount.is_active.is_(True),
     )
     if ticket is not None:
-        if getattr(ticket, "channel_account_id", None):
-            if query.filter(ChannelAccount.id == ticket.channel_account_id).first() is not None:
+        if ticket.channel_account_id:
+            if query.filter(ChannelAccount.id == ticket.channel_account_id).first():
                 return True
-        if getattr(ticket, "market_id", None) is not None:
-            if query.filter(ChannelAccount.market_id == ticket.market_id).first() is not None:
+        if ticket.market_id is not None:
+            if query.filter(ChannelAccount.market_id == ticket.market_id).first():
                 return True
     return query.filter(ChannelAccount.market_id.is_(None)).first() is not None
 
 
-def _has_webchat_conversation(db: Session | None, *, ticket: Ticket | None = None) -> bool:
+def _has_ready_whatsapp_connection(
+    db: Session | None,
+    *,
+    ticket: Ticket | None = None,
+) -> bool:
+    if db is None:
+        return False
+    query = (
+        db.query(WhatsAppConnection)
+        .join(
+            ChannelAccount,
+            ChannelAccount.id == WhatsAppConnection.channel_account_id,
+        )
+        .filter(
+            ChannelAccount.provider == SourceChannel.whatsapp.value,
+            ChannelAccount.is_active.is_(True),
+            WhatsAppConnection.desired_state == "active",
+            WhatsAppConnection.observed_state == "connected",
+            WhatsAppConnection.authentication_state == "linked",
+            WhatsAppConnection.listener_state == "active",
+            WhatsAppConnection.verification_state == "verified",
+            WhatsAppConnection.observed_generation
+            == WhatsAppConnection.desired_generation,
+        )
+    )
+    if ticket is not None:
+        if ticket.tenant_id is None:
+            return False
+        query = query.filter(WhatsAppConnection.tenant_id == ticket.tenant_id)
+        if ticket.channel_account_id:
+            return (
+                query.filter(
+                    WhatsAppConnection.channel_account_id
+                    == ticket.channel_account_id
+                ).first()
+                is not None
+            )
+        if ticket.market_id is not None:
+            if query.filter(ChannelAccount.market_id == ticket.market_id).first():
+                return True
+        return query.filter(ChannelAccount.market_id.is_(None)).first() is not None
+    return query.first() is not None
+
+
+def _has_webchat_conversation(
+    db: Session | None,
+    *,
+    ticket: Ticket | None = None,
+) -> bool:
     if db is None or ticket is None:
         return False
-    try:
-        from ..webchat_models import WebchatConversation
-    except Exception:
-        return False
-    return db.query(WebchatConversation.id).filter(WebchatConversation.ticket_id == ticket.id).first() is not None
+    from ..webchat_models import WebchatConversation
+
+    return (
+        db.query(WebchatConversation.id)
+        .filter(WebchatConversation.ticket_id == ticket.id)
+        .first()
+        is not None
+    )
 
 
 def _ticket_target(ticket: Ticket | None, *, channel: str) -> str | None:
     if ticket is None:
         return None
-    customer = getattr(ticket, "customer", None)
-    values: list[str | None]
+    customer = ticket.customer
     if channel == SourceChannel.email.value:
-        values = [ticket.preferred_reply_contact, ticket.source_chat_id, getattr(customer, "email", None)]
+        values = [
+            ticket.preferred_reply_contact,
+            ticket.source_chat_id,
+            getattr(customer, "email", None),
+        ]
     elif channel == SourceChannel.sms.value:
-        values = [ticket.preferred_reply_contact, ticket.source_chat_id, getattr(customer, "phone", None)]
+        values = [
+            ticket.preferred_reply_contact,
+            ticket.source_chat_id,
+            getattr(customer, "phone", None),
+        ]
     else:
-        values = [ticket.source_chat_id, ticket.preferred_reply_contact, getattr(customer, "phone", None)]
+        values = [
+            ticket.source_chat_id,
+            ticket.preferred_reply_contact,
+            getattr(customer, "phone", None),
+        ]
     for value in values:
         cleaned = str(value or "").strip()
         if channel == SourceChannel.email.value:
@@ -154,7 +218,9 @@ def _target_ready(ticket: Ticket | None, *, channel: str) -> bool:
 
 
 def _outbound_provider_ready(settings, *, channel: str) -> bool:
-    provider = str(getattr(settings, "outbound_provider", "disabled") or "disabled").strip().lower()
+    provider = str(
+        getattr(settings, "outbound_provider", "disabled") or "disabled"
+    ).strip().lower()
     if channel == SourceChannel.email.value:
         return provider in {"email", "smtp", "native"}
     return provider == "native"
@@ -186,13 +252,18 @@ def get_outbound_channel_capability(
             supports_delivery_receipt=False,
             supports_attachments=False,
             external_send=False,
-            target_validation=None,
             missing=["internal_is_not_an_outbound_customer_channel"],
-            operator_note="Use internal notes or system events instead of outbound send.",
+            operator_note=(
+                "Use internal notes or system events instead of outbound send."
+            ),
         )
 
     if channel_value in LOCAL_CHANNELS:
-        configured = _has_webchat_conversation(db, ticket=ticket) if ticket is not None else True
+        configured = (
+            _has_webchat_conversation(db, ticket=ticket)
+            if ticket is not None
+            else True
+        )
         if ticket is not None and not configured:
             missing.append("linked_webchat_conversation")
         return OutboundChannelCapability(
@@ -212,13 +283,19 @@ def get_outbound_channel_capability(
             external_send=False,
             target_validation=_target_validation(channel_value),
             missing=missing,
-            operator_note="Local WebChat delivery only; no external provider dispatch should occur.",
+            operator_note=(
+                "Local WebChat delivery only; no external provider dispatch should occur."
+            ),
         )
 
     if channel_value in EXTERNAL_EXPERIMENTAL_CHANNELS:
         account_configured = has_active_outbound_email_account(db, ticket=ticket)
-        target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
-        if not bool(settings.enable_outbound_dispatch):
+        target_configured = (
+            _target_ready(ticket, channel=channel_value)
+            if ticket is not None
+            else True
+        )
+        if not settings.enable_outbound_dispatch:
             missing.append("enable_outbound_dispatch")
         if not _outbound_provider_ready(settings, channel=channel_value):
             missing.append("outbound_provider_email_or_smtp")
@@ -226,12 +303,11 @@ def get_outbound_channel_capability(
             missing.append("email_account_registry")
         if not target_configured:
             missing.append("valid_email_address")
-        status_value = "ready" if not missing else "configurable"
         return OutboundChannelCapability(
             channel=channel_value,
             label=_label(channel_value),
             dispatch_type="external",
-            status=status_value,
+            status="ready" if not missing else "configurable",
             customer_sendable=True,
             enabled=not missing,
             configured=account_configured and target_configured,
@@ -244,36 +320,49 @@ def get_outbound_channel_capability(
             external_send=True,
             target_validation=_target_validation(channel_value),
             missing=missing,
-            operator_note="Email SMTP dispatch is allowed only when runtime, account, target, and subject gates are closed.",
+            operator_note=(
+                "Email SMTP dispatch is allowed only when runtime, account, "
+                "target, and subject gates are closed."
+            ),
         )
 
     if channel_value in EXTERNAL_READY_CANDIDATE_CHANNELS:
-        account_configured = _has_matching_channel_account(db, channel=channel_value, ticket=ticket) if db is not None else False
-        target_configured = _target_ready(ticket, channel=channel_value) if ticket is not None else True
-        if not bool(settings.enable_outbound_dispatch):
+        target_configured = (
+            _target_ready(ticket, channel=channel_value)
+            if ticket is not None
+            else True
+        )
+        if not settings.enable_outbound_dispatch:
             missing.append("enable_outbound_dispatch")
         if not _outbound_provider_ready(settings, channel=channel_value):
             missing.append("outbound_provider_native")
+
         if channel_value == SourceChannel.whatsapp.value:
-            if settings.whatsapp_dispatch_mode == "native_sidecar":
-                if not bool(settings.whatsapp_native_enabled):
-                    missing.append("whatsapp_native_enabled")
-                if not settings.whatsapp_sidecar_token:
-                    missing.append("whatsapp_sidecar_token")
-            elif settings.whatsapp_dispatch_mode != "disabled":
-                missing.append("valid_whatsapp_dispatch_mode")
-            else:
-                missing.append("whatsapp_dispatch_mode")
-        if not account_configured:
-            missing.append(f"{channel_value}_channel_account")
+            whatsapp_settings = get_whatsapp_runtime_settings()
+            account_configured = _has_ready_whatsapp_connection(
+                db,
+                ticket=ticket,
+            )
+            if not whatsapp_settings.enabled:
+                missing.append("whatsapp_enabled")
+            if not account_configured:
+                missing.append("verified_whatsapp_connection")
+        else:
+            account_configured = _has_matching_channel_account(
+                db,
+                channel=channel_value,
+                ticket=ticket,
+            )
+            if not account_configured:
+                missing.append(f"{channel_value}_channel_account")
+
         if not target_configured:
             missing.append(f"valid_{_target_validation(channel_value)}")
-        status_value = "ready" if not missing else "configurable"
         return OutboundChannelCapability(
             channel=channel_value,
             label=_label(channel_value),
             dispatch_type="external",
-            status=status_value,
+            status="ready" if not missing else "configurable",
             customer_sendable=True,
             enabled=not missing,
             configured=account_configured and target_configured,
@@ -281,12 +370,18 @@ def get_outbound_channel_capability(
             target_required=True,
             supports_send=not missing,
             supports_inbound_sync=True,
-            supports_delivery_receipt=False,
+            supports_delivery_receipt=(
+                channel_value == SourceChannel.whatsapp.value
+            ),
             supports_attachments=False,
             external_send=True,
             target_validation=_target_validation(channel_value),
             missing=missing,
-            operator_note="External provider dispatch is allowed only when runtime, account, and target gates are closed.",
+            operator_note=(
+                "WhatsApp dispatch requires one verified active Meta or Baileys "
+                "connection. Other external providers require their canonical "
+                "account and runtime gates."
+            ),
         )
 
     return OutboundChannelCapability(
@@ -320,8 +415,17 @@ def list_outbound_channel_capabilities(
     ]
 
 
-def require_outbound_channel_sendable(db: Session, *, ticket: Ticket, channel: SourceChannel | str) -> OutboundChannelCapability:
-    capability = get_outbound_channel_capability(channel, db=db, ticket=ticket)
+def require_outbound_channel_sendable(
+    db: Session,
+    *,
+    ticket: Ticket,
+    channel: SourceChannel | str,
+) -> OutboundChannelCapability:
+    capability = get_outbound_channel_capability(
+        channel,
+        db=db,
+        ticket=ticket,
+    )
     if not capability.customer_sendable:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -56,11 +56,25 @@ from ..services.permissions import (
     resolve_capabilities,
 )
 from ..services.persona_builder_service import build_persona_builder
+from ..services.tenant_query_authority import (
+    TenantQueryScopeError,
+    actor_tenant_query_scope,
+)
 from ..services.today_workbench_service import build_today_workbench
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
 router = APIRouter(prefix="/api/lite", tags=["lite"])
+
+
+def _actor_scope(db: Session, current_user):
+    try:
+        return actor_tenant_query_scope(db, current_user)
+    except TenantQueryScopeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/stream")
@@ -77,44 +91,21 @@ def get_lite_meta(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    scope = _actor_scope(db, current_user)
     capabilities = resolve_capabilities(current_user, db)
     can_view_all_operators = bool(
         capabilities & {CAP_TICKET_ASSIGN, CAP_AUDIT_READ, CAP_USER_MANAGE}
     )
-    if can_view_all_operators:
-        users = (
-            db.query(User)
-            .filter(User.is_active.is_(True))
-            .order_by(User.display_name.asc())
-            .all()
-        )
-        teams = (
-            db.query(Team)
-            .filter(Team.is_active.is_(True))
-            .order_by(Team.name.asc())
-            .all()
-        )
-    else:
-        users = (
-            db.query(User)
-            .filter(
-                User.is_active.is_(True),
-                User.team_id == current_user.team_id,
-            )
-            .order_by(User.display_name.asc())
-            .all()
-        )
-        if current_user.id and all(row.id != current_user.id for row in users):
-            users.append(current_user)
-        teams = (
-            db.query(Team)
-            .filter(
-                Team.is_active.is_(True),
-                Team.id == current_user.team_id,
-            )
-            .order_by(Team.name.asc())
-            .all()
-        )
+    users_query = scope.users(db).filter(User.is_active.is_(True))
+    teams_query = scope.teams(db).filter(Team.is_active.is_(True))
+    if not can_view_all_operators:
+        users_query = users_query.filter(User.team_id == current_user.team_id)
+        teams_query = teams_query.filter(Team.id == current_user.team_id)
+    users = users_query.order_by(User.display_name.asc(), User.id.asc()).all()
+    if current_user.id and all(row.id != current_user.id for row in users):
+        # The authenticated row has already passed the same actor scope authority.
+        users.append(current_user)
+    teams = teams_query.order_by(Team.name.asc(), Team.id.asc()).all()
     return LiteMetaRead(
         users=[UserRead.model_validate(row) for row in users],
         teams=[TeamRead.model_validate(row) for row in teams],

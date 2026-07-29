@@ -35,7 +35,13 @@ def test_github_actions_has_one_acceptance_authority_and_one_isolated_publisher(
     assert "name: Canonical Acceptance" in canonical
     assert "pull_request:" in canonical
     assert "push:" in canonical
-    assert "required-gate:" in canonical
+    assert canonical.count("required-gate:") == 1
+    assert "validation-mode:" in canonical
+    assert "development-fast:" in canonical
+    assert "ready_for_review" in canonical
+    assert "converted_to_draft" in canonical
+    assert "needs.validation-mode.outputs.mode == 'development'" in canonical
+    assert "needs.validation-mode.outputs.run_full == 'true'" in canonical
 
     assert "workflow_run:" in candidate
     assert "- Canonical Acceptance" in candidate
@@ -50,8 +56,30 @@ def test_github_actions_has_one_acceptance_authority_and_one_isolated_publisher(
     ):
         assert forbidden not in candidate
 
+    for forbidden in ("pull_request_target:", "workflow_run:", "issue_comment:"):
+        assert forbidden not in canonical
+
     _assert_checkout_credentials_are_not_persisted(CANONICAL)
     _assert_checkout_credentials_are_not_persisted(CANDIDATE)
+
+
+def test_canonical_acceptance_is_fail_closed_for_development_and_candidate_modes():
+    workflow = CANONICAL.read_text(encoding="utf-8")
+
+    for marker in (
+        'case "$EVENT_NAME" in',
+        'mode="development"',
+        'mode="candidate"',
+        'mode="main"',
+        'case "$MODE" in',
+        "development)",
+        "candidate|main)",
+        'test "$DEVELOPMENT_FAST" = "success"',
+        'test "$DEVELOPMENT_FAST" = "skipped"',
+        'test "$result" = "skipped"',
+        'test "$result" = "success"',
+    ):
+        assert marker in workflow
 
 
 def test_image_smoke_enforces_the_expected_migration_head_readiness_contract():

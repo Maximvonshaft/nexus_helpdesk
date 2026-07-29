@@ -21,12 +21,14 @@ sys.path.insert(0, str(ROOT.parent))
 from app.api.tickets import ticket_outbound_channel_capabilities  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.enums import ResolutionCategory, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole  # noqa: E402
-from app.models import ChannelAccount, Customer, OutboundEmailAccount, Team, Ticket, User  # noqa: E402
+from app.models import ChannelAccount, Customer, Market, OutboundEmailAccount, Team, Tenant, Ticket, User  # noqa: E402
+from app.models_whatsapp import WhatsAppConnection  # noqa: E402
 from app.services.outbound_channel_registry import (  # noqa: E402
     get_outbound_channel_capability,
     list_outbound_channel_capabilities,
     require_outbound_channel_sendable,
 )
+from app.services.whatsapp_runtime_settings import reset_whatsapp_runtime_settings_cache  # noqa: E402
 from app.settings import get_settings  # noqa: E402
 
 
@@ -49,13 +51,10 @@ def _uid() -> str:
     return uuid.uuid4().hex[:10]
 
 
-def _admin(db_session) -> User:
-    row = User(
-        username=f"admin-{_uid()}",
-        display_name="Admin",
-        email=f"admin-{_uid()}@example.test",
-        password_hash="x",
-        role=UserRole.admin,
+def _tenant(db_session) -> Tenant:
+    row = Tenant(
+        tenant_key=f"outbound-{_uid()}",
+        display_name="Outbound Test Tenant",
         is_active=True,
     )
     db_session.add(row)
@@ -63,9 +62,58 @@ def _admin(db_session) -> User:
     return row
 
 
-def _ticket(db_session, *, channel=SourceChannel.whatsapp, contact="+15550123456") -> Ticket:
-    team = Team(name=f"Ops-{_uid()}", team_type="support")
-    customer = Customer(name="Alice", phone=contact, email="alice@example.test")
+def _admin(db_session, tenant: Tenant) -> User:
+    row = User(
+        username=f"admin-{_uid()}",
+        display_name="Admin",
+        email=f"admin-{_uid()}@example.test",
+        password_hash="x",
+        role=UserRole.admin,
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+        is_active=True,
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def _ticket(
+    db_session,
+    *,
+    tenant: Tenant,
+    channel=SourceChannel.whatsapp,
+    contact="+15550123456",
+) -> Ticket:
+    market_identity = _uid()
+    market = Market(
+        code=f"M-{market_identity}",
+        name=f"Outbound Test Market {market_identity}",
+        country_code="US",
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+        is_active=True,
+    )
+    db_session.add(market)
+    db_session.flush()
+    team = Team(
+        name=f"Ops-{_uid()}",
+        team_type="support",
+        market_id=market.id,
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+    )
+    customer = Customer(
+        name="Alice",
+        phone=contact,
+        email="alice@example.test",
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+    )
     db_session.add_all([team, customer])
     db_session.flush()
     ticket = Ticket(
@@ -78,25 +126,65 @@ def _ticket(db_session, *, channel=SourceChannel.whatsapp, contact="+15550123456
         priority=TicketPriority.medium,
         status=TicketStatus.pending_assignment,
         resolution_category=ResolutionCategory.none,
+        market_id=market.id,
         team_id=team.id,
         source_chat_id=contact,
         preferred_reply_channel=channel.value,
         preferred_reply_contact=contact,
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
     )
     db_session.add(ticket)
     db_session.flush()
     return ticket
 
 
-def _reset_settings(monkeypatch, *, dispatch=False, provider="disabled") -> None:
+def _reset_settings(monkeypatch, *, dispatch=False, provider="disabled", whatsapp=False) -> None:
     monkeypatch.setenv("ENABLE_OUTBOUND_DISPATCH", "true" if dispatch else "false")
     monkeypatch.setenv("OUTBOUND_PROVIDER", provider)
-    monkeypatch.delenv("WHATSAPP_DISPATCH_MODE", raising=False)
-    monkeypatch.delenv("WHATSAPP_NATIVE_ENABLED", raising=False)
-    monkeypatch.delenv("WHATSAPP_SIDECAR_TOKEN", raising=False)
-    monkeypatch.delenv("WHATSAPP_CONNECTOR_KEY", raising=False)
-    monkeypatch.delenv("WHATSAPP_CONNECTOR_HMAC_SECRET", raising=False)
+    monkeypatch.setenv("WHATSAPP_ENABLED", "true" if whatsapp else "false")
     get_settings.cache_clear()
+    reset_whatsapp_runtime_settings_cache()
+
+
+def _whatsapp_connection(
+    db_session,
+    *,
+    tenant: Tenant,
+    ticket: Ticket,
+    verified: bool,
+) -> WhatsAppConnection:
+    account = ChannelAccount(
+        provider=SourceChannel.whatsapp.value,
+        account_id=f"wa-{_uid()}",
+        display_name="WhatsApp Test",
+        market_id=ticket.market_id,
+        tenant_id=tenant.id,
+        tenant_assignment_source="fixture",
+        tenant_assignment_version="nexus.test.fixture.v1",
+        is_active=True,
+        priority=10,
+    )
+    db_session.add(account)
+    db_session.flush()
+    ticket.channel_account_id = account.id
+    connection = WhatsAppConnection(
+        tenant_id=tenant.id,
+        channel_account_id=account.id,
+        transport="baileys_sidecar",
+        sidecar_session_key=f"session-{_uid()}",
+        desired_state="active",
+        observed_state="connected",
+        authentication_state="linked",
+        listener_state="active",
+        verification_state="verified" if verified else "pending",
+        desired_generation=1,
+        observed_generation=1,
+    )
+    db_session.add(connection)
+    db_session.flush()
+    return connection
 
 
 def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
@@ -117,7 +205,8 @@ def test_registry_classifies_all_declared_channels(db_session, monkeypatch):
 
 def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_session, monkeypatch):
     _reset_settings(monkeypatch, dispatch=True, provider="native")
-    ticket = _ticket(db_session)
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant)
 
     with pytest.raises(HTTPException) as internal_exc:
         require_outbound_channel_sendable(db_session, ticket=ticket, channel=SourceChannel.internal)
@@ -133,7 +222,8 @@ def test_internal_is_not_customer_sendable_and_email_is_not_runtime_ready(db_ses
 
 def test_email_capability_uses_account_registry_and_target_validation(db_session, monkeypatch):
     _reset_settings(monkeypatch, dispatch=True, provider="native")
-    ticket = _ticket(db_session, channel=SourceChannel.email, contact="alice@nexusdesk-mail.com")
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant, channel=SourceChannel.email, contact="alice@nexusdesk-mail.com")
 
     missing_account = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
     assert missing_account.customer_sendable is True
@@ -150,6 +240,7 @@ def test_email_capability_uses_account_registry_and_target_validation(db_session
             password_encrypted="encrypted-password",
             from_address="support@example.test",
             security_mode="starttls",
+            market_id=ticket.market_id,
             is_active=True,
             priority=10,
         )
@@ -158,19 +249,19 @@ def test_email_capability_uses_account_registry_and_target_validation(db_session
 
     configured = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=ticket)
     assert configured.configured is True
-    assert "email_account_registry" not in configured.missing
     assert configured.supports_send is True
     assert configured.missing == []
 
-    invalid_ticket = _ticket(db_session, channel=SourceChannel.email, contact="not-an-email")
+    invalid_ticket = _ticket(db_session, tenant=tenant, channel=SourceChannel.email, contact="not-an-email")
     invalid_ticket.customer.email = None
     invalid = get_outbound_channel_capability(SourceChannel.email, db=db_session, ticket=invalid_ticket)
     assert "valid_email_address" in invalid.missing
 
 
-def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=False, provider="disabled")
-    ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
+def test_whatsapp_requires_runtime_verified_connection_and_target(db_session, monkeypatch):
+    _reset_settings(monkeypatch, dispatch=False, provider="disabled", whatsapp=False)
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant)
 
     cap = get_outbound_channel_capability(SourceChannel.whatsapp, db=db_session, ticket=ticket)
 
@@ -178,18 +269,15 @@ def test_whatsapp_requires_runtime_account_and_target(db_session, monkeypatch):
     assert cap.supports_send is False
     assert "enable_outbound_dispatch" in cap.missing
     assert "outbound_provider_native" in cap.missing
-    assert "whatsapp_channel_account" in cap.missing
+    assert "whatsapp_enabled" in cap.missing
+    assert "verified_whatsapp_connection" in cap.missing
 
 
-def test_whatsapp_is_ready_when_runtime_account_and_target_are_closed(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="native")
-    monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
-    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
-    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "sidecar-token")
-    get_settings.cache_clear()
-    ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
-    db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))
-    db_session.flush()
+def test_whatsapp_is_ready_when_runtime_and_verified_connection_are_closed(db_session, monkeypatch):
+    _reset_settings(monkeypatch, dispatch=True, provider="native", whatsapp=True)
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant)
+    _whatsapp_connection(db_session, tenant=tenant, ticket=ticket, verified=True)
 
     cap = get_outbound_channel_capability(SourceChannel.whatsapp, db=db_session, ticket=ticket)
 
@@ -199,22 +287,18 @@ def test_whatsapp_is_ready_when_runtime_account_and_target_are_closed(db_session
     assert require_outbound_channel_sendable(db_session, ticket=ticket, channel=SourceChannel.whatsapp).status == "ready"
 
 
-def test_whatsapp_native_mode_requires_sidecar_gates(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="native")
-    monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
-    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
-    get_settings.cache_clear()
-    ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
-    db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))
-    db_session.flush()
+def test_whatsapp_unverified_connection_remains_fail_closed(db_session, monkeypatch):
+    _reset_settings(monkeypatch, dispatch=True, provider="native", whatsapp=True)
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant)
+    connection = _whatsapp_connection(db_session, tenant=tenant, ticket=ticket, verified=False)
 
     cap = get_outbound_channel_capability(SourceChannel.whatsapp, db=db_session, ticket=ticket)
-
     assert cap.status == "configurable"
-    assert "whatsapp_sidecar_token" in cap.missing
+    assert "verified_whatsapp_connection" in cap.missing
 
-    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "sidecar-token")
-    get_settings.cache_clear()
+    connection.verification_state = "verified"
+    db_session.flush()
     ready = get_outbound_channel_capability(SourceChannel.whatsapp, db=db_session, ticket=ticket)
     assert ready.status == "ready"
     assert ready.missing == []
@@ -222,8 +306,20 @@ def test_whatsapp_native_mode_requires_sidecar_gates(db_session, monkeypatch):
 
 def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_session, monkeypatch):
     _reset_settings(monkeypatch, dispatch=True, provider="native")
-    ticket = _ticket(db_session, channel=SourceChannel.sms, contact="0791234567")
-    db_session.add(ChannelAccount(provider="sms", account_id=f"sms-{_uid()}", is_active=True, priority=10))
+    tenant = _tenant(db_session)
+    ticket = _ticket(db_session, tenant=tenant, channel=SourceChannel.sms, contact="0791234567")
+    db_session.add(
+        ChannelAccount(
+            provider="sms",
+            account_id=f"sms-{_uid()}",
+            market_id=ticket.market_id,
+            tenant_id=tenant.id,
+            tenant_assignment_source="fixture",
+            tenant_assignment_version="nexus.test.fixture.v1",
+            is_active=True,
+            priority=10,
+        )
+    )
     db_session.flush()
 
     cap = get_outbound_channel_capability(SourceChannel.sms, db=db_session, ticket=ticket)
@@ -234,15 +330,11 @@ def test_sms_requires_e164_target_even_when_runtime_and_account_are_ready(db_ses
 
 
 def test_ticket_outbound_capabilities_endpoint_is_ticket_scoped(db_session, monkeypatch):
-    _reset_settings(monkeypatch, dispatch=True, provider="native")
-    monkeypatch.setenv("WHATSAPP_DISPATCH_MODE", "native_sidecar")
-    monkeypatch.setenv("WHATSAPP_NATIVE_ENABLED", "true")
-    monkeypatch.setenv("WHATSAPP_SIDECAR_TOKEN", "sidecar-token")
-    get_settings.cache_clear()
-    admin = _admin(db_session)
-    ticket = _ticket(db_session, channel=SourceChannel.whatsapp, contact="+15550123456")
-    db_session.add(ChannelAccount(provider="whatsapp", account_id=f"wa-{_uid()}", is_active=True, priority=10))
-    db_session.flush()
+    _reset_settings(monkeypatch, dispatch=True, provider="native", whatsapp=True)
+    tenant = _tenant(db_session)
+    admin = _admin(db_session, tenant)
+    ticket = _ticket(db_session, tenant=tenant)
+    _whatsapp_connection(db_session, tenant=tenant, ticket=ticket, verified=True)
 
     payload = ticket_outbound_channel_capabilities(ticket.id, db=db_session, current_user=admin)
     rows = {item["channel"]: item for item in payload["channels"]}

@@ -20,11 +20,13 @@ from ..models import (
 from ..models_agent_routing import ConversationControl
 from ..models_job_scope import BackgroundJobScope
 from ..webchat_models import WebchatConversation
+from .tenant_authority import tenant_runtime_authority_mode
 
 SCOPE_SCHEMA = "nexus.background-job-scope.v1"
 PURPOSE_BY_JOB_TYPE = {
     "webchat.ai_reply": "automated_ai",
     "webchat.handoff_snapshot": "human_support",
+    "webchat.whatsapp_delivery": "human_support",
     "speedaf.work_order.create": "provider_tool_execution",
     "speedaf.address_update.submit": "provider_tool_execution",
     "speedaf.voice.callback": "provider_tool_execution",
@@ -69,7 +71,7 @@ def _first(connection: Connection, statement):
 
 
 def _tenant_for_key(connection: Connection, tenant_key: str | None) -> int | None:
-    normalized = str(tenant_key or "").strip()
+    normalized = str(tenant_key or "").strip().lower()
     if not normalized or normalized == "default":
         return None
     row = _first(
@@ -85,14 +87,15 @@ def _tenant_for_key(connection: Connection, tenant_key: str | None) -> int | Non
 def _ticket_scope(
     connection: Connection,
     ticket_id: int,
-) -> tuple[int | None, int | None]:
+) -> tuple[bool, int | None, int | None]:
     row = _first(
         connection,
         select(Ticket.tenant_id, Ticket.customer_id).where(Ticket.id == ticket_id),
     )
     if not row:
-        return None, None
+        return False, None, None
     return (
+        True,
         int(row[0]) if row[0] is not None else None,
         int(row[1]) if row[1] is not None else None,
     )
@@ -101,7 +104,7 @@ def _ticket_scope(
 def _conversation_scope(
     connection: Connection,
     conversation_id: int,
-) -> tuple[int | None, int | None, int | None]:
+) -> tuple[bool, int | None, int | None, int | None, bool]:
     row = _first(
         connection,
         select(
@@ -110,12 +113,19 @@ def _conversation_scope(
         ).where(WebchatConversation.id == conversation_id),
     )
     if not row:
-        return None, None, None
+        return False, None, None, None, False
     tenant_key, ticket_id = row[0], row[1]
+    normalized_key = str(tenant_key or "").strip().lower()
+    is_shadow = not normalized_key or normalized_key == "default"
     if ticket_id is not None:
-        tenant_id, customer_id = _ticket_scope(connection, int(ticket_id))
-        return tenant_id, customer_id, int(ticket_id)
-    tenant_id = _tenant_for_key(connection, str(tenant_key or ""))
+        ticket_exists, tenant_id, customer_id = _ticket_scope(
+            connection,
+            int(ticket_id),
+        )
+        if not ticket_exists:
+            return True, None, None, int(ticket_id), is_shadow
+        return True, tenant_id, customer_id, int(ticket_id), tenant_id is None
+    tenant_id = _tenant_for_key(connection, normalized_key)
     control = _first(
         connection,
         select(ConversationControl.customer_id).where(
@@ -123,43 +133,49 @@ def _conversation_scope(
         ),
     )
     customer_id = int(control[0]) if control and control[0] is not None else None
-    return tenant_id, customer_id, None
+    return True, tenant_id, customer_id, None, is_shadow
 
 
 def _customer_scope(
     connection: Connection,
     customer_id: int,
-) -> int | None:
+) -> tuple[bool, int | None]:
     row = _first(
         connection,
         select(Customer.tenant_id).where(Customer.id == customer_id),
     )
-    return int(row[0]) if row and row[0] is not None else None
+    if not row:
+        return False, None
+    return True, int(row[0]) if row[0] is not None else None
 
 
 def _email_account_scope(
     connection: Connection,
     account_id: int,
-) -> int | None:
+) -> tuple[bool, int | None]:
     row = _first(
         connection,
         select(Market.tenant_id)
         .select_from(OutboundEmailAccount)
-        .join(Market, Market.id == OutboundEmailAccount.market_id)
+        .outerjoin(Market, Market.id == OutboundEmailAccount.market_id)
         .where(OutboundEmailAccount.id == account_id),
     )
-    return int(row[0]) if row and row[0] is not None else None
+    if not row:
+        return False, None
+    return True, int(row[0]) if row[0] is not None else None
 
 
 def _channel_account_scope(
     connection: Connection,
     account_id: int,
-) -> int | None:
+) -> tuple[bool, int | None]:
     row = _first(
         connection,
         select(ChannelAccount.tenant_id).where(ChannelAccount.id == account_id),
     )
-    return int(row[0]) if row and row[0] is not None else None
+    if not row:
+        return False, None
+    return True, int(row[0]) if row[0] is not None else None
 
 
 def derive_job_scope_values(
@@ -171,9 +187,13 @@ def derive_job_scope_values(
     customer_candidates: set[int] = set()
     resource_type: str | None = None
     resource_id: str | None = None
+    observed_source = False
+    shadow_source = False
+    invalid_source = False
 
     explicit_tenant_id = _positive_int(payload.get("tenant_id"))
     if explicit_tenant_id is not None:
+        observed_source = True
         row = _first(
             connection,
             select(Tenant.id).where(
@@ -183,28 +203,52 @@ def derive_job_scope_values(
         )
         if row:
             tenant_candidates.add(explicit_tenant_id)
+        else:
+            invalid_source = True
 
-    tenant_key_id = _tenant_for_key(connection, payload.get("tenant_key"))
-    if tenant_key_id is not None:
-        tenant_candidates.add(tenant_key_id)
+    if "tenant_key" in payload:
+        observed_source = True
+        raw_key = str(payload.get("tenant_key") or "").strip().lower()
+        tenant_key_id = _tenant_for_key(connection, raw_key)
+        if tenant_key_id is not None:
+            tenant_candidates.add(tenant_key_id)
+        elif not raw_key or raw_key == "default":
+            shadow_source = True
+        else:
+            invalid_source = True
 
     ticket_id = _positive_int(payload.get("ticket_id"))
     if ticket_id is not None:
-        tenant_id, customer_id = _ticket_scope(connection, ticket_id)
-        if tenant_id is not None:
+        observed_source = True
+        ticket_exists, tenant_id, customer_id = _ticket_scope(connection, ticket_id)
+        if not ticket_exists:
+            invalid_source = True
+        elif tenant_id is not None:
             tenant_candidates.add(tenant_id)
+        else:
+            shadow_source = True
         if customer_id is not None:
             customer_candidates.add(customer_id)
         resource_type, resource_id = "ticket", str(ticket_id)
 
     conversation_id = _positive_int(payload.get("conversation_id"))
     if conversation_id is not None:
-        tenant_id, customer_id, linked_ticket_id = _conversation_scope(
-            connection,
-            conversation_id,
-        )
-        if tenant_id is not None:
+        observed_source = True
+        (
+            conversation_exists,
+            tenant_id,
+            customer_id,
+            linked_ticket_id,
+            conversation_shadow,
+        ) = _conversation_scope(connection, conversation_id)
+        if not conversation_exists:
+            invalid_source = True
+        elif tenant_id is not None:
             tenant_candidates.add(tenant_id)
+        elif conversation_shadow:
+            shadow_source = True
+        else:
+            invalid_source = True
         if customer_id is not None:
             customer_candidates.add(customer_id)
         if resource_type is None:
@@ -214,36 +258,58 @@ def derive_job_scope_values(
 
     explicit_customer_id = _positive_int(payload.get("customer_id"))
     if explicit_customer_id is not None:
-        customer_tenant_id = _customer_scope(connection, explicit_customer_id)
-        if customer_tenant_id is not None:
+        observed_source = True
+        customer_exists, customer_tenant_id = _customer_scope(
+            connection,
+            explicit_customer_id,
+        )
+        if not customer_exists:
+            invalid_source = True
+        elif customer_tenant_id is not None:
             tenant_candidates.add(customer_tenant_id)
+            customer_candidates.add(explicit_customer_id)
+        else:
+            shadow_source = True
             customer_candidates.add(explicit_customer_id)
         if resource_type is None:
             resource_type, resource_id = "customer", str(explicit_customer_id)
 
     account_id = _positive_int(payload.get("account_id"))
     if account_id is not None and job.job_type == "email.mailbox_sync":
-        tenant_id = _email_account_scope(connection, account_id)
-        if tenant_id is not None:
+        observed_source = True
+        account_exists, tenant_id = _email_account_scope(connection, account_id)
+        if not account_exists:
+            invalid_source = True
+        elif tenant_id is not None:
             tenant_candidates.add(tenant_id)
+        else:
+            shadow_source = True
         if resource_type is None:
             resource_type, resource_id = "outbound_email_account", str(account_id)
 
     channel_account_id = _positive_int(payload.get("channel_account_id"))
     if channel_account_id is not None:
-        tenant_id = _channel_account_scope(connection, channel_account_id)
-        if tenant_id is not None:
+        observed_source = True
+        account_exists, tenant_id = _channel_account_scope(
+            connection,
+            channel_account_id,
+        )
+        if not account_exists:
+            invalid_source = True
+        elif tenant_id is not None:
             tenant_candidates.add(tenant_id)
+        else:
+            shadow_source = True
         if resource_type is None:
             resource_type, resource_id = "channel_account", str(channel_account_id)
 
     purpose = PURPOSE_BY_JOB_TYPE.get(job.job_type, "unclassified")
-    if len(tenant_candidates) == 1:
+    if len(tenant_candidates) == 1 and not shadow_source and not invalid_source:
         tenant_id = next(iter(tenant_candidates))
         valid_customers = {
             customer_id
             for customer_id in customer_candidates
-            if _customer_scope(connection, customer_id) == tenant_id
+            if _customer_scope(connection, customer_id) == (True, tenant_id)
         }
         customer_id = next(iter(valid_customers)) if len(valid_customers) == 1 else None
         return JobScopeValues(
@@ -254,7 +320,36 @@ def derive_job_scope_values(
             resource_type=resource_type,
             resource_id=resource_id,
         )
-    if not tenant_candidates and job.job_type in PLATFORM_JOB_TYPES:
+
+    if (
+        not tenant_candidates
+        and not invalid_source
+        and purpose != "unclassified"
+        and tenant_runtime_authority_mode() == "shadow"
+        and (shadow_source or not observed_source)
+    ):
+        shadow_customers = {
+            customer_id
+            for customer_id in customer_candidates
+            if _customer_scope(connection, customer_id) == (True, None)
+        }
+        customer_id = (
+            next(iter(shadow_customers)) if len(shadow_customers) == 1 else None
+        )
+        return JobScopeValues(
+            scope_type="shadow",
+            tenant_id=None,
+            customer_id=customer_id,
+            purpose=purpose,
+            resource_type=resource_type,
+            resource_id=resource_id,
+        )
+
+    if (
+        not tenant_candidates
+        and not observed_source
+        and job.job_type in PLATFORM_JOB_TYPES
+    ):
         return JobScopeValues(
             scope_type="platform",
             tenant_id=None,
@@ -263,6 +358,7 @@ def derive_job_scope_values(
             resource_type=resource_type,
             resource_id=resource_id,
         )
+
     return JobScopeValues(
         scope_type="unresolved",
         tenant_id=None,
@@ -358,3 +454,15 @@ def background_job_ids_for_tenant(
         BackgroundJobScope.scope_type == "tenant",
         BackgroundJobScope.tenant_id == tenant_id,
     )
+
+
+__all__ = [
+    "JobScopeValues",
+    "PLATFORM_JOB_TYPES",
+    "PURPOSE_BY_JOB_TYPE",
+    "SCOPE_SCHEMA",
+    "background_job_ids_for_tenant",
+    "derive_job_scope_values",
+    "install_background_job_scope_events",
+    "reconcile_missing_background_job_scopes",
+]

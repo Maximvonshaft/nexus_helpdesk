@@ -27,9 +27,12 @@ def production_env(**overrides: str) -> dict[str, str]:
     key_name = "SECRET" + "_KEY"
     env = {
         "APP_ENV": "production",
+        "TENANT_RUNTIME_AUTHORITY_MODE": "enforce",
         "NEXUS_PROCESS_ROLE": "web",
         key_name: "ci-value-for-production-settings-contract",
-        "DATABASE_URL": "postgresql+psycopg://helpdesk:helpdesk@db:5432/helpdesk",
+        "DATABASE_URL": (
+            "postgresql+psycopg://helpdesk:helpdesk@db:5432/helpdesk"
+        ),
         "ALLOWED_ORIGINS": "https://example.test",
         "AUTO_INIT_DB": "false",
         "SEED_DEMO_DATA": "false",
@@ -50,7 +53,9 @@ def production_env(**overrides: str) -> dict[str, str]:
         "KNOWLEDGE_EMBEDDINGS_ENABLED": "true",
         "KNOWLEDGE_EMBEDDING_PROVIDER": "openai_compatible",
         "KNOWLEDGE_EMBEDDING_MODEL": "text-embedding-3-small",
-        "KNOWLEDGE_EMBEDDING_API_KEY_FILE": "/run/secrets/knowledge_embedding_api_key",
+        "KNOWLEDGE_EMBEDDING_API_KEY_FILE": (
+            "/run/secrets/knowledge_embedding_api_key"
+        ),
     }
     env.update(overrides)
     return env
@@ -130,7 +135,6 @@ def test_production_settings_accept_hardened_web_contract(monkeypatch):
             "real embedding provider",
         ),
         ("WEBCHAT_WS_BROKER", "memory", "WEBCHAT_WS_BROKER=memory"),
-        ("WHATSAPP_DISPATCH_MODE", "bad-mode", "WHATSAPP_DISPATCH_MODE"),
     ],
 )
 def test_production_web_settings_reject_unsafe_contract(
@@ -138,7 +142,11 @@ def test_production_web_settings_reject_unsafe_contract(
     value: str,
     expected_message: str,
 ):
-    extra = {"WEBCHAT_WS_ENABLED": "true"} if key == "WEBCHAT_WS_BROKER" else {}
+    extra = (
+        {"WEBCHAT_WS_ENABLED": "true"}
+        if key == "WEBCHAT_WS_BROKER"
+        else {}
+    )
     with pytest.MonkeyPatch.context() as monkeypatch:
         _frontend_exists(monkeypatch)
         with patched_env(production_env(**extra, **{key: value})):
@@ -155,6 +163,14 @@ def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
         prefix + "transport",
         prefix + "deployment_mode",
         prefix + "sync_enabled",
+        "whatsapp_native_enabled",
+        "whatsapp_dispatch_mode",
+        "whatsapp_sidecar_url",
+        "whatsapp_sidecar_token",
+        "whatsapp_sidecar_timeout_seconds",
+        "whatsapp_connector_key",
+        "whatsapp_connector_hmac_secret",
+        "whatsapp_connector_timestamp_tolerance_seconds",
     )
     with patched_env(production_env()):
         settings = Settings()
@@ -168,7 +184,6 @@ def test_removed_compatibility_settings_are_not_runtime_attributes(monkeypatch):
         "migration",
         "worker-outbound",
         "worker-background",
-        "worker-handoff-snapshot",
     ],
 )
 def test_non_http_production_roles_do_not_require_web_or_ai_secrets(
@@ -208,7 +223,9 @@ def test_non_http_production_roles_do_not_require_web_or_ai_secrets(
     assert settings.knowledge_embeddings_enabled is False
 
 
-def test_webchat_ai_worker_requires_real_embedding_only_when_ai_is_enabled(tmp_path):
+def test_webchat_ai_worker_requires_real_embedding_only_when_ai_is_enabled(
+    tmp_path,
+):
     disabled_env = production_env(
         NEXUS_PROCESS_ROLE="worker-webchat-ai",
         STORAGE_BACKEND="local",
@@ -252,79 +269,16 @@ def test_webchat_ai_worker_requires_real_embedding_only_when_ai_is_enabled(tmp_p
                 Settings()
 
 
-def test_unsupported_process_role_fails_closed(tmp_path):
-    env = production_env(
-        NEXUS_PROCESS_ROLE="unknown-worker",
-        STORAGE_BACKEND="local",
-        UPLOAD_ROOT=str(tmp_path / "unknown"),
-        WEBCHAT_AI_ENABLED="false",
-        WEBCHAT_AI_AUTO_REPLY_MODE="off",
-        KNOWLEDGE_EMBEDDINGS_ENABLED="false",
-    )
-    with patched_env(env):
-        with pytest.raises(RuntimeError, match="NEXUS_PROCESS_ROLE"):
-            Settings()
-
-
-def test_native_whatsapp_dispatch_mode_requires_explicit_enable_and_token(monkeypatch):
-    _frontend_exists(monkeypatch)
-
-    with pytest.MonkeyPatch.context() as patch:
-        _frontend_exists(patch)
-        with patched_env(production_env(WHATSAPP_DISPATCH_MODE="native_sidecar")):
-            with pytest.raises(RuntimeError, match="WHATSAPP_NATIVE_ENABLED=true"):
+def test_unsupported_and_retired_process_roles_fail_closed(tmp_path):
+    for role in ("unknown-worker", "worker-handoff-snapshot"):
+        env = production_env(
+            NEXUS_PROCESS_ROLE=role,
+            STORAGE_BACKEND="local",
+            UPLOAD_ROOT=str(tmp_path / role),
+            WEBCHAT_AI_ENABLED="false",
+            WEBCHAT_AI_AUTO_REPLY_MODE="off",
+            KNOWLEDGE_EMBEDDINGS_ENABLED="false",
+        )
+        with patched_env(env):
+            with pytest.raises(RuntimeError, match="NEXUS_PROCESS_ROLE"):
                 Settings()
-
-    with pytest.MonkeyPatch.context() as patch:
-        _frontend_exists(patch)
-        with patched_env(
-            production_env(
-                WHATSAPP_DISPATCH_MODE="native_sidecar",
-                WHATSAPP_NATIVE_ENABLED="true",
-            )
-        ):
-            with pytest.raises(RuntimeError, match="WHATSAPP_SIDECAR_TOKEN"):
-                Settings()
-
-    with pytest.MonkeyPatch.context() as patch:
-        _frontend_exists(patch)
-        with patched_env(
-            production_env(
-                WHATSAPP_DISPATCH_MODE="native_sidecar",
-                WHATSAPP_NATIVE_ENABLED="true",
-                WHATSAPP_SIDECAR_TOKEN="sidecar-token",
-                WHATSAPP_SIDECAR_URL="http://whatsapp-sidecar:18793",
-            )
-        ):
-            with pytest.raises(RuntimeError, match="WHATSAPP_CONNECTOR_KEY"):
-                Settings()
-
-    with pytest.MonkeyPatch.context() as patch:
-        _frontend_exists(patch)
-        with patched_env(
-            production_env(
-                WHATSAPP_DISPATCH_MODE="native_sidecar",
-                WHATSAPP_NATIVE_ENABLED="true",
-                WHATSAPP_SIDECAR_TOKEN="sidecar-token",
-                WHATSAPP_CONNECTOR_KEY="connector-key",
-                WHATSAPP_SIDECAR_URL="http://whatsapp-sidecar:18793",
-            )
-        ):
-            with pytest.raises(RuntimeError, match="WHATSAPP_CONNECTOR_HMAC_SECRET"):
-                Settings()
-
-    with pytest.MonkeyPatch.context() as patch:
-        _frontend_exists(patch)
-        with patched_env(
-            production_env(
-                WHATSAPP_DISPATCH_MODE="native_sidecar",
-                WHATSAPP_NATIVE_ENABLED="true",
-                WHATSAPP_SIDECAR_TOKEN="sidecar-token",
-                WHATSAPP_CONNECTOR_KEY="connector-key",
-                WHATSAPP_CONNECTOR_HMAC_SECRET="connector-hmac-secret",
-                WHATSAPP_SIDECAR_URL="http://whatsapp-sidecar:18793",
-            )
-        ):
-            settings = Settings()
-    assert settings.whatsapp_dispatch_mode == "native_sidecar"
-    assert settings.whatsapp_native_enabled is True

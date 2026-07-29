@@ -61,7 +61,9 @@ def test_fallback_runtime_is_digest_pinned_migrated_and_fail_closed() -> None:
         'WEBCHAT_LIVE_AI_VOICE_ENABLED=false',
         'ENABLE_OUTBOUND_DISPATCH=false',
         'OUTBOUND_PROVIDER=disabled',
-        'WHATSAPP_NATIVE_ENABLED=false',
+        'WHATSAPP_ENABLED=false',
+        'WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false',
+        'WHATSAPP_MEDIA_ENABLED=false',
         'SPEEDAF_MCP_ENABLED=false',
         'OPERATIONS_DISPATCH_MODE=disabled',
     ):
@@ -75,8 +77,10 @@ def test_fallback_runtime_is_digest_pinned_migrated_and_fail_closed() -> None:
     assert "printf '%s\\n' \"${candidate_name}\"" in RUNTIME
 
 
-def test_publisher_still_uses_one_rc_build_and_one_assurance_authority() -> None:
+def test_publisher_reuses_application_rc_and_builds_only_the_sidecar() -> None:
     assert "bash scripts/release/run_controlled_rc_gate.sh" in WORKFLOW
     assert "bash scripts/release/run_controlled_image_assurance.sh" in WORKFLOW
-    assert "docker build " not in WORKFLOW
     assert WORKFLOW.count("run_controlled_image_assurance.sh") == 1
+    assert WORKFLOW.count("docker build --pull=false") == 1
+    assert "--file connectors/whatsapp-sidecar/Dockerfile" in WORKFLOW
+    assert '--tag "$CANDIDATE_IMAGE"' not in WORKFLOW

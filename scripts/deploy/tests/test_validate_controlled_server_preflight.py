@@ -26,6 +26,7 @@ class ControlledServerPreflightTests(unittest.TestCase):
     image = "ghcr.io/maximvonshaft/nexus_helpdesk@" + digest
     build_time = "20260713T190000Z"
     app_version = "controlled-aaaaaaaaaaaa"
+    whatsapp_secret_mount = "${NEXUS_WHATSAPP_SECRETS_HOST_PATH:?required}:/run/nexus:ro"
 
     def _manifest(self) -> dict:
         return {
@@ -67,9 +68,16 @@ class ControlledServerPreflightTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _service(*, environment: dict[str, str] | None = None, command: list[str]) -> dict:
-        return {
-            "image": "${CONTROLLED_IMAGE:?digest required}",
+    def _service(
+        *,
+        environment: dict[str, str] | None = None,
+        command: list[str],
+        volumes: list[str] | None = None,
+        image: str = "${CONTROLLED_IMAGE:?digest required}",
+        profiles: list[str] | None = None,
+    ) -> dict:
+        service = {
+            "image": image,
             "read_only": True,
             "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
@@ -78,8 +86,13 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "environment": environment or {},
             "command": command,
         }
+        if volumes:
+            service["volumes"] = volumes
+        if profiles:
+            service["profiles"] = profiles
+        return service
 
-    def _compose(self) -> str:
+    def _compose(self, *, include_sidecar: bool = True) -> str:
         services = {
             "migrate-controlled": self._service(
                 environment={"DATABASE_URL": "${DATABASE_URL_MIGRATION:?required}"},
@@ -88,6 +101,7 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "app-controlled": self._service(
                 environment={"DATABASE_URL": "${DATABASE_URL_APP:?required}"},
                 command=["python", "-m", "gunicorn", "app.main:app"],
+                volumes=[self.whatsapp_secret_mount],
             ),
             "livekit-agent-controlled": self._service(
                 environment={
@@ -103,20 +117,26 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "worker-outbound-controlled": self._service(
                 environment={"DATABASE_URL": "${DATABASE_URL_OUTBOUND:?required}"},
                 command=["python", "scripts/run_worker.py", "--queue", "outbound"],
+                volumes=[self.whatsapp_secret_mount],
             ),
             "worker-background-controlled": self._service(
                 environment={"DATABASE_URL": "${DATABASE_URL_BACKGROUND:?required}"},
                 command=["python", "scripts/run_worker.py", "--queue", "background"],
+                volumes=[self.whatsapp_secret_mount],
             ),
             "worker-webchat-ai-controlled": self._service(
                 environment={"DATABASE_URL": "${DATABASE_URL_WEBCHAT_AI:?required}"},
                 command=["python", "scripts/run_worker.py", "--queue", "webchat-ai"],
             ),
-            "worker-handoff-snapshot-controlled": self._service(
-                environment={"DATABASE_URL": "${DATABASE_URL_HANDOFF:?required}"},
-                command=["python", "scripts/run_worker.py", "--queue", "handoff-snapshot"],
-            ),
         }
+        if include_sidecar:
+            services["whatsapp-sidecar-controlled"] = self._service(
+                environment={},
+                command=["node", "dist/index.js"],
+                volumes=[self.whatsapp_secret_mount],
+                image="${WHATSAPP_SIDECAR_IMAGE:?digest required}",
+                profiles=["whatsapp-baileys"],
+            )
         return yaml.safe_dump(
             {"services": services, "networks": {"controlled": {"driver": "bridge"}}},
             sort_keys=False,
@@ -142,6 +162,7 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "WEBCHAT_ALLOWED_ORIGINS": "https://mcs.speedaf.com",
             "NEXUS_UPLOADS_HOST_PATH": "/opt/nexus_helpdesk/data/uploads",
             "NEXUS_UPLOAD_BACKUP_HOST_PATH": "/var/backups/nexusdesk/uploads",
+            "NEXUS_WHATSAPP_SECRETS_HOST_PATH": "/opt/nexus_helpdesk/secrets/whatsapp",
             **MODULE.SAFE_CONTROLS,
         }
         for index, key in enumerate(MODULE.DATABASE_ROLE_KEYS.values(), start=1):
@@ -193,12 +214,47 @@ class ControlledServerPreflightTests(unittest.TestCase):
             payload = self._validate(env_path, compose_path, manifest_path)
         self.assertEqual(payload["status"], "pass")
         self.assertEqual(set(payload["database_roles"]), set(MODULE.DATABASE_ROLE_KEYS))
+        self.assertNotIn("handoff", payload["database_roles"])
         self.assertEqual(
             len({row["username"] for row in payload["database_roles"].values()}),
             len(MODULE.DATABASE_ROLE_KEYS),
         )
         self.assertFalse(payload["database_passwords_included"])
         self.assertFalse(payload["external_effects_enabled"])
+
+    def test_accepts_meta_only_topology_without_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, _, manifest_path = self._write_fixture(root)
+            compose_path = root / "meta-only.yml"
+            compose_path.write_text(
+                self._compose(include_sidecar=False),
+                encoding="utf-8",
+            )
+            payload = self._validate(env_path, compose_path, manifest_path)
+        self.assertEqual(payload["status"], "pass")
+
+    def test_rejects_sidecar_without_profile_or_secret_mount(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            document = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+            document["services"]["whatsapp-sidecar-controlled"]["profiles"] = []
+            compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_whatsapp_sidecar_profile_invalid",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
+            document = yaml.safe_load(self._compose())
+            document["services"]["worker-background-controlled"]["volumes"] = []
+            compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_whatsapp_secret_mount_missing:worker-background-controlled",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
 
     def test_rejects_mutable_image_tag(self) -> None:
         self._assert_env_failure(
@@ -219,6 +275,16 @@ class ControlledServerPreflightTests(unittest.TestCase):
             "unsafe_control:PROVIDER_RUNTIME_TRAFFIC_MODE",
         )
 
+    def test_rejects_retired_whatsapp_controls(self) -> None:
+        self._assert_env_failure(
+            lambda values: values.update(WHATSAPP_NATIVE_ENABLED="false"),
+            "disabled_capability_credential_forbidden:WHATSAPP_NATIVE_ENABLED",
+        )
+        self._assert_env_failure(
+            lambda values: values.update(WHATSAPP_DISPATCH_MODE="disabled"),
+            "disabled_capability_credential_forbidden:WHATSAPP_DISPATCH_MODE",
+        )
+
     def test_rejects_compose_build_shared_env_or_missing_livekit_service(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -232,7 +298,10 @@ class ControlledServerPreflightTests(unittest.TestCase):
             document = yaml.safe_load(self._compose())
             document["services"]["app-controlled"]["env_file"] = ".env.controlled"
             compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
-            with self.assertRaisesRegex(MODULE.PreflightError, "compose_shared_env_file_forbidden"):
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_shared_env_file_forbidden",
+            ):
                 self._validate(env_path, compose_path, manifest_path)
 
             document = yaml.safe_load(self._compose())
@@ -240,6 +309,32 @@ class ControlledServerPreflightTests(unittest.TestCase):
             compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
             with self.assertRaisesRegex(MODULE.PreflightError, "compose_service_missing"):
                 self._validate(env_path, compose_path, manifest_path)
+
+    def test_rejects_retired_snapshot_service_or_database_role(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path, compose_path, manifest_path = self._write_fixture(root)
+            document = yaml.safe_load(self._compose())
+            document["services"]["worker-handoff-snapshot-controlled"] = self._service(
+                environment={"DATABASE_URL": "${DATABASE_URL_HANDOFF:?required}"},
+                command=["python", "scripts/run_worker.py", "--queue", "handoff-snapshot"],
+            )
+            compose_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.PreflightError,
+                "compose_service_unexpected|compose_retired_execution_path",
+            ):
+                self._validate(env_path, compose_path, manifest_path)
+
+        self._assert_env_failure(
+            lambda values: values.update(
+                DATABASE_URL_HANDOFF=(
+                    "postgresql+psycopg://retired:retired-pass"
+                    "@10.2.64.2:5432/nexusdesk"
+                )
+            ),
+            "disabled_capability_credential_forbidden:DATABASE_URL_HANDOFF",
+        )
 
     def test_rejects_generic_duplicate_or_wrong_port_database_authority(self) -> None:
         self._assert_env_failure(
@@ -258,7 +353,9 @@ class ControlledServerPreflightTests(unittest.TestCase):
         )
         self._assert_env_failure(
             lambda values: values.update(
-                DATABASE_URL_OUTBOUND=values["DATABASE_URL_OUTBOUND"].replace(":5432/", ":6432/")
+                DATABASE_URL_OUTBOUND=values["DATABASE_URL_OUTBOUND"].replace(
+                    ":5432/", ":6432/"
+                )
             ),
             "database_port_mismatch:DATABASE_URL_OUTBOUND",
         )

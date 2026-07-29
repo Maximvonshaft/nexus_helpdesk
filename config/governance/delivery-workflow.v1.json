@@ -1,0 +1,109 @@
+{
+  "schema": "nexus.delivery-workflow.v1",
+  "version": "1.0.0",
+  "owner": "delivery_governance",
+  "authority_issue": 722,
+  "principles": [
+    "one root cause has one canonical work item and one active writer lease",
+    "one large pull request is allowed when it preserves one coherent delivery chain",
+    "review scope is structured inside the pull request rather than split into parallel implementations",
+    "development feedback is fast and affected-scope oriented",
+    "candidate and main acceptance remain complete and exact-SHA bound",
+    "green repository acceptance does not authorize production traffic"
+  ],
+  "writer_lease": {
+    "cardinality": "one_active_writer_per_root_cause",
+    "writer_permissions": ["branch_write", "implementation_commit", "pr_body_state_update"],
+    "reviewer_permissions": ["read", "comment", "finding_proposal"],
+    "reviewer_prohibitions": ["parallel_implementation_branch", "second_writer", "scope_expansion"],
+    "transfer_requires": ["release_previous_lease", "record_new_writer", "record_exact_branch_and_pr"]
+  },
+  "pull_request_model": {
+    "large_pr_allowed": true,
+    "split_required": false,
+    "draft_is_development_state": true,
+    "ready_for_review_is_candidate_state": true,
+    "required_review_packets": [
+      "authority_data",
+      "provider_or_transport",
+      "product_ui",
+      "security_privacy",
+      "release_runtime"
+    ]
+  },
+  "validation_modes": {
+    "development": {
+      "trigger": "draft_pull_request",
+      "main_sync_required": false,
+      "checks": [
+        "candidate_identity_recorded",
+        "changed_path_classification",
+        "current_tree_secret_scan",
+        "python_compile_when_affected",
+        "focused_backend_contracts_when_affected",
+        "frontend_verify_without_browser_when_affected",
+        "sidecar_type_test_build_when_affected",
+        "migration_heads_when_affected"
+      ],
+      "full_acceptance_allowed": false
+    },
+    "candidate": {
+      "trigger": "ready_for_review_pull_request",
+      "main_sync_required": true,
+      "head_freeze_required": true,
+      "checks": ["all_canonical_acceptance_jobs"],
+      "full_acceptance_allowed": true
+    },
+    "main": {
+      "trigger": "push_to_main",
+      "main_sync_required": true,
+      "head_freeze_required": true,
+      "checks": ["all_canonical_acceptance_jobs", "controlled_candidate_publication_eligibility"],
+      "full_acceptance_allowed": true
+    }
+  },
+  "candidate_freeze": {
+    "starts_when": "pull_request_marked_ready_for_review",
+    "ends_when": ["candidate_accepted", "candidate_rejected_and_converted_to_draft"],
+    "prohibited_during_freeze": [
+      "non_blocking_cleanup_commit",
+      "format_only_commit",
+      "unrelated_scope_change",
+      "new_feature_expansion",
+      "push_while_full_acceptance_is_running"
+    ],
+    "failure_response": [
+      "collect_all_failures",
+      "classify_by_root_cause",
+      "convert_to_draft",
+      "repair_in_development_mode",
+      "form_one_new_candidate"
+    ]
+  },
+  "commit_hygiene": {
+    "forbidden_commit_messages": ["x", "probe", "temp", "temporary"],
+    "forbidden_transport_artifacts": [
+      "empty_probe_file",
+      "patch_transport_file",
+      "base64_payload_file",
+      "finalizer_file",
+      "unbounded_log"
+    ],
+    "candidate_preflight": [
+      "git_status_clean",
+      "git_diff_check",
+      "untracked_files_classified",
+      "temporary_artifacts_absent",
+      "pr_body_matches_exact_head"
+    ]
+  },
+  "metrics": {
+    "development_gate_p95_minutes": 10,
+    "candidate_run_cancellation_rate_target_percent": 5,
+    "candidate_attempts_median_target": 2,
+    "pushes_during_candidate_run_target": 0,
+    "parallel_writer_pr_target": 0,
+    "temporary_git_commit_target": 0,
+    "final_head_required_gate_coverage_percent": 100
+  }
+}

@@ -73,12 +73,6 @@ def process_webchat_ai_reply_job(
         or visitor_message.ticket_id != ticket.id
     ):
         raise RuntimeError("ticket-backed webchat job payload mismatch")
-    if ticket is None and _is_whatsapp_conversation(conversation):
-        return {
-            "status": "failed_no_public_reply",
-            "reason": "ticketless_whatsapp_not_enabled",
-            "reply_source": "conversation_first_guard",
-        }
 
     turn = db.get(WebchatAITurn, ai_turn_id) if ai_turn_id else None
     if is_ai_suspended_for_handoff(conversation):
@@ -530,12 +524,16 @@ def _persist_ticketless_reply(
     language: str | None,
     public: dict[str, Any],
 ) -> WebchatMessage:
-    channel = SourceChannel.web_chat
+    external = _is_whatsapp_conversation(conversation)
+    channel = SourceChannel.whatsapp if external else SourceChannel.web_chat
+    provider_status = (
+        "whatsapp_ai_reply_queued" if external else "webchat_ai_delivered"
+    )
     metadata = _message_metadata(
         result=result,
         safe_trace=safe_trace,
         session_policy=session_policy,
-        external_send=False,
+        external_send=external,
         ai_turn_id=ai_turn_id,
         ticketless=True,
         public=public,
@@ -549,16 +547,16 @@ def _persist_ticketless_reply(
         body=public["body"],
         origin="provider_runtime",
         created_by=None,
-        provider_status="webchat_ai_delivered",
+        provider_status=provider_status,
         ai_contract=_reply_contract(
             result=result,
             safe_trace=safe_trace,
             channel=channel,
             public=public,
         ),
-        outbound_status=MessageStatus.sent,
+        outbound_status=None if external else MessageStatus.sent,
         ai_turn_id=ai_turn_id,
-        delivery_status="sent",
+        delivery_status="queued" if external else "sent",
         metadata_json=metadata,
         author_label=AI_AUTHOR_LABEL,
         safety_level=public["policy"].level,

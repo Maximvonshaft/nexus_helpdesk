@@ -105,7 +105,6 @@ def test_settings_contract_covers_critical_runtime_boundaries(tmp_path, monkeypa
         "upload_root",
         "enable_outbound_dispatch",
         "outbound_provider",
-        "whatsapp_dispatch_mode",
         "job_batch_size",
         "job_lock_seconds",
         "webchat_ai_enabled",
@@ -120,3 +119,10 @@ def test_settings_contract_covers_critical_runtime_boundaries(tmp_path, monkeypa
         "metrics_token",
     ):
         assert hasattr(instance, attribute), attribute
+    for retired_whatsapp_attribute in (
+        "whatsapp_native_enabled",
+        "whatsapp_dispatch_mode",
+        "whatsapp_sidecar_url",
+        "whatsapp_sidecar_token",
+    ):
+        assert not hasattr(instance, retired_whatsapp_attribute)

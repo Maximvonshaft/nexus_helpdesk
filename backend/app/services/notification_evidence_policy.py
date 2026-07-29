@@ -216,6 +216,9 @@ def require_governed_closure_ready(
             detail={
                 "code": "safe_closure_not_ready",
                 "scenario_key": snapshot.receipt.get("scenario_key"),
+                "scenario_assignment_id": snapshot.receipt.get(
+                    "scenario_assignment_id"
+                ),
                 "readiness": snapshot.readiness.as_dict(),
                 "receipt_sha256": snapshot.receipt["receipt_sha256"],
             },

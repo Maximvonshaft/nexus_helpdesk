@@ -4,6 +4,7 @@ x-rc-app: &rc_app
   image: ${RC_IMAGE_TAG:?set RC_IMAGE_TAG in deploy/.env.rc-test}
   env_file:
     - .env.rc-test
+  working_dir: /app/backend
   volumes:
     - rc_uploads:/app/backend/uploads
     - rc_upload_backups:/var/backups/nexusdesk/uploads
@@ -43,26 +44,33 @@ services:
 
   migrate-rc:
     <<: *rc_app
+    environment:
+      NEXUS_PROCESS_ROLE: migration
     command:
-      - /bin/sh
-      - -ec
-      - >-
-        cd /app/backend &&
-        alembic upgrade head &&
-        alembic current
+      - python
+      - -m
+      - alembic
+      - upgrade
+      - head
     depends_on:
       postgres-rc:
         condition: service_healthy
 
   seed-rc:
     <<: *rc_app
-    command: python /app/scripts/release/seed_rc_test_data.py
+    environment:
+      NEXUS_PROCESS_ROLE: migration
+    command:
+      - python
+      - /app/scripts/release/seed_rc_test_data.py
     depends_on:
       migrate-rc:
         condition: service_completed_successfully
 
   app-rc:
     <<: *rc_app
+    environment:
+      NEXUS_PROCESS_ROLE: web
     networks:
       rc:
         aliases:
@@ -97,9 +105,16 @@ services:
   worker-outbound-rc:
     <<: *rc_app
     environment:
+      NEXUS_PROCESS_ROLE: worker-outbound
       NEXUS_WORKER_ID: worker-outbound-rc
       NEXUS_WORKER_QUEUE: outbound
-    command: python scripts/run_worker_supervised.py --worker-id worker-outbound-rc --queue outbound
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-outbound-rc
+      - --queue
+      - outbound
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:
@@ -108,9 +123,16 @@ services:
   worker-background-rc:
     <<: *rc_app
     environment:
+      NEXUS_PROCESS_ROLE: worker-background
       NEXUS_WORKER_ID: worker-background-rc
       NEXUS_WORKER_QUEUE: background
-    command: python scripts/run_worker_supervised.py --worker-id worker-background-rc --queue background
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-background-rc
+      - --queue
+      - background
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:
@@ -121,20 +143,16 @@ services:
   worker-webchat-ai-rc:
     <<: *rc_app
     environment:
+      NEXUS_PROCESS_ROLE: worker-webchat-ai
       NEXUS_WORKER_ID: worker-webchat-ai-rc
       NEXUS_WORKER_QUEUE: webchat-ai
-    command: python scripts/run_worker_supervised.py --worker-id worker-webchat-ai-rc --queue webchat-ai
-    healthcheck: *rc_worker_healthcheck
-    depends_on:
-      app-rc:
-        condition: service_healthy
-
-  worker-handoff-snapshot-rc:
-    <<: *rc_app
-    environment:
-      NEXUS_WORKER_ID: worker-handoff-snapshot-rc
-      NEXUS_WORKER_QUEUE: handoff-snapshot
-    command: python scripts/run_worker_supervised.py --worker-id worker-handoff-snapshot-rc --queue handoff-snapshot
+    command:
+      - python
+      - scripts/run_worker_supervised.py
+      - --worker-id
+      - worker-webchat-ai-rc
+      - --queue
+      - webchat-ai
     healthcheck: *rc_worker_healthcheck
     depends_on:
       app-rc:

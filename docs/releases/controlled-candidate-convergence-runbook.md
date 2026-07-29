@@ -104,14 +104,17 @@ Start from `deploy/.env.controlled.example` or the local-PostgreSQL example.
 
 Replace every placeholder with a real value. Required host facts include:
 
-- six distinct PostgreSQL service identities;
+- five distinct PostgreSQL service identities: migration, Web, outbound,
+  background and WebChat AI;
 - application signing and metrics secrets;
 - approved public origins and proxy addresses;
 - uploads and backup paths;
 - an immutable GHCR digest from the final candidate artifact.
 
 Provider, WebChat AI, Voice, outbound and Operations flags must remain disabled
-during controlled deployment.
+during controlled deployment. WebChat Handoff snapshots and WhatsApp media
+processing are owned by the canonical Background Worker; there is no separate
+Handoff Worker process or database role.
 
 ## 5. Validate before starting containers
 
@@ -142,9 +145,13 @@ docker compose \
   --env-file deploy/.env.controlled \
   -f deploy/docker-compose.controlled.yml \
   up -d migrate-controlled app-controlled \
-    worker-background-controlled worker-webchat-ai-controlled \
-    worker-handoff-snapshot-controlled
+    worker-outbound-controlled worker-background-controlled \
+    worker-webchat-ai-controlled
 ```
+
+Enable `whatsapp-baileys` only when an accepted Baileys Sidecar image and the
+required mounted secrets are present. Enable `whatsapp-media` only when the
+ClamAV activation contract and evidence are complete.
 
 Verify:
 

@@ -47,6 +47,7 @@ def _ticketless_handoff_items(
     tenant: str,
     country: str,
     channel: str,
+    queue: str,
     current_user,
     filters: dict[str, Any],
     cursor_payload: dict[str, Any] | None,
@@ -54,6 +55,11 @@ def _ticketless_handoff_items(
     sort: str,
     fetch_limit: int,
 ) -> list[dict[str, Any]]:
+    # Ticketless work has no CaseScenarioAssignment and therefore belongs only
+    # to the explicit legacy business queue. It must never bleed into a
+    # Scenario-owned queue that happens to share tenant/country/channel scope.
+    if queue != "legacy":
+        return []
     if filters["source_type"] not in {None, "handoff"}:
         return []
     if filters["retry"] not in {None, "not_applicable"}:
@@ -130,10 +136,17 @@ def _ticketless_handoff_items(
             "country_code": country,
             "channel_key": channel,
             "state": "terminal" if terminal else "active",
-            "source_status": handoff.status if handoff.status in _core._HANDOFF_STATUSES else "unknown",
+            "source_status": (
+                handoff.status
+                if handoff.status in _core._HANDOFF_STATUSES
+                else "unknown"
+            ),
             "reopened": False,
             "priority": "medium",
-            "owner": _core._owner(None, assigned_user_id=handoff.assigned_agent_id),
+            "owner": _core._owner(
+                None,
+                assigned_user_id=handoff.assigned_agent_id,
+            ),
             "sla": _core._sla(
                 None,
                 terminal=terminal,
@@ -145,7 +158,9 @@ def _ticketless_handoff_items(
             "updated_at": _core._iso(handoff.updated_at),
             "source_links": {
                 "ticket": None,
-                "conversation": f"/api/operator/conversations/{conversation.public_id}/thread",
+                "conversation": (
+                    f"/api/operator/conversations/{conversation.public_id}/thread"
+                ),
                 "handoff": "/api/webchat/admin/handoff/queue",
                 "dispatch": None,
             },
@@ -167,6 +182,7 @@ def list_unified_operator_queue(
     tenant_key: str,
     country_code: str,
     channel_key: str,
+    queue_key: str,
     state: str | None = None,
     source_type: str | None = None,
     owner: str | None = None,
@@ -201,13 +217,16 @@ def list_unified_operator_queue(
         tenant_key=tenant_key,
         country_code=country_code,
         channel_key=channel_key,
+        queue_key=queue_key,
     )
+    queue = grant.queue_key
     grant_version = scope_grant_version(grant, current_user=current_user)
     cursor_filters = {
         **filters,
         "tenant_hash": tenant_scope_hash(tenant),
         "country": country,
         "channel": channel,
+        "queue": queue,
     }
     fingerprint = _core._filter_hash(cursor_filters)
     cursor_payload = _core._decode_cursor(cursor) if cursor else None
@@ -234,6 +253,7 @@ def list_unified_operator_queue(
         tenant_key=tenant,
         country_code=country,
         channel_key=channel,
+        queue_key=queue,
         state=state,
         source_type=source_type,
         owner=owner,
@@ -255,6 +275,7 @@ def list_unified_operator_queue(
         tenant=tenant,
         country=country,
         channel=channel,
+        queue=queue,
         current_user=current_user,
         filters=filters,
         cursor_payload=cursor_payload,
@@ -298,6 +319,7 @@ def list_unified_operator_queue(
             "tenant_hash": tenant_scope_hash(tenant),
             "country_code": country,
             "channel_key": channel,
+            "queue_key": queue,
         },
         "filters": filters,
     }

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..operator_models import OperatorQueueScopeGrant
 from ..operator_schemas import (
     OperatorQueueCurrentScopesResponse,
     OperatorQueueProjectResponse,
@@ -14,7 +15,6 @@ from ..operator_schemas import (
     OperatorTaskTransitionResponse,
     UnifiedOperatorQueueResponse,
 )
-from ..operator_models import OperatorQueueScopeGrant
 from ..services.operator_queue import (
     OperatorQueueError,
     list_operator_tasks,
@@ -30,6 +30,10 @@ from ..services.operator_queue_scope import (
 )
 from ..services.operator_work_queue import list_unified_operator_queue
 from ..services.permissions import ensure_can_manage_runtime, ensure_can_manage_users
+from ..services.tenant_query_authority import (
+    TenantQueryScopeError,
+    actor_tenant_query_scope,
+)
 from ..unit_of_work import managed_session
 from .deps import get_current_user
 
@@ -37,7 +41,10 @@ router = APIRouter(prefix="/api/admin/operator-queue", tags=["operator-queue"])
 
 
 def _raise_operator_queue_error(exc: OperatorQueueError) -> None:
-    raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.detail}) from exc
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.detail},
+    ) from exc
 
 
 def _optional_query_string(value) -> str | None:
@@ -48,11 +55,31 @@ def _query_limit(value) -> int:
     return value if isinstance(value, int) else 50
 
 
+def _actor_scope(db: Session, current_user):
+    try:
+        # Production enforce mode rejects an unbound actor in
+        # resolve_actor_tenant_id. In non-production shadow mode the same helper
+        # returns the isolated NULL/default migration scope rather than widening
+        # the query to platform-global data.
+        return actor_tenant_query_scope(db, current_user)
+    except TenantQueryScopeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
 @router.get("/unified", response_model=UnifiedOperatorQueueResponse)
 def get_unified_operator_queue(
-    x_nexus_tenant: str = Header(..., alias="X-Nexus-Tenant", min_length=1, max_length=80),
+    x_nexus_tenant: str = Header(
+        ...,
+        alias="X-Nexus-Tenant",
+        min_length=1,
+        max_length=80,
+    ),
     country_code: str = Query(..., min_length=2, max_length=16),
     channel_key: str = Query(..., min_length=1, max_length=40),
+    queue_key: str = Query(..., min_length=2, max_length=160),
     state: str | None = Query(default=None),
     source_type: str | None = Query(default=None),
     owner: str | None = Query(default=None),
@@ -71,6 +98,7 @@ def get_unified_operator_queue(
         tenant_key=x_nexus_tenant,
         country_code=country_code,
         channel_key=channel_key,
+        queue_key=queue_key,
         state=_optional_query_string(state),
         source_type=_optional_query_string(source_type),
         owner=_optional_query_string(owner),
@@ -98,10 +126,26 @@ def get_operator_queue_scope_grants(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_users(current_user, db)
-    query = db.query(OperatorQueueScopeGrant)
+    scope = _actor_scope(db, current_user)
+    query = db.query(OperatorQueueScopeGrant).filter(
+        OperatorQueueScopeGrant.tenant_key == scope.tenant_key
+    )
     if isinstance(user_id, int):
+        target = scope.users(db).filter_by(id=user_id).first()
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="user_not_found",
+            )
         query = query.filter(OperatorQueueScopeGrant.user_id == user_id)
-    rows = query.order_by(OperatorQueueScopeGrant.user_id.asc(), OperatorQueueScopeGrant.id.asc()).limit(1000).all()
+    rows = (
+        query.order_by(
+            OperatorQueueScopeGrant.user_id.asc(),
+            OperatorQueueScopeGrant.id.asc(),
+        )
+        .limit(1000)
+        .all()
+    )
     return [serialize_scope_grant(row) for row in rows]
 
 
@@ -111,8 +155,13 @@ def put_operator_queue_scope_grant(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    _actor_scope(db, current_user)
     with managed_session(db):
-        row = upsert_scope_grant(db, current_user=current_user, payload=payload)
+        row = upsert_scope_grant(
+            db,
+            current_user=current_user,
+            payload=payload,
+        )
     db.refresh(row)
     return serialize_scope_grant(row)
 
@@ -123,8 +172,13 @@ def remove_operator_queue_scope_grant(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    _actor_scope(db, current_user)
     with managed_session(db):
-        delete_scope_grant(db, current_user=current_user, grant_id=grant_id)
+        delete_scope_grant(
+            db,
+            current_user=current_user,
+            grant_id=grant_id,
+        )
     return {"ok": True}
 
 
@@ -139,9 +193,11 @@ def get_operator_queue(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_runtime(current_user, db)
+    scope = _actor_scope(db, current_user)
     try:
         return list_operator_tasks(
             db,
+            tenant_id=scope.tenant_id,
             status=_optional_query_string(status),
             source_type=_optional_query_string(source_type),
             task_type=_optional_query_string(task_type),
@@ -159,8 +215,39 @@ def project_operator_queue_endpoint(
     current_user=Depends(get_current_user),
 ):
     ensure_can_manage_runtime(current_user, db)
+    scope = _actor_scope(db, current_user)
     with managed_session(db):
-        return project_operator_queue(db, actor_id=current_user.id, note=payload.note if payload else None)
+        return project_operator_queue(
+            db,
+            actor_id=current_user.id,
+            note=payload.note if payload else None,
+            tenant_id=scope.tenant_id,
+        )
+
+
+def _transition(
+    *,
+    db: Session,
+    current_user,
+    task_id: int,
+    action: str,
+    payload: OperatorTaskTransitionRequest | None,
+):
+    ensure_can_manage_runtime(current_user, db)
+    scope = _actor_scope(db, current_user)
+    try:
+        with managed_session(db):
+            row = transition_operator_task(
+                db,
+                tenant_id=scope.tenant_id,
+                task_id=task_id,
+                action=action,
+                actor_id=current_user.id,
+                note=payload.note if payload else None,
+            )
+        return {"task": serialize_operator_task(row), "replay_result": None}
+    except OperatorQueueError as exc:
+        _raise_operator_queue_error(exc)
 
 
 @router.post("/{task_id}/assign", response_model=OperatorTaskTransitionResponse)
@@ -170,13 +257,13 @@ def assign_operator_task(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_runtime(current_user, db)
-    try:
-        with managed_session(db):
-            row = transition_operator_task(db, task_id=task_id, action="assign", actor_id=current_user.id, note=payload.note if payload else None)
-        return {"task": serialize_operator_task(row), "replay_result": None}
-    except OperatorQueueError as exc:
-        _raise_operator_queue_error(exc)
+    return _transition(
+        db=db,
+        current_user=current_user,
+        task_id=task_id,
+        action="assign",
+        payload=payload,
+    )
 
 
 @router.post("/{task_id}/resolve", response_model=OperatorTaskTransitionResponse)
@@ -186,13 +273,13 @@ def resolve_operator_task(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_runtime(current_user, db)
-    try:
-        with managed_session(db):
-            row = transition_operator_task(db, task_id=task_id, action="resolve", actor_id=current_user.id, note=payload.note if payload else None)
-        return {"task": serialize_operator_task(row), "replay_result": None}
-    except OperatorQueueError as exc:
-        _raise_operator_queue_error(exc)
+    return _transition(
+        db=db,
+        current_user=current_user,
+        task_id=task_id,
+        action="resolve",
+        payload=payload,
+    )
 
 
 @router.post("/{task_id}/drop", response_model=OperatorTaskTransitionResponse)
@@ -202,10 +289,10 @@ def drop_operator_task(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    ensure_can_manage_runtime(current_user, db)
-    try:
-        with managed_session(db):
-            row = transition_operator_task(db, task_id=task_id, action="drop", actor_id=current_user.id, note=payload.note if payload else None)
-        return {"task": serialize_operator_task(row), "replay_result": None}
-    except OperatorQueueError as exc:
-        _raise_operator_queue_error(exc)
+    return _transition(
+        db=db,
+        current_user=current_user,
+        task_id=task_id,
+        action="drop",
+        payload=payload,
+    )

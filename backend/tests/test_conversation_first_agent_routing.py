@@ -444,4 +444,4 @@ def test_manager_without_explicit_scope_grant_cannot_receive_ticketless_work(
             mode="manual",
         )
     assert exc.value.status_code == 403
-    assert exc.value.detail == "agent_scope_not_authorized"
+    assert exc.value.detail == "agent_scenario_scope_not_authorized"

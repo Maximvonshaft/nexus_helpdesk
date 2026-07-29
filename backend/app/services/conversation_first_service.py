@@ -10,7 +10,13 @@ from ..models import Customer, Tenant, Ticket
 from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
 from ..webchat_models import WebchatConversation
-from .tenant_authority import stamp_runtime_tenant, tenant_runtime_authority_mode
+from .customer_identity_service import (
+    CustomerIdentityError,
+    bind_customer_identity,
+    normalize_customer_identity,
+    resolve_or_create_customer,
+)
+from .tenant_authority import tenant_runtime_authority_mode
 from .webchat_session_identity import (
     MAX_FIELD_CHARS,
     MAX_MESSAGE_CHARS,
@@ -136,6 +142,108 @@ def _assert_resume_scope(
         )
 
 
+def _webchat_identities(
+    *,
+    visitor_email: str | None,
+    visitor_phone: str | None,
+    visitor_ref: str | None,
+    public_id: str,
+) -> list[tuple[str, str]]:
+    candidates = [
+        ("phone", visitor_phone),
+        ("email", visitor_email),
+        ("external_ref", visitor_ref),
+        ("external_ref", public_id),
+    ]
+    identities: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for identity_type, raw_value in candidates:
+        if not raw_value:
+            continue
+        identity = normalize_customer_identity(identity_type, raw_value)
+        key = (identity.identity_type, identity.normalized_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        identities.append(key)
+    return identities
+
+
+def _bind_webchat_identities(
+    db: Session,
+    *,
+    customer: Customer,
+    visitor_name: str | None,
+    visitor_email: str | None,
+    visitor_phone: str | None,
+    visitor_ref: str | None,
+    public_id: str,
+) -> Customer:
+    try:
+        for identity_type, identity_value in _webchat_identities(
+            visitor_email=visitor_email,
+            visitor_phone=visitor_phone,
+            visitor_ref=visitor_ref,
+            public_id=public_id,
+        ):
+            bind_customer_identity(
+                db,
+                customer=customer,
+                identity_type=identity_type,
+                identity_value=identity_value,
+                source="webchat",
+                display_name=visitor_name,
+            )
+    except CustomerIdentityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return customer
+
+
+def _resolve_webchat_customer(
+    db: Session,
+    *,
+    tenant_id: int | None,
+    visitor_name: str | None,
+    visitor_email: str | None,
+    visitor_phone: str | None,
+    visitor_ref: str | None,
+    public_id: str,
+) -> Customer:
+    identities = _webchat_identities(
+        visitor_email=visitor_email,
+        visitor_phone=visitor_phone,
+        visitor_ref=visitor_ref,
+        public_id=public_id,
+    )
+    primary_type, primary_value = identities[0]
+    try:
+        customer = resolve_or_create_customer(
+            db,
+            tenant_id=tenant_id,
+            identity_type=primary_type,
+            identity_value=primary_value,
+            display_name=visitor_name,
+            source="webchat",
+        )
+    except CustomerIdentityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return _bind_webchat_identities(
+        db,
+        customer=customer,
+        visitor_name=visitor_name,
+        visitor_email=visitor_email,
+        visitor_phone=visitor_phone,
+        visitor_ref=visitor_ref,
+        public_id=public_id,
+    )
+
+
 def create_or_resume_conversation(
     db: Session,
     payload: Any,
@@ -192,6 +300,26 @@ def create_or_resume_conversation(
                 control=control,
                 tenant=tenant,
             )
+            customer_id = control.customer_id or customer_id
+            customer = db.get(Customer, customer_id) if customer_id is not None else None
+            resume_name = clip(getattr(payload, "visitor_name", None), 160)
+            resume_email = clip(getattr(payload, "visitor_email", None), 200)
+            resume_phone = clip(getattr(payload, "visitor_phone", None), 80)
+            resume_ref = clip(getattr(payload, "visitor_ref", None), 160)
+            if customer is not None:
+                _bind_webchat_identities(
+                    db,
+                    customer=customer,
+                    visitor_name=resume_name or existing.visitor_name,
+                    visitor_email=resume_email or existing.visitor_email,
+                    visitor_phone=resume_phone or existing.visitor_phone,
+                    visitor_ref=resume_ref or existing.visitor_ref,
+                    public_id=existing.public_id,
+                )
+            existing.visitor_name = resume_name or existing.visitor_name
+            existing.visitor_email = resume_email or existing.visitor_email
+            existing.visitor_phone = resume_phone or existing.visitor_phone
+            existing.visitor_ref = resume_ref or existing.visitor_ref
             existing.last_seen_at = utc_now()
             existing.visitor_token_expires_at = new_visitor_token_expiry()
             existing.updated_at = utc_now()
@@ -239,20 +367,15 @@ def create_or_resume_conversation(
     visitor_phone = clip(getattr(payload, "visitor_phone", None), 80)
     visitor_ref = clip(getattr(payload, "visitor_ref", None), 160)
 
-    customer = Customer(
-        name=(
-            visitor_name
-            or visitor_email
-            or visitor_phone
-            or f"Webchat Visitor {public_id[-6:]}"
-        ),
-        email=visitor_email,
-        phone=visitor_phone,
-        external_ref=visitor_ref or public_id,
+    customer = _resolve_webchat_customer(
+        db,
+        tenant_id=tenant.id if tenant is not None else None,
+        visitor_name=visitor_name,
+        visitor_email=visitor_email,
+        visitor_phone=visitor_phone,
+        visitor_ref=visitor_ref,
+        public_id=public_id,
     )
-    stamp_runtime_tenant(customer, tenant.id if tenant is not None else None)
-    db.add(customer)
-    db.flush()
 
     conversation = WebchatConversation(
         public_id=public_id,

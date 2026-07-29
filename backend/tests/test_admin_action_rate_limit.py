@@ -82,7 +82,7 @@ def _headers(user: User) -> dict[str, str]:
 
 def test_rate_limit_response_contains_request_id_and_audit_log(caplog):
     caplog.set_level(logging.WARNING, logger="nexusdesk")
-    actor_id = 77
+    actor_id = _make_user("rate-limit-audit-actor").id
     action_key = "background_job.requeue"
     with SessionLocal() as db:
         rate_limit_service.enforce_admin_action_rate_limit(
@@ -188,7 +188,7 @@ def test_rate_limit_window_expiry_resets_bucket(monkeypatch):
 
 
 def test_first_concurrent_requests_do_not_500_and_limit_stays_stable():
-    actor_id = 91
+    actor_id = _make_user("rate-limit-race-actor").id
     action_key = "background_job.requeue"
 
     def _attempt(request_suffix: int):

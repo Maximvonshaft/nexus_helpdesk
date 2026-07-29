@@ -14,12 +14,17 @@ from ..api.admin_perf import router as admin_perf_router
 from ..api.admin_provider_runtime import router as admin_provider_runtime_router
 from ..api.admin_queue import router as admin_queue_router
 from ..api.admin_tenant_query_scope import enforce_admin_tenant_query_scope
-from ..api.admin_whatsapp_native import router as admin_whatsapp_native_router
+from ..api.admin_whatsapp import router as admin_whatsapp_router
+from ..api.admin_whatsapp_embedded_signup import (
+    router as admin_whatsapp_embedded_signup_router,
+)
+from ..api.admin_whatsapp_uat import router as admin_whatsapp_uat_router
 from ..api.agent_control import router as agent_control_router
 from ..api.agent_runtime_operations import router as agent_runtime_operations_router
 from ..api.auth import router as auth_router
 from ..api.canonical_integration import router as integration_router
 from ..api.canonical_osr_admin import router as osr_admin_router
+from ..api.case_scenarios import router as case_scenarios_router
 from ..api.channel_control import router as channel_control_router
 from ..api.customers import router as customers_router
 from ..api.data_lifecycle import router as data_lifecycle_router
@@ -49,7 +54,15 @@ from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
 from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
-from ..api.whatsapp_native_integration import router as whatsapp_native_integration_router
+from ..api.whatsapp_integration import router as whatsapp_integration_router
+from ..api.whatsapp_media_integration import router as whatsapp_media_integration_router
+from ..api.whatsapp_media_operator import router as whatsapp_media_operator_router
+from ..api.whatsapp_meta_shared_webhook import (
+    router as whatsapp_meta_shared_webhook_router,
+)
+from ..services.whatsapp_embedded_signup_csp import (
+    register_whatsapp_embedded_signup_csp,
+)
 from .runtime_contracts import register_runtime_contracts
 
 
@@ -60,8 +73,6 @@ _RETIRED_ADMIN_READINESS_PATHS = {
 
 
 def _compose_admin_dependencies(*, dependencies: list) -> list:
-    """Return the one ordered policy chain for canonical admin surfaces."""
-
     return [
         Depends(enforce_admin_tenant_query_scope),
         Depends(enforce_admin_identity_request_policy),
@@ -70,8 +81,6 @@ def _compose_admin_dependencies(*, dependencies: list) -> list:
 
 
 def _retire_legacy_admin_readiness_routes() -> None:
-    """Remove superseded readiness APIs before the admin router is registered."""
-
     admin_router.routes[:] = [
         route
         for route in admin_router.routes
@@ -80,16 +89,16 @@ def _retire_legacy_admin_readiness_routes() -> None:
 
 
 def register_api_routers(app: FastAPI) -> None:
-    """Register every supported API router exactly once in deterministic order."""
+    """Register every supported API router and scoped security contract once."""
 
     register_runtime_contracts()
+    register_whatsapp_embedded_signup_csp(app)
 
     for router in (
         admin_perf_router,
         admin_identity_router,
         admin_mfa_router,
         admin_provider_runtime_router,
-        admin_whatsapp_native_router,
         ticket_perf_router,
     ):
         app.include_router(router)
@@ -104,12 +113,20 @@ def register_api_routers(app: FastAPI) -> None:
     app.include_router(governance_router, dependencies=admin_dependencies)
     app.include_router(data_lifecycle_router, dependencies=admin_dependencies)
 
-    # These routers previously sat outside the canonical admin Tenant boundary.
-    # They operate on projections, Jobs and Outbound records that can carry
-    # customer effects, so the same server-derived scope must wrap reads and
-    # mutations. Endpoint capability checks remain additive.
+    # All customer-effecting admin projections and channel controls share the
+    # same server-derived Tenant scope. WhatsApp may not reintroduce the former
+    # globally visible native-session administration path.
     app.include_router(admin_queue_router, dependencies=admin_scope_dependencies)
     app.include_router(operator_queue_router, dependencies=admin_scope_dependencies)
+    app.include_router(admin_whatsapp_router, dependencies=admin_scope_dependencies)
+    app.include_router(
+        admin_whatsapp_embedded_signup_router,
+        dependencies=admin_scope_dependencies,
+    )
+    app.include_router(
+        admin_whatsapp_uat_router,
+        dependencies=admin_scope_dependencies,
+    )
 
     for router in (
         osr_admin_router,
@@ -119,6 +136,7 @@ def register_api_routers(app: FastAPI) -> None:
         frontend_observability_router,
         agent_control_router,
         agent_runtime_operations_router,
+        case_scenarios_router,
         channel_control_router,
         files_router,
         integration_router,
@@ -140,7 +158,13 @@ def register_api_routers(app: FastAPI) -> None:
         telephony_router,
         webchat_ws_router,
         webchat_voice_router,
-        whatsapp_native_integration_router,
+        # Static shared WABA authority must be registered before the dynamic
+        # /meta/{connection_id}/webhook route or "webhook" can be consumed as a
+        # connection identifier by Starlette's first-match routing semantics.
+        whatsapp_meta_shared_webhook_router,
+        whatsapp_integration_router,
+        whatsapp_media_integration_router,
+        whatsapp_media_operator_router,
         webchat_router,
     ):
         app.include_router(router)

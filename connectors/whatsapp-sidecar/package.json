@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "NexusDesk native WhatsApp Web sidecar connector",
+  "description": "NexusDesk WhatsApp Baileys linked-device transport adapter",
   "engines": {
     "node": ">=22"
   },
