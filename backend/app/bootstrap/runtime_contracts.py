@@ -11,6 +11,9 @@ from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
 )
 from ..services.read_model_contracts import install_read_model_contracts
+from ..services.tenant_reference_runtime_contract import (
+    install_tenant_reference_runtime_contract,
+)
 from ..services.whatsapp_media_events import install_whatsapp_media_events
 
 _INSTALLED = False
@@ -27,5 +30,6 @@ def register_runtime_contracts() -> None:
     install_whatsapp_media_events()
     install_golden_journey_portfolio_guard()
     install_handoff_assignment_contract()
+    install_tenant_reference_runtime_contract()
     install_read_model_contracts()
     _INSTALLED = True
