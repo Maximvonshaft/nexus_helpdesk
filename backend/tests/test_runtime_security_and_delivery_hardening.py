@@ -23,8 +23,8 @@ from app.api import webchat_ws as webchat_ws_api
 from app.auth_service import hash_password, verify_password
 from app.services import observability
 from app.services.observability import _JsonFormatter, log_event
-from app.utils import client_ip as client_ip_service
 from app.settings import Settings
+from app.utils import client_ip as client_ip_service
 
 
 def _request(*, host: str, xff: str | None, client_host: str) -> Request:
@@ -74,7 +74,12 @@ def test_log_event_does_not_promote_arbitrary_event_fields(monkeypatch):
         captured.update(kwargs)
 
     monkeypatch.setattr(observability.LOGGER, "log", fake_log)
-    log_event(logging.INFO, "probe", status="ok", provider_payload={"content": "SECRET"})
+    log_event(
+        logging.INFO,
+        "probe",
+        status="ok",
+        provider_payload={"content": "SECRET"},
+    )
     assert captured["extra"]["event_payload"]["status"] == "ok"
     assert "provider_payload" not in captured["extra"]
 
@@ -115,8 +120,16 @@ def test_auth_uses_forwarded_address_only_from_trusted_proxy(monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(trusted_proxy_ips=["127.0.0.1"]),
     )
-    trusted = _request(host="helpdesk.example", xff="203.0.113.8, 127.0.0.1", client_host="127.0.0.1")
-    untrusted = _request(host="helpdesk.example", xff="203.0.113.8", client_host="198.51.100.5")
+    trusted = _request(
+        host="helpdesk.example",
+        xff="203.0.113.8, 127.0.0.1",
+        client_host="127.0.0.1",
+    )
+    untrusted = _request(
+        host="helpdesk.example",
+        xff="203.0.113.8",
+        client_host="198.51.100.5",
+    )
     assert client_ip_service.get_client_ip(trusted) == "203.0.113.8"
     assert client_ip_service.get_client_ip(untrusted) == "198.51.100.5"
 
@@ -137,13 +150,39 @@ def test_integration_business_failure_rolls_back(monkeypatch):
             return None
 
     db = FakeSession()
-    client = SimpleNamespace(client_id=None, is_legacy=False, scopes={"task.write"})
-    monkeypatch.setattr(integration_api.settings, "integration_require_idempotency_key", False)
-    monkeypatch.setattr(integration_api, "enforce_rate_limit", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(integration_api, "_pick_actor", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    client = SimpleNamespace(
+        client_id=1,
+        is_legacy=False,
+        scopes=frozenset({"task.write"}),
+        scope_type="tenant",
+        tenant_id=1,
+    )
+    monkeypatch.setattr(
+        integration_api.settings,
+        "integration_require_idempotency_key",
+        False,
+    )
+    monkeypatch.setattr(
+        integration_api,
+        "enforce_rate_limit",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        integration_api,
+        "_principal_tenant",
+        lambda *_args, **_kwargs: SimpleNamespace(id=1, tenant_key="test"),
+    )
+    monkeypatch.setattr(
+        integration_api,
+        "_pick_actor",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
     with pytest.raises(RuntimeError, match="boom"):
         integration_api.nexusdesk_escalate_task(
-            integration_api.IntegrationTaskRequest(contact_id="x", summary="summary"),
+            integration_api.IntegrationTaskRequest(
+                contact_id="x",
+                summary="summary",
+            ),
             SimpleNamespace(),
             db,
             client,
@@ -182,7 +221,9 @@ def test_production_metrics_token_must_be_strong(monkeypatch):
 
 
 def test_rate_limit_key_never_contains_raw_identity():
-    source = (BACKEND_ROOT / "app/services/integration_auth.py").read_text(encoding="utf-8")
+    source = (BACKEND_ROOT / "app/services/integration_auth.py").read_text(
+        encoding="utf-8"
+    )
     assert "hashlib.sha256" in source
     sample = "client-secret-identity"
     digest = hashlib.sha256(sample.encode()).hexdigest()
