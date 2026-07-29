@@ -154,6 +154,43 @@ test("serializes concurrent drains so the same callback is not sent twice", asyn
   }
 });
 
+test("retains replaceable account status after retry exhaustion and later recovers", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-status-outbox-retained-"));
+  const secret = "callback-outbox-secret-" + "r".repeat(48);
+  let now = Date.parse("2026-07-28T00:00:00Z");
+  try {
+    const outbox = new DurableCallbackOutbox(root, logger, secret, () => now);
+    outbox.enqueue({
+      kind: "status",
+      accountId: "wa-main",
+      payload: { status: "connected", generation: 7 },
+      dedupeKey: "account-status:wa-main"
+    });
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await outbox.drain(async () => {
+        throw new Error("backend unavailable");
+      });
+      assert.equal(result.delivered, 0);
+      assert.equal(result.pending, 1);
+      now += 5 * 60 * 1000 + 1;
+    }
+
+    assert.equal(outbox.count(), 1, "latest account status must remain durable after exhaustion");
+    now += 60 * 60 * 1000 + 1;
+    const observed: unknown[] = [];
+    const recovered = await outbox.drain(async (envelope) => {
+      observed.push(envelope.payload);
+    });
+
+    assert.equal(recovered.delivered, 1);
+    assert.equal(outbox.count(), 0);
+    assert.deepEqual(observed, [{ status: "connected", generation: 7 }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("terminal delivery callback remains bounded and is removed", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-delivery-outbox-"));
   const secret = "callback-outbox-secret-" + "y".repeat(48);
