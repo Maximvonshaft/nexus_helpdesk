@@ -26,19 +26,10 @@ def upgrade() -> None:
                 server_default="legacy",
             )
         )
-        batch.drop_constraint(
-            "uq_operator_queue_scope_grant",
-            type_="unique",
-        )
+        batch.drop_constraint("uq_operator_queue_scope_grant", type_="unique")
         batch.create_unique_constraint(
             "uq_operator_queue_scope_grant",
-            [
-                "user_id",
-                "tenant_key",
-                "country_code",
-                "channel_key",
-                "queue_key",
-            ],
+            ["user_id", "tenant_key", "country_code", "channel_key", "queue_key"],
         )
     op.create_index(
         "ix_operator_queue_scope_grants_route",
@@ -88,14 +79,10 @@ def upgrade() -> None:
             name="ck_handoff_routing_plan_generation_bound",
         ),
         sa.ForeignKeyConstraint(
-            ["request_id"],
-            ["webchat_handoff_requests.id"],
-            ondelete="CASCADE",
+            ["request_id"], ["webchat_handoff_requests.id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
-            ["ticket_id"],
-            ["tickets.id"],
-            ondelete="CASCADE",
+            ["ticket_id"], ["tickets.id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
             ["scenario_assignment_id"],
@@ -103,9 +90,7 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
-            ["assigned_agent_id"],
-            ["users.id"],
-            ondelete="SET NULL",
+            ["assigned_agent_id"], ["users.id"], ondelete="SET NULL"
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("request_id", name="uq_handoff_routing_plan_request"),
@@ -113,17 +98,11 @@ def upgrade() -> None:
     for name, columns in (
         ("ix_handoff_routing_plans_request_id", ["request_id"]),
         ("ix_handoff_routing_plans_ticket_id", ["ticket_id"]),
-        (
-            "ix_handoff_routing_plans_scenario_assignment_id",
-            ["scenario_assignment_id"],
-        ),
+        ("ix_handoff_routing_plans_scenario_assignment_id", ["scenario_assignment_id"]),
         ("ix_handoff_routing_plans_scenario_key", ["scenario_key"]),
         ("ix_handoff_routing_plans_owner_queue_key", ["owner_queue_key"]),
         ("ix_handoff_routing_plans_risk_level", ["risk_level"]),
-        (
-            "ix_handoff_routing_plans_escalation_policy_key",
-            ["escalation_policy_key"],
-        ),
+        ("ix_handoff_routing_plans_escalation_policy_key", ["escalation_policy_key"]),
         ("ix_handoff_routing_plans_plan_digest", ["plan_digest"]),
         ("ix_handoff_routing_plans_status", ["status"]),
         ("ix_handoff_routing_plans_next_retry_at", ["next_retry_at"]),
@@ -132,14 +111,8 @@ def upgrade() -> None:
         ("ix_handoff_routing_plans_exhausted_at", ["exhausted_at"]),
         ("ix_handoff_routing_plans_created_at", ["created_at"]),
         ("ix_handoff_routing_plans_updated_at", ["updated_at"]),
-        (
-            "ix_handoff_routing_plan_retry",
-            ["status", "next_retry_at"],
-        ),
-        (
-            "ix_handoff_routing_plan_queue_status",
-            ["owner_queue_key", "status"],
-        ),
+        ("ix_handoff_routing_plan_retry", ["status", "next_retry_at"]),
+        ("ix_handoff_routing_plan_queue_status", ["owner_queue_key", "status"]),
     ):
         op.create_index(name, "handoff_routing_plans", columns, unique=False)
 
@@ -165,20 +138,12 @@ def upgrade() -> None:
             name="ck_handoff_routing_attempt_outcome",
         ),
         sa.ForeignKeyConstraint(
-            ["plan_id"],
-            ["handoff_routing_plans.id"],
-            ondelete="CASCADE",
+            ["plan_id"], ["handoff_routing_plans.id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
-            ["request_id"],
-            ["webchat_handoff_requests.id"],
-            ondelete="CASCADE",
+            ["request_id"], ["webchat_handoff_requests.id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(
-            ["agent_id"],
-            ["users.id"],
-            ondelete="CASCADE",
-        ),
+        sa.ForeignKeyConstraint(["agent_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "plan_id",
@@ -198,10 +163,7 @@ def upgrade() -> None:
         ("ix_handoff_routing_candidate_attempts_external_ref", ["external_ref"]),
         ("ix_handoff_routing_candidate_attempts_created_at", ["created_at"]),
         ("ix_handoff_routing_candidate_attempts_updated_at", ["updated_at"]),
-        (
-            "ix_handoff_routing_attempt_generation",
-            ["plan_id", "generation", "outcome"],
-        ),
+        ("ix_handoff_routing_attempt_generation", ["plan_id", "generation", "outcome"]),
     ):
         op.create_index(
             name,
@@ -211,7 +173,34 @@ def upgrade() -> None:
         )
 
 
+def _legacy_identity_conflicts() -> list[dict[str, object]]:
+    bind = op.get_bind()
+    rows = bind.execute(
+        sa.text(
+            "SELECT user_id, tenant_key, country_code, channel_key, count(*) AS grants "
+            "FROM operator_queue_scope_grants "
+            "GROUP BY user_id, tenant_key, country_code, channel_key "
+            "HAVING count(*) > 1 "
+            "ORDER BY user_id, tenant_key, country_code, channel_key "
+            "LIMIT 100"
+        )
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def downgrade() -> None:
+    # R6 made several queue-specific grants valid under one legacy four-column
+    # identity. The old schema cannot represent that data. Fail before any table,
+    # index or column mutation rather than losing grants or leaving a half-rolled-
+    # back database. Operators must retain the forward-compatible schema and roll
+    # back the application/image, or explicitly reconcile the grants first.
+    conflicts = _legacy_identity_conflicts()
+    if conflicts:
+        raise RuntimeError(
+            "r6_handoff_routing_downgrade_irreversible_multi_queue_grants:"
+            + str(len(conflicts))
+        )
+
     op.drop_table("handoff_routing_candidate_attempts")
     op.drop_table("handoff_routing_plans")
     op.drop_index(
@@ -219,10 +208,7 @@ def downgrade() -> None:
         table_name="operator_queue_scope_grants",
     )
     with op.batch_alter_table("operator_queue_scope_grants") as batch:
-        batch.drop_constraint(
-            "uq_operator_queue_scope_grant",
-            type_="unique",
-        )
+        batch.drop_constraint("uq_operator_queue_scope_grant", type_="unique")
         batch.create_unique_constraint(
             "uq_operator_queue_scope_grant",
             ["user_id", "tenant_key", "country_code", "channel_key"],
