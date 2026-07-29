@@ -16,6 +16,9 @@ from sqlalchemy import create_engine, text
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
+POSTGRES_TEST_MANIFEST = (
+    ROOT / "config" / "verification" / "postgres-pytest-contracts.v1.json"
+)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -34,12 +37,6 @@ LOCAL_HOSTS = {
     "postgres-controlled",
     "db",
 }
-POSTGRES_TESTS = (
-    "backend/tests/test_support_conversations_postgres.py",
-    "backend/tests/test_support_conversation_privacy.py",
-    "backend/tests/test_support_sensitive_access.py",
-    "backend/tests/resilience/test_postgres_worker_recovery.py",
-)
 FAIL_CLOSED_ENV = {
     "APP_ENV": "test",
     "AUTO_INIT_DB": "false",
@@ -102,12 +99,54 @@ def _validate_database_url(database_url: str, *, allow_remote: bool) -> None:
         raise ValueError("remote_database_requires_explicit_confirmation")
 
 
+def _discover_postgres_conditioned_tests() -> set[str]:
+    discovered: set[str] = set()
+    for path in sorted((BACKEND / "tests").rglob("test_*.py")):
+        text_value = path.read_text(encoding="utf-8", errors="ignore")
+        lowered = text_value.lower()
+        conditioned = (
+            "pytest.mark.skipif" in text_value
+            and "database_url" in lowered
+            and "postgresql" in lowered
+        )
+        if conditioned:
+            discovered.add(path.relative_to(ROOT).as_posix())
+    return discovered
+
+
+def _load_postgres_test_inventory() -> tuple[str, ...]:
+    try:
+        payload = json.loads(POSTGRES_TEST_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("postgres_pytest_manifest_unavailable") from exc
+    if payload.get("schema") != "nexus.postgres-pytest-contracts.v1":
+        raise ValueError("postgres_pytest_manifest_schema_invalid")
+    tests = payload.get("tests")
+    if not isinstance(tests, list) or not tests:
+        raise ValueError("postgres_pytest_manifest_empty")
+    normalized = tuple(str(item or "").strip() for item in tests)
+    if any(not item for item in normalized) or len(normalized) != len(set(normalized)):
+        raise ValueError("postgres_pytest_manifest_identity_invalid")
+    for relative in normalized:
+        path = (ROOT / relative).resolve()
+        if not _inside_repository(path) or not path.is_file():
+            raise ValueError(f"postgres_pytest_manifest_path_invalid:{relative}")
+    discovered = _discover_postgres_conditioned_tests()
+    missing = sorted(discovered - set(normalized))
+    if missing:
+        raise ValueError(
+            "postgres_pytest_conditioned_test_unlisted:" + ",".join(missing)
+        )
+    return normalized
+
+
 def _command(
     label: str,
     command: list[str],
     *,
     cwd: Path,
     env: dict[str, str],
+    output_path: Path | None = None,
 ) -> dict[str, object]:
     started = datetime.now(timezone.utc)
     completed = subprocess.run(
@@ -116,9 +155,12 @@ def _command(
         env=env,
         text=True,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         check=False,
     )
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(completed.stdout or "", encoding="utf-8")
     return {
         "label": label,
         "return_code": completed.returncode,
@@ -128,6 +170,7 @@ def _command(
             3,
         ),
         "output_included": False,
+        "evidence_file": output_path.name if output_path is not None else None,
     }
 
 
@@ -169,6 +212,7 @@ def run_acceptance(
     allow_remote: bool,
 ) -> dict[str, object]:
     _validate_database_url(database_url, allow_remote=allow_remote)
+    postgres_tests = _load_postgres_test_inventory()
     directory = evidence_dir.expanduser().resolve()
     if _inside_repository(directory) or directory.is_symlink():
         raise ValueError("acceptance_evidence_directory_invalid")
@@ -177,7 +221,11 @@ def run_acceptance(
     env = os.environ.copy()
     env.update(FAIL_CLOSED_ENV)
     env["DATABASE_URL"] = database_url
-    env["PYTHONPATH"] = str(BACKEND)
+    env["PYTHONPATH"] = f"{BACKEND}{os.pathsep}{ROOT}"
+    env["PYTEST_ADDOPTS"] = "-p scripts.qualification.postgres_pytest_gate"
+    env["NEXUS_POSTGRES_PYTEST_RECEIPT"] = str(
+        directory / "postgres-pytest-gate.json"
+    )
 
     migration_commands = [
         _command(
@@ -185,6 +233,7 @@ def run_acceptance(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
             cwd=BACKEND,
             env=env,
+            output_path=directory / "acceptance-alembic-upgrade.log",
         ),
     ]
     if migration_commands[-1]["passed"]:
@@ -194,6 +243,7 @@ def run_acceptance(
                 [sys.executable, "-m", "alembic", "downgrade", "-1"],
                 cwd=BACKEND,
                 env=env,
+                output_path=directory / "acceptance-alembic-downgrade.log",
             )
         )
     if migration_commands[-1]["passed"]:
@@ -203,17 +253,12 @@ def run_acceptance(
                 [sys.executable, "-m", "alembic", "upgrade", "head"],
                 cwd=BACKEND,
                 env=env,
+                output_path=directory / "acceptance-alembic-reupgrade.log",
             )
         )
 
-    all_migrations_passed = all(
-        row["passed"] for row in migration_commands
-    )
-    final_revision = (
-        _current_revision(database_url)
-        if all_migrations_passed
-        else None
-    )
+    all_migrations_passed = all(row["passed"] for row in migration_commands)
+    final_revision = _current_revision(database_url) if all_migrations_passed else None
     migration_passed = (
         len(migration_commands) == 3
         and all_migrations_passed
@@ -228,12 +273,10 @@ def run_acceptance(
         "database_disposable": True,
         "upgrade_passed": bool(migration_commands[0]["passed"]),
         "downgrade_passed": (
-            len(migration_commands) > 1
-            and bool(migration_commands[1]["passed"])
+            len(migration_commands) > 1 and bool(migration_commands[1]["passed"])
         ),
         "reupgrade_passed": (
-            len(migration_commands) > 2
-            and bool(migration_commands[2]["passed"])
+            len(migration_commands) > 2 and bool(migration_commands[2]["passed"])
         ),
         "final_revision": final_revision,
         "commands": migration_commands,
@@ -246,20 +289,31 @@ def run_acceptance(
     tests_result = None
     if migration_passed:
         tests_result = _command(
-            "postgres_privacy_and_worker_tests",
-            [sys.executable, "-m", "pytest", "-q", *POSTGRES_TESTS],
+            "postgres_complete_pytest_contracts",
+            [sys.executable, "-m", "pytest", "-q", *postgres_tests],
             cwd=ROOT,
             env=env,
+            output_path=directory / "postgres-pytest.log",
         )
-    tests_passed = bool(tests_result and tests_result["passed"])
+    gate_receipt = directory / "postgres-pytest-gate.json"
+    tests_passed = bool(
+        tests_result
+        and tests_result["passed"]
+        and gate_receipt.is_file()
+        and json.loads(gate_receipt.read_text(encoding="utf-8")).get("status")
+        == "pass"
+    )
     postgres_payload: dict[str, object] = {
-        "schema": "nexus.postgres-qualification.v1",
+        "schema": "nexus.postgres-qualification.v2",
         "status": "pass" if tests_passed else "fail",
         "source_sha": source_sha,
         "tree_sha": tree_sha,
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "database_disposable": True,
         "tests_passed": tests_passed,
+        "test_inventory": list(postgres_tests),
+        "test_inventory_count": len(postgres_tests),
+        "skips_forbidden": True,
         "cross_scope_existence_safe": tests_passed,
         "lists_minimized": tests_passed,
         "sensitive_access_audited": tests_passed,
@@ -309,12 +363,14 @@ def run_acceptance(
 
     passed = migration_passed and tests_passed and capacity_passed
     return {
-        "schema": "nexus.postgres-acceptance-run.v1",
+        "schema": "nexus.postgres-acceptance-run.v2",
         "status": "pass" if passed else "fail",
         "source_sha": source_sha,
         "tree_sha": tree_sha,
         "migration_passed": migration_passed,
         "postgres_tests_passed": tests_passed,
+        "postgres_test_inventory_count": len(postgres_tests),
+        "postgres_skips_forbidden": True,
         "database_capacity_passed": capacity_passed,
         "evidence_dir": str(directory),
         "database_url_included": False,
@@ -352,17 +408,13 @@ def main() -> int:
         tree_sha=args.tree_sha,
         allow_remote=args.allow_remote_database,
     )
-    rendered = (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-        + "\n"
-    )
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         output = args.output.expanduser().resolve()
-        if _inside_repository(output):
-            raise SystemExit(
-                "PostgreSQL acceptance output must remain outside candidate tree"
-            )
-        _write(output, payload)
+        if _inside_repository(output) or output.is_symlink():
+            raise SystemExit("acceptance output path must be outside repository")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
     print(rendered, end="")
     return 0 if payload["status"] == "pass" else 1
 
