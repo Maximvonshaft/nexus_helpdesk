@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..services.canonical_handoff_acceptance import accept_handoff_request
 from ..services.permissions import (
     ensure_can_accept_webchat_handoff,
     ensure_can_decline_webchat_handoff,
@@ -22,7 +23,6 @@ from ..services.support_sensitive_access import (
     ensure_sensitive_support_capability,
 )
 from ..services.webchat_handoff_service import (
-    accept_handoff_request,
     decline_handoff_request,
     force_takeover_ticket,
     list_handoff_queue,
