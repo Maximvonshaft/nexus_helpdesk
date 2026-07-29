@@ -25,10 +25,13 @@ from ..services.whatsapp_connection_service import (
 from ..services.whatsapp_embedded_signup import (
     EmbeddedSignupAccountIntent,
     EmbeddedSignupError,
+    clear_signup_exchange_checkpoint,
     exchange_and_validate_signup,
+    load_signup_exchange_checkpoint,
     mark_signup_completed,
     mark_signup_exchanging,
     mark_signup_failed,
+    persist_signup_exchange_checkpoint,
     require_pending_signup_session,
     start_embedded_signup_session,
 )
@@ -162,7 +165,7 @@ def _restore_retryable_signup(
     *,
     code: str,
 ) -> None:
-    """Return a transiently failed exchange to its resumable pending state."""
+    """Return a transiently failed validation to its resumable pending state."""
 
     signup.status = "pending"
     signup.last_error_code = code[:120]
@@ -252,7 +255,7 @@ def complete_embedded_signup_session(
         )
 
     intent = _intent(payload)
-    signup: WhatsAppEmbeddedSignupSession | None = None
+    resume_access_token: str | None = None
     try:
         with managed_session(db):
             _signup_session(
@@ -270,6 +273,11 @@ def complete_embedded_signup_session(
                 state=payload.state,
                 intent=intent,
             )
+            resume_access_token = load_signup_exchange_checkpoint(
+                db,
+                session=signup,
+                code=payload.code,
+            )
             mark_signup_exchanging(
                 signup,
                 code=payload.code,
@@ -283,13 +291,28 @@ def complete_embedded_signup_session(
             business_account_id=payload.business_account_id,
             waba_id=payload.waba_id,
             phone_number_id=payload.phone_number_id,
+            access_token=resume_access_token,
         )
     except EmbeddedSignupError as exc:
-        if signup is not None and signup.status == "exchanging":
-            with managed_session(db):
+        with managed_session(db):
+            signup = _signup_session(
+                db,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                requested_by=current_user.id,
+                for_update=True,
+            )
+            if signup is not None and signup.status == "exchanging":
                 if exc.retryable:
+                    if exc.resume_access_token:
+                        persist_signup_exchange_checkpoint(
+                            db,
+                            session=signup,
+                            access_token=exc.resume_access_token,
+                        )
                     _restore_retryable_signup(signup, code=exc.code)
                 else:
+                    clear_signup_exchange_checkpoint(db, session_id=signup.id)
                     mark_signup_failed(signup, code=exc.code)
                 db.flush()
         raise _http_error(exc) from exc
@@ -321,14 +344,16 @@ def complete_embedded_signup_session(
             current_user,
         )
     except HTTPException:
-        signup = _signup_session(
-            db,
-            session_id=session_id,
-            tenant_id=tenant_id,
-            requested_by=current_user.id,
-        )
-        if signup is not None:
-            with managed_session(db):
+        with managed_session(db):
+            signup = _signup_session(
+                db,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                requested_by=current_user.id,
+                for_update=True,
+            )
+            if signup is not None:
+                clear_signup_exchange_checkpoint(db, session_id=signup.id)
                 mark_signup_failed(
                     signup,
                     code="embedded_signup_connection_create_failed",
@@ -336,18 +361,20 @@ def complete_embedded_signup_session(
                 db.flush()
         raise
 
-    signup = _signup_session(
-        db,
-        session_id=session_id,
-        tenant_id=tenant_id,
-        requested_by=current_user.id,
-    )
-    if signup is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="embedded_signup_session_lost",
-        )
     with managed_session(db):
+        signup = _signup_session(
+            db,
+            session_id=session_id,
+            tenant_id=tenant_id,
+            requested_by=current_user.id,
+            for_update=True,
+        )
+        if signup is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="embedded_signup_session_lost",
+            )
+        clear_signup_exchange_checkpoint(db, session_id=signup.id)
         mark_signup_completed(signup, connection_id=created.id)
         db.flush()
 
