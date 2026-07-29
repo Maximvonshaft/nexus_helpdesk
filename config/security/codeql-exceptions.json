@@ -3,7 +3,7 @@
     {
       "rule_id": "py/overly-permissive-file",
       "path": "scripts/deploy/sign_activation_evidence.py",
-      "start_line": 158,
+      "start_line": 136,
       "owner": "release_engineering",
       "expires_on": "2027-01-31",
       "reason": "The signed activation Manifest is explicitly non-secret integrity evidence and must remain readable by the fixed non-root runtime identity through a read-only bind mount; the offline private signing key is never written or exported to this file.",
