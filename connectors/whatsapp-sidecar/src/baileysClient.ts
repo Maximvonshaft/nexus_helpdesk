@@ -920,7 +920,6 @@ function sendFailure(error: unknown): SendResult {
     ok: false,
     status: "failed",
     error_code: errorCode(error, "whatsapp_send_failed"),
-    error_message: error instanceof Error ? error.message : String(error),
     retryable: true
   };
 }
