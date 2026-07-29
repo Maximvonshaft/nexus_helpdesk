@@ -35,7 +35,12 @@ def _eligible_voice_agents(
     request_row,
     control,
 ):
-    """Return Voice candidates not attempted in the current generation."""
+    """Apply bounded recovery without immediately re-offering Ticketless calls.
+
+    Ticket-backed Handoffs use generation-scoped candidate attempts. Ticketless
+    Handoffs have no RoutingPlan, so their existing per-Handoff offer history
+    remains the authoritative exclusion set.
+    """
 
     from . import agent_routing_service as routing
 
@@ -51,6 +56,12 @@ def _eligible_voice_agents(
     )
     result = []
     for user, state in candidates:
+        if plan is None and routing._core._agent_has_prior_voice_offer(
+            db,
+            handoff_request_id=request_row.id,
+            agent_id=user.id,
+        ):
+            continue
         if not routing._candidate_authorized(
             db,
             plan=plan,
@@ -89,7 +100,7 @@ def _eligible_text_request_for_agent(
     *,
     user: User,
 ):
-    """Use generation attempts for Ticket-backed routing and legacy Ticketless decline."""
+    """Use generation attempts for Ticket-backed routing and Ticketless decline."""
 
     from . import agent_routing_service as routing
 
@@ -245,9 +256,6 @@ def install_handoff_assignment_contract() -> None:
 
     routing._eligible_voice_agents = _eligible_voice_agents
     routing._eligible_text_request_for_agent = _eligible_text_request_for_agent
-    # The public facade is the sole authorized owner of the private transition
-    # implementation; update it through that facade rather than importing the
-    # private module from a second authority.
     handoff._core.accept_handoff_request = _accept_ticket_handoff
     _INSTALLED = True
 
