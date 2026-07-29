@@ -2,252 +2,47 @@
   "schema": "nexus.service-authority.v1",
   "rule": "Each responsibility has exactly one public authority, at most one private implementation module, and zero independently callable parallel implementations or compatibility shims.",
   "authorities": [
-    {
-      "responsibility": "ticket-domain",
-      "public_authority": "backend/app/services/ticket_service.py",
-      "private_implementation": "backend/app/services/ticket_service_core.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "control-tower",
-      "public_authority": "backend/app/services/canonical_control_tower_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "lite-case-state-machine",
-      "public_authority": "backend/app/services/canonical_lite_service.py",
-      "private_implementation": "backend/app/services/lite_service.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "qa-training",
-      "public_authority": "backend/app/services/canonical_qa_training_service.py",
-      "private_implementation": "backend/app/services/qa_training_service_core.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "unified-operator-work-queue-read-model",
-      "public_authority": "backend/app/services/operator_work_queue.py",
-      "private_implementation": "backend/app/services/operator_work_queue_core.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "durable-operator-task-lifecycle",
-      "public_authority": "backend/app/services/operator_queue.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-handoff",
-      "public_authority": "backend/app/services/webchat_handoff_service.py",
-      "private_implementation": "backend/app/services/webchat_handoff_service_core.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "scenario-handoff-routing-plan",
-      "public_authority": "backend/app/services/handoff_routing_authority.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-session-identity",
-      "public_authority": "backend/app/services/webchat_session_identity.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "conversation-first-webchat-initialization",
-      "public_authority": "backend/app/services/conversation_first_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-public-message-service",
-      "public_authority": "backend/app/services/webchat_message_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "customer-visible-message-persistence",
-      "public_authority": "backend/app/services/customer_visible_message_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-application-facade",
-      "public_authority": "backend/app/services/webchat_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "conversation-operator-read-and-reply",
-      "public_authority": "backend/app/services/conversation_operator_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-agent-reply",
-      "public_authority": "backend/app/services/webchat_ai_service.py",
-      "private_implementation": "backend/app/services/webchat_runtime_ai_service.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-agent-turn-orchestration",
-      "public_authority": "backend/app/services/webchat_ai_orchestration_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "customer-identity-binding",
-      "public_authority": "backend/app/services/customer_identity_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "data-subject-lifecycle",
-      "public_authority": "backend/app/services/data_lifecycle_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "whatsapp-account-lifecycle",
-      "public_authority": "backend/app/services/whatsapp_connection_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "whatsapp-inbound-projection",
-      "public_authority": "backend/app/services/whatsapp_inbound.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "whatsapp-outbound-delivery",
-      "public_authority": "backend/app/services/whatsapp_delivery.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "whatsapp-media-persistence",
-      "public_authority": "backend/app/services/whatsapp_media_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "activation-evidence-authorization",
-      "public_authority": "backend/app/services/activation_evidence_policy.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "osr-admin-api",
-      "public_authority": "backend/app/api/canonical_osr_admin.py",
-      "private_implementation": "backend/app/api/osr_admin_core.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "integration-api",
-      "public_authority": "backend/app/api/canonical_integration.py",
-      "private_implementation": "backend/app/api/integration_runtime.py",
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "webchat-origin-and-cors-policy",
-      "public_authority": "backend/app/services/webchat_origin_policy.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "tracking-identifier-policy",
-      "public_authority": "backend/app/services/tracking_identifier_policy.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "runtime-endpoint-policy",
-      "public_authority": "backend/app/services/runtime_endpoint_policy.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "ticket-sla-risk-policy",
-      "public_authority": "backend/app/services/ticket_sla_policy.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-session-lifecycle",
-      "public_authority": "backend/app/services/voice_session_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-telephony-configuration",
-      "public_authority": "backend/app/services/telephony_configuration_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-telephony-outbound-origination",
-      "public_authority": "backend/app/services/telephony_outbound_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-telephony-provider-event-inbox",
-      "public_authority": "backend/app/services/telephony_event_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-telephony-provider-event-projection",
-      "public_authority": "backend/app/services/telephony_projection_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-command-lifecycle",
-      "public_authority": "backend/app/services/voice_command_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-command-dispatch",
-      "public_authority": "backend/app/services/voice_command_dispatcher.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-operator-routing",
-      "public_authority": "backend/app/services/agent_routing_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-livekit-provider-adapter",
-      "public_authority": "backend/app/services/livekit_voice_provider.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-room-control",
-      "public_authority": "backend/app/services/voice_room_control_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-voice-evidence-governance",
-      "public_authority": "backend/app/services/voice_evidence_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    },
-    {
-      "responsibility": "canonical-livekit-agent-turn",
-      "public_authority": "backend/app/services/livekit_agent_turn_service.py",
-      "private_implementation": null,
-      "compatibility_shims": []
-    }
+    {"responsibility":"ticket-domain","public_authority":"backend/app/services/ticket_service.py","private_implementation":"backend/app/services/ticket_service_core.py","compatibility_shims":[]},
+    {"responsibility":"control-tower","public_authority":"backend/app/services/canonical_control_tower_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"lite-case-state-machine","public_authority":"backend/app/services/canonical_lite_service.py","private_implementation":"backend/app/services/lite_service.py","compatibility_shims":[]},
+    {"responsibility":"qa-training","public_authority":"backend/app/services/canonical_qa_training_service.py","private_implementation":"backend/app/services/qa_training_service_core.py","compatibility_shims":[]},
+    {"responsibility":"unified-operator-work-queue-read-model","public_authority":"backend/app/services/operator_work_queue.py","private_implementation":"backend/app/services/operator_work_queue_core.py","compatibility_shims":[]},
+    {"responsibility":"durable-operator-task-lifecycle","public_authority":"backend/app/services/operator_queue.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"webchat-handoff","public_authority":"backend/app/services/webchat_handoff_service.py","private_implementation":"backend/app/services/webchat_handoff_service_core.py","compatibility_shims":[]},
+    {"responsibility":"scenario-handoff-routing-plan","public_authority":"backend/app/services/handoff_routing_authority.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"webchat-session-identity","public_authority":"backend/app/services/webchat_session_identity.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"conversation-first-webchat-initialization","public_authority":"backend/app/services/conversation_first_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"webchat-public-message-service","public_authority":"backend/app/services/webchat_message_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"customer-visible-message-persistence","public_authority":"backend/app/services/customer_visible_message_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"webchat-application-facade","public_authority":"backend/app/services/webchat_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"conversation-operator-read-and-reply","public_authority":"backend/app/services/conversation_operator_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"webchat-agent-reply","public_authority":"backend/app/services/webchat_ai_service.py","private_implementation":"backend/app/services/webchat_runtime_ai_service.py","compatibility_shims":[]},
+    {"responsibility":"webchat-agent-turn-orchestration","public_authority":"backend/app/services/webchat_ai_orchestration_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"customer-identity-binding","public_authority":"backend/app/services/customer_identity_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"data-subject-lifecycle","public_authority":"backend/app/services/data_lifecycle_service.py","private_implementation":"backend/app/services/channel_identity_privacy_lifecycle.py","compatibility_shims":[]},
+    {"responsibility":"whatsapp-account-lifecycle","public_authority":"backend/app/services/whatsapp_connection_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"whatsapp-inbound-projection","public_authority":"backend/app/services/whatsapp_inbound.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"whatsapp-outbound-delivery","public_authority":"backend/app/services/whatsapp_delivery.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"whatsapp-media-persistence","public_authority":"backend/app/services/whatsapp_media_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"activation-evidence-authorization","public_authority":"backend/app/services/activation_evidence_policy.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"osr-admin-api","public_authority":"backend/app/api/canonical_osr_admin.py","private_implementation":"backend/app/api/osr_admin_core.py","compatibility_shims":[]},
+    {"responsibility":"integration-api","public_authority":"backend/app/api/canonical_integration.py","private_implementation":"backend/app/api/integration_runtime.py","compatibility_shims":[]},
+    {"responsibility":"webchat-origin-and-cors-policy","public_authority":"backend/app/services/webchat_origin_policy.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"tracking-identifier-policy","public_authority":"backend/app/services/tracking_identifier_policy.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"runtime-endpoint-policy","public_authority":"backend/app/services/runtime_endpoint_policy.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"ticket-sla-risk-policy","public_authority":"backend/app/services/ticket_sla_policy.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-session-lifecycle","public_authority":"backend/app/services/voice_session_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-telephony-configuration","public_authority":"backend/app/services/telephony_configuration_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-telephony-outbound-origination","public_authority":"backend/app/services/telephony_outbound_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-telephony-provider-event-inbox","public_authority":"backend/app/services/telephony_event_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-telephony-provider-event-projection","public_authority":"backend/app/services/telephony_projection_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-command-lifecycle","public_authority":"backend/app/services/voice_command_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-command-dispatch","public_authority":"backend/app/services/voice_command_dispatcher.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-operator-routing","public_authority":"backend/app/services/agent_routing_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-livekit-provider-adapter","public_authority":"backend/app/services/livekit_voice_provider.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-room-control","public_authority":"backend/app/services/voice_room_control_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-voice-evidence-governance","public_authority":"backend/app/services/voice_evidence_service.py","private_implementation":null,"compatibility_shims":[]},
+    {"responsibility":"canonical-livekit-agent-turn","public_authority":"backend/app/services/livekit_agent_turn_service.py","private_implementation":null,"compatibility_shims":[]}
   ],
   "constraints": {
     "private_implementation_imported_only_by_public_authority": true,
