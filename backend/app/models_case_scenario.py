@@ -80,5 +80,7 @@ class CaseScenarioAssignment(Base):
     )
 
 
-# Register lifecycle invariants whenever this required model family is loaded.
+# Register lifecycle and product-portfolio invariants whenever this required
+# model family is loaded. Both modules attach listeners to the same sole writer.
 from .services import case_scenario_service as _case_scenario_service  # noqa: E402,F401
+from .services import scenario_portfolio_authority as _portfolio_authority  # noqa: E402,F401
