@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -8,7 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 os.environ.setdefault("APP_ENV", "development")
-os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/integration_task_idempotency_reservation_tests.db")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "sqlite:////tmp/integration_task_idempotency_reservation_tests.db",
+)
 os.environ.setdefault("ALLOW_DEV_AUTH", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +24,14 @@ from app.auth_service import hash_password, hash_secret  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
 from app.enums import UserRole  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import IntegrationClient, IntegrationRequestLog, Ticket, User  # noqa: E402
+from app.models import (  # noqa: E402
+    IntegrationClient,
+    IntegrationRequestLog,
+    Tenant,
+    Ticket,
+    User,
+)
+from app.models_integration_scope import IntegrationClientScope  # noqa: E402
 from app.services.integration_auth import (  # noqa: E402
     AuthenticatedIntegrationClient,
     begin_integration_idempotency,
@@ -29,6 +40,7 @@ from app.services.integration_auth import (  # noqa: E402
 )
 
 client = TestClient(app, raise_server_exceptions=False)
+TENANT_KEY = "integration-test"
 
 
 def setup_function():
@@ -40,9 +52,32 @@ def teardown_function():
     Base.metadata.drop_all(engine)
 
 
+def _tenant_id() -> int:
+    with SessionLocal() as db:
+        tenant = (
+            db.query(Tenant)
+            .filter(Tenant.tenant_key == TENANT_KEY)
+            .first()
+        )
+        if tenant is None:
+            tenant = Tenant(
+                tenant_key=TENANT_KEY,
+                display_name="Integration Test Tenant",
+                is_active=True,
+            )
+            db.add(tenant)
+            db.commit()
+            db.refresh(tenant)
+        return int(tenant.id)
+
+
 def _make_actor() -> User:
+    tenant_id = _tenant_id()
     with SessionLocal() as db:
         user = User(
+            tenant_id=tenant_id,
+            tenant_assignment_source="pytest",
+            tenant_assignment_version="r15",
             username="integration-owner",
             display_name="Integration Owner",
             email="integration-owner@example.test",
@@ -57,6 +92,7 @@ def _make_actor() -> User:
 
 
 def _make_integration_client() -> IntegrationClient:
+    tenant_id = _tenant_id()
     with SessionLocal() as db:
         row = IntegrationClient(
             name="integration-client",
@@ -67,6 +103,17 @@ def _make_integration_client() -> IntegrationClient:
             is_active=True,
         )
         db.add(row)
+        db.flush()
+        db.add(
+            IntegrationClientScope(
+                client_id=row.id,
+                scope_type="tenant",
+                tenant_id=tenant_id,
+                assigned_by=None,
+                assignment_source="pytest",
+                assignment_version="r15",
+            )
+        )
         db.commit()
         db.refresh(row)
         return row
@@ -80,12 +127,17 @@ def _headers(idempotency_key: str = "idem-key-1") -> dict[str, str]:
     }
 
 
-def _payload(contact_id: str = "+41790000001", tracking_number: str = "SF123456789") -> dict:
+def _payload(
+    contact_id: str = "+41790000001",
+    tracking_number: str = "SF123456789",
+) -> dict:
     return {
         "contact_id": contact_id,
         "channel": "whatsapp",
         "summary": "Customer requests manual parcel support",
-        "description": "Customer says the parcel was not delivered and needs human follow-up.",
+        "description": (
+            "Customer says the parcel was not delivered and needs human follow-up."
+        ),
         "tracking_number": tracking_number,
         "priority": "normal",
         "metadata": {"source": "pytest"},
@@ -101,13 +153,16 @@ def _auth_client(client_id: int) -> AuthenticatedIntegrationClient:
     return AuthenticatedIntegrationClient(
         client_id=client_id,
         name="integration-client",
-        scopes={"profile.read", "task.write"},
+        scopes=frozenset({"profile.read", "task.write"}),
         key_id="client-key-id",
         rate_limit_per_minute=1000,
+        scope_type="tenant",
+        tenant_id=_tenant_id(),
+        is_legacy=False,
     )
 
 
-def test_begin_integration_idempotency_reserves_then_replays_response():
+def test_begin_integration_idempotency_reserves_then_replays_sanitized_response():
     integration_client = _make_integration_client()
     request_hash = stable_request_hash(_payload())
 
@@ -136,7 +191,11 @@ def test_begin_integration_idempotency_reserves_then_replays_response():
         )
         assert processing.kind == "processing"
 
-        response_payload = {"ok": True, "case_ref": "CS-TEST", "status": "created"}
+        response_payload = {
+            "ok": True,
+            "case_ref": "CS-TEST",
+            "status": "created",
+        }
         record_integration_response(
             db,
             client=auth_client,
@@ -157,7 +216,13 @@ def test_begin_integration_idempotency_reserves_then_replays_response():
             request_hash=request_hash,
         )
         assert replay.kind == "replay"
-        assert replay.response_json == response_payload
+        assert replay.response_json == {
+            "schema": "nexus.integration-response-log.v2",
+            "ok": True,
+            "case_ref": "CS-TEST",
+            "status": "created",
+            "pii_persisted": False,
+        }
 
 
 def test_begin_integration_idempotency_rejects_same_key_different_payload():
@@ -191,8 +256,16 @@ def test_integration_task_replay_does_not_create_second_ticket():
     _make_actor()
     _make_integration_client()
 
-    first = client.post("/api/v1/integration/task", json=_payload(), headers=_headers("api-replay"))
-    second = client.post("/api/v1/integration/task", json=_payload(), headers=_headers("api-replay"))
+    first = client.post(
+        "/api/v1/integration/task",
+        json=_payload(),
+        headers=_headers("api-replay"),
+    )
+    second = client.post(
+        "/api/v1/integration/task",
+        json=_payload(),
+        headers=_headers("api-replay"),
+    )
 
     assert first.status_code == 200
     assert first.json()["status"] == "created"
@@ -202,15 +275,24 @@ def test_integration_task_replay_does_not_create_second_ticket():
 
     with SessionLocal() as db:
         assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
-        row = db.execute(select(IntegrationRequestLog).where(IntegrationRequestLog.idempotency_key == "api-replay")).scalar_one()
+        row = db.execute(
+            select(IntegrationRequestLog).where(
+                IntegrationRequestLog.idempotency_key == "api-replay"
+            )
+        ).scalar_one()
+        persisted = json.loads(row.response_json or "{}")
         assert row.status_code == 200
-        assert row.response_json
+        assert persisted["pii_persisted"] is False
+        assert "contact_id" not in persisted
 
 
 def test_integration_task_processing_reservation_returns_202_without_ticket():
     _make_actor()
     integration_client = _make_integration_client()
-    payload = _payload(contact_id="+41790000004", tracking_number="SF987654321")
+    payload = _payload(
+        contact_id="+41790000004",
+        tracking_number="SF987654321",
+    )
     request_hash = _api_request_hash(payload)
     with SessionLocal() as db:
         db.add(
@@ -226,7 +308,11 @@ def test_integration_task_processing_reservation_returns_202_without_ticket():
         )
         db.commit()
 
-    response = client.post("/api/v1/integration/task", json=payload, headers=_headers("api-processing"))
+    response = client.post(
+        "/api/v1/integration/task",
+        json=payload,
+        headers=_headers("api-processing"),
+    )
 
     assert response.status_code == 202
     assert response.json()["error_code"] == "request_processing"
@@ -237,14 +323,30 @@ def test_integration_task_processing_reservation_returns_202_without_ticket():
 def test_integration_task_same_key_different_payload_returns_409_without_ticket():
     _make_actor()
     _make_integration_client()
-    first_payload = _payload(contact_id="+41790000005", tracking_number="SF111111111")
-    second_payload = _payload(contact_id="+41790000006", tracking_number="SF222222222")
+    first_payload = _payload(
+        contact_id="+41790000005",
+        tracking_number="SF111111111",
+    )
+    second_payload = _payload(
+        contact_id="+41790000006",
+        tracking_number="SF222222222",
+    )
 
-    first = client.post("/api/v1/integration/task", json=first_payload, headers=_headers("api-conflict"))
-    second = client.post("/api/v1/integration/task", json=second_payload, headers=_headers("api-conflict"))
+    first = client.post(
+        "/api/v1/integration/task",
+        json=first_payload,
+        headers=_headers("api-conflict"),
+    )
+    second = client.post(
+        "/api/v1/integration/task",
+        json=second_payload,
+        headers=_headers("api-conflict"),
+    )
 
     assert first.status_code == 200
     assert second.status_code == 409
-    assert second.json()["error_code"] == "idempotency_key_reused_with_different_payload"
+    assert second.json()["error_code"] == (
+        "idempotency_key_reused_with_different_payload"
+    )
     with SessionLocal() as db:
         assert db.execute(select(func.count(Ticket.id))).scalar_one() == 1
