@@ -15,7 +15,11 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ..models_whatsapp import WhatsAppEmbeddedSignupSession
+from ..models_whatsapp_signup_checkpoint import (
+    WhatsAppEmbeddedSignupExchangeCheckpoint,
+)
 from ..utils.time import utc_now
+from .secret_crypto import SecretCryptoService
 from .whatsapp_embedded_signup_settings import (
     WhatsAppEmbeddedSignupSettings,
     get_whatsapp_embedded_signup_settings,
@@ -49,10 +53,17 @@ class MetaSignupHttpClient(Protocol):
 
 
 class EmbeddedSignupError(RuntimeError):
-    def __init__(self, code: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        retryable: bool = False,
+        resume_access_token: str | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.resume_access_token = resume_access_token
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,7 @@ def require_pending_signup_session(
     if row.status != "pending":
         raise EmbeddedSignupError("embedded_signup_session_not_pending")
     if row.expires_at <= utc_now():
+        clear_signup_exchange_checkpoint(db, session_id=row.id)
         row.status = "expired"
         row.updated_at = utc_now()
         db.flush()
@@ -167,12 +179,84 @@ def require_pending_signup_session(
     return row
 
 
+def load_signup_exchange_checkpoint(
+    db: Session,
+    *,
+    session: WhatsAppEmbeddedSignupSession,
+    code: str,
+) -> str | None:
+    checkpoint = db.get(WhatsAppEmbeddedSignupExchangeCheckpoint, session.id)
+    if checkpoint is None:
+        return None
+    supplied_fingerprint = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    if not session.code_fingerprint or not hmac.compare_digest(
+        supplied_fingerprint,
+        session.code_fingerprint,
+    ):
+        raise EmbeddedSignupError("embedded_signup_exchange_code_mismatch")
+    try:
+        token = SecretCryptoService.whatsapp().decrypt(
+            checkpoint.encrypted_access_token
+        )
+    except Exception as exc:
+        raise EmbeddedSignupError(
+            "embedded_signup_exchange_checkpoint_invalid"
+        ) from exc
+    normalized = str(token or "").strip()
+    if not normalized:
+        raise EmbeddedSignupError("embedded_signup_exchange_checkpoint_invalid")
+    return normalized
+
+
+def persist_signup_exchange_checkpoint(
+    db: Session,
+    *,
+    session: WhatsAppEmbeddedSignupSession,
+    access_token: str,
+) -> WhatsAppEmbeddedSignupExchangeCheckpoint:
+    normalized = str(access_token or "").strip()
+    if not normalized:
+        raise EmbeddedSignupError("embedded_signup_access_token_missing")
+    encrypted = SecretCryptoService.whatsapp().encrypt(normalized)
+    if not encrypted:
+        raise EmbeddedSignupError("embedded_signup_exchange_checkpoint_invalid")
+    row = db.get(WhatsAppEmbeddedSignupExchangeCheckpoint, session.id)
+    now = utc_now()
+    if row is None:
+        row = WhatsAppEmbeddedSignupExchangeCheckpoint(
+            session_id=session.id,
+            encrypted_access_token=encrypted,
+            exchanged_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.encrypted_access_token = encrypted
+        row.exchanged_at = now
+        row.updated_at = now
+    db.flush()
+    return row
+
+
+def clear_signup_exchange_checkpoint(
+    db: Session,
+    *,
+    session_id: str,
+) -> None:
+    row = db.get(WhatsAppEmbeddedSignupExchangeCheckpoint, session_id)
+    if row is not None:
+        db.delete(row)
+        db.flush()
+
+
 def exchange_and_validate_signup(
     *,
     code: str,
     waba_id: str,
     phone_number_id: str,
     business_account_id: str | None,
+    access_token: str | None = None,
     client: MetaSignupHttpClient | None = None,
 ) -> MetaSignupAssets:
     settings = _settings()
@@ -194,27 +278,31 @@ def exchange_and_validate_signup(
         trust_env=False,
     )
     close_client = client is None
+    resolved_access_token = str(access_token or "").strip()
     try:
-        token_payload = _get_json(
-            active_client,
-            settings=settings,
-            endpoint="oauth",
-            params={
-                "client_id": str(settings.app_id),
-                "client_secret": str(settings.app_secret),
-                "code": code,
-            },
-            failure_code="embedded_signup_code_exchange_failed",
-        )
-        access_token = str(token_payload.get("access_token") or "").strip()
-        if not access_token:
-            raise EmbeddedSignupError("embedded_signup_access_token_missing")
+        if not resolved_access_token:
+            token_payload = _get_json(
+                active_client,
+                settings=settings,
+                endpoint="oauth",
+                params={
+                    "client_id": str(settings.app_id),
+                    "client_secret": str(settings.app_secret),
+                    "code": code,
+                },
+                failure_code="embedded_signup_code_exchange_failed",
+            )
+            resolved_access_token = str(
+                token_payload.get("access_token") or ""
+            ).strip()
+            if not resolved_access_token:
+                raise EmbeddedSignupError("embedded_signup_access_token_missing")
         debug_payload = _get_json(
             active_client,
             settings=settings,
             endpoint="debug",
             params={
-                "input_token": access_token,
+                "input_token": resolved_access_token,
                 "access_token": f"{settings.app_id}|{settings.app_secret}",
             },
             failure_code="embedded_signup_token_debug_failed",
@@ -238,7 +326,7 @@ def exchange_and_validate_signup(
             active_client,
             settings=settings,
             endpoint="objects",
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers={"Authorization": f"Bearer {resolved_access_token}"},
             params={
                 "ids": normalized_waba_id,
                 "fields": (
@@ -282,7 +370,7 @@ def exchange_and_validate_signup(
         ):
             raise EmbeddedSignupError("embedded_signup_business_account_mismatch")
         return MetaSignupAssets(
-            access_token=access_token,
+            access_token=resolved_access_token,
             business_account_id=(
                 normalized_business_account_id or observed_business
             ),
@@ -291,12 +379,15 @@ def exchange_and_validate_signup(
             display_phone_number=_optional(selected.get("display_phone_number")),
             verified_name=_optional(selected.get("verified_name")),
         )
-    except EmbeddedSignupError:
+    except EmbeddedSignupError as exc:
+        if resolved_access_token and exc.retryable and not exc.resume_access_token:
+            exc.resume_access_token = resolved_access_token
         raise
     except httpx.HTTPError as exc:
         raise EmbeddedSignupError(
             "embedded_signup_meta_transport_error",
             retryable=True,
+            resume_access_token=resolved_access_token or None,
         ) from exc
     finally:
         if close_client and hasattr(active_client, "close"):
@@ -480,5 +571,5 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def _optional(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
+    normalized = str(value or "").strip()
+    return normalized or None
