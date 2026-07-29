@@ -3,13 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import event
 
 from ..models_case_scenario import CaseScenarioAssignment
+from .nexus_osr.business_scenarios import BusinessScenarioCatalog
 
 PORTFOLIO_SCHEMA = "nexus.golden-journeys.v2"
 PORTFOLIO_PATH = (
@@ -95,6 +96,68 @@ def require_selected_scenario(scenario_key: str) -> None:
         )
 
 
+def selected_runtime_catalog(
+    catalog: BusinessScenarioCatalog,
+) -> BusinessScenarioCatalog:
+    """Project the Catalog through the executable product portfolio.
+
+    Scenario behavior remains owned by the Business Scenario Catalog. The
+    portfolio contributes only selection and a digest-bound catalog identity so
+    every immutable Assignment proves both the behavior revision and the product
+    scope that authorized it.
+    """
+
+    portfolio = load_scenario_portfolio()
+    by_key = catalog.by_key()
+    missing = sorted(portfolio.selected_scenario_keys - set(by_key))
+    if missing:
+        raise ScenarioPortfolioError(
+            "scenario_portfolio_catalog_reference_missing:" + ",".join(missing)
+        )
+    selected = tuple(
+        item
+        for item in catalog.scenarios
+        if item.scenario_key in portfolio.selected_scenario_keys
+    )
+    if len(selected) != len(portfolio.selected_scenario_keys):
+        raise ScenarioPortfolioError("scenario_portfolio_projection_incomplete")
+    combined_digest = hashlib.sha256(
+        f"{catalog.source_sha256}:{portfolio.source_sha256}".encode("utf-8")
+    ).hexdigest()
+    return BusinessScenarioCatalog(
+        schema=catalog.schema,
+        catalog_version=(
+            f"{catalog.catalog_version}+portfolio.{portfolio.version}"
+        )[:120],
+        owner=catalog.owner,
+        approved_at=catalog.approved_at,
+        scope_mode=catalog.scope_mode,
+        scenarios=selected,
+        source_sha256=combined_digest,
+    )
+
+
+def install_runtime_portfolio_guard(case_scenario_service_module) -> None:  # noqa: ANN001
+    """Install selection into the sole Assignment service.
+
+    The model family imports this after ``case_scenario_service`` has registered
+    lifecycle listeners. Replacing its runtime catalog loader affects automatic
+    Core inserts and explicit ORM reclassification without creating another
+    Assignment writer or modifying historical snapshot reads.
+    """
+
+    if getattr(case_scenario_service_module, "_portfolio_guard_installed", False):
+        return
+    original_loader = case_scenario_service_module.load_runtime_scenario_catalog
+
+    @wraps(original_loader)
+    def guarded_loader(*, at=None):  # noqa: ANN001
+        return selected_runtime_catalog(original_loader(at=at))
+
+    case_scenario_service_module.load_runtime_scenario_catalog = guarded_loader
+    case_scenario_service_module._portfolio_guard_installed = True
+
+
 def portfolio_projection() -> dict[str, Any]:
     portfolio = load_scenario_portfolio()
     return {
@@ -111,13 +174,7 @@ def _enforce_assignment_portfolio(
     _connection,
     target: CaseScenarioAssignment,
 ) -> None:  # noqa: ANN001
-    """Guard every new production Scenario Assignment at the sole writer edge.
-
-    Existing rows and their immutable snapshots remain valid. Automatic
-    classification, explicit reclassification and any future routing writer all
-    converge here; an unselected Catalog capability cannot enter the production
-    state machine merely because its lifecycle is approved.
-    """
+    """Guard direct ORM writes in addition to the runtime catalog projection."""
 
     require_selected_scenario(target.scenario_key)
 
@@ -126,7 +183,9 @@ __all__ = [
     "PORTFOLIO_PATH",
     "ScenarioPortfolio",
     "ScenarioPortfolioError",
+    "install_runtime_portfolio_guard",
     "load_scenario_portfolio",
     "portfolio_projection",
     "require_selected_scenario",
+    "selected_runtime_catalog",
 ]
