@@ -13,6 +13,9 @@ from ..services.whatsapp_inbound import (
     WhatsAppConnectorAuthError,
     verify_whatsapp_connector_headers,
 )
+from ..services.whatsapp_media_processing_scope import (
+    enforce_whatsapp_media_processing_scope,
+)
 from ..services.whatsapp_media_service import (
     WhatsAppMediaError,
     get_or_create_inbound_media_asset,
@@ -179,6 +182,7 @@ async def receive_baileys_media(
                     else None
                 ),
             )
+            enforce_whatsapp_media_processing_scope(db, asset)
             stored = persist_inbound_media_bytes(
                 db,
                 asset=asset,
