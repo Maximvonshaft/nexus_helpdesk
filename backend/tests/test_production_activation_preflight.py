@@ -21,6 +21,8 @@ CONTROLLED_IMAGE = f"ghcr.io/maximvonshaft/nexus_helpdesk@{IMAGE_DIGEST}"
 
 def _candidate_binding() -> dict[str, str]:
     return {
+        "APP_ENV": "test",
+        "ACTIVATION_EVIDENCE_TEST_ALLOW_UNSIGNED": "true",
         "GIT_SHA": SOURCE_SHA,
         "CONTROLLED_IMAGE": CONTROLLED_IMAGE,
         "ACTIVATION_EVIDENCE_SOURCE_SHA": SOURCE_SHA,
