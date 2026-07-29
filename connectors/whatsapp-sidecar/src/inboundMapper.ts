@@ -30,6 +30,111 @@ function normalizedContent(message: any): Record<string, any> {
   return normalized && typeof normalized === "object" ? (normalized as Record<string, any>) : {};
 }
 
+function boundedText(value: unknown): string {
+  return String(value ?? "").trim().slice(0, 4096);
+}
+
+function firstText(...values: unknown[]): string {
+  for (const value of values) {
+    const normalized = boundedText(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
+function nativeFlowSelection(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return firstText(
+      parsed.title,
+      parsed.text,
+      parsed.display_text,
+      parsed.selected_display_text,
+      parsed.id,
+      parsed.row_id,
+      parsed.selected_id
+    );
+  } catch {
+    return "";
+  }
+}
+
+function interactiveResponse(content: Record<string, any>): ExtractedContent | null {
+  const buttons = content.buttonsResponseMessage;
+  if (buttons) {
+    const body = firstText(buttons.selectedDisplayText, buttons.selectedButtonId);
+    if (body) {
+      return {
+        body,
+        mediaKind: null,
+        mediaMimeType: null,
+        mediaFilename: null,
+        replyToMessageId: buttons.contextInfo?.stanzaId
+          ? String(buttons.contextInfo.stanzaId)
+          : null
+      };
+    }
+  }
+
+  const list = content.listResponseMessage;
+  if (list) {
+    const body = firstText(
+      list.title,
+      list.description,
+      list.singleSelectReply?.selectedRowId
+    );
+    if (body) {
+      return {
+        body,
+        mediaKind: null,
+        mediaMimeType: null,
+        mediaFilename: null,
+        replyToMessageId: list.contextInfo?.stanzaId
+          ? String(list.contextInfo.stanzaId)
+          : null
+      };
+    }
+  }
+
+  const template = content.templateButtonReplyMessage;
+  if (template) {
+    const body = firstText(template.selectedDisplayText, template.selectedId);
+    if (body) {
+      return {
+        body,
+        mediaKind: null,
+        mediaMimeType: null,
+        mediaFilename: null,
+        replyToMessageId: template.contextInfo?.stanzaId
+          ? String(template.contextInfo.stanzaId)
+          : null
+      };
+    }
+  }
+
+  const interactive = content.interactiveResponseMessage;
+  if (interactive) {
+    const body = firstText(
+      nativeFlowSelection(interactive.nativeFlowResponseMessage?.paramsJson),
+      interactive.body?.text
+    );
+    if (body) {
+      return {
+        body,
+        mediaKind: null,
+        mediaMimeType: null,
+        mediaFilename: null,
+        replyToMessageId: interactive.contextInfo?.stanzaId
+          ? String(interactive.contextInfo.stanzaId)
+          : null
+      };
+    }
+  }
+
+  return null;
+}
+
 function extractText(message: any): ExtractedContent {
   const content = normalizedContent(message);
   const extended = content.extendedTextMessage || {};
@@ -99,6 +204,8 @@ function extractText(message: any): ExtractedContent {
       replyToMessageId: null
     };
   }
+  const response = interactiveResponse(content);
+  if (response) return response;
   return {
     body: "",
     mediaKind: null,
@@ -178,14 +285,10 @@ export function normalizeBaileysInbound(
     received_at: new Date(timestamp * 1000).toISOString(),
     from_me: fromMe,
     projection_mode: projectionMode,
-    reply_to_message_id: extracted.replyToMessageId,
-    media_id: extracted.mediaKind ? externalMessageId : null,
     media_kind: extracted.mediaKind,
     media_mime_type: extracted.mediaMimeType,
-    media_filename: extracted.mediaFilename
+    media_filename: extracted.mediaFilename,
+    reply_to_message_id: extracted.replyToMessageId
   };
-  if (fromMe && projectionMode === "test_visitor") {
-    normalized.self_echo_test_prefix = testPrefix;
-  }
   return normalized;
 }

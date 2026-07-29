@@ -85,6 +85,84 @@ test("unwraps ephemeral and view-once provider containers", () => {
   assert.equal(media?.media_mime_type, "image/jpeg");
 });
 
+test("normalizes interactive button list template and native-flow responses", () => {
+  const cases = [
+    {
+      id: "button-response",
+      message: {
+        buttonsResponseMessage: {
+          selectedDisplayText: "Track parcel",
+          selectedButtonId: "track-parcel",
+          contextInfo: { stanzaId: "button-origin" }
+        }
+      },
+      body: "Track parcel",
+      type: "buttonsResponseMessage",
+      reply: "button-origin"
+    },
+    {
+      id: "list-response",
+      message: {
+        listResponseMessage: {
+          title: "Damaged parcel",
+          singleSelectReply: { selectedRowId: "damage-claim" },
+          contextInfo: { stanzaId: "list-origin" }
+        }
+      },
+      body: "Damaged parcel",
+      type: "listResponseMessage",
+      reply: "list-origin"
+    },
+    {
+      id: "template-response",
+      message: {
+        templateButtonReplyMessage: {
+          selectedDisplayText: "Talk to agent",
+          selectedId: "human-agent",
+          contextInfo: { stanzaId: "template-origin" }
+        }
+      },
+      body: "Talk to agent",
+      type: "templateButtonReplyMessage",
+      reply: "template-origin"
+    },
+    {
+      id: "native-flow-response",
+      message: {
+        interactiveResponseMessage: {
+          nativeFlowResponseMessage: {
+            paramsJson: JSON.stringify({
+              id: "delivery-delay",
+              title: "Delivery delayed",
+              flow_token: "must-not-project"
+            })
+          },
+          contextInfo: { stanzaId: "native-origin" }
+        }
+      },
+      body: "Delivery delayed",
+      type: "interactiveResponseMessage",
+      reply: "native-origin"
+    }
+  ] as const;
+
+  for (const item of cases) {
+    const normalized = normalizeBaileysInbound("wa-main", {
+      key: {
+        id: item.id,
+        remoteJid: "15551234567@s.whatsapp.net",
+        fromMe: false
+      },
+      message: item.message,
+      messageTimestamp: 1781179200
+    });
+    assert.equal(normalized?.body_text, item.body);
+    assert.equal(normalized?.message_type, item.type);
+    assert.equal(normalized?.reply_to_message_id, item.reply);
+    assert.equal(JSON.stringify(normalized?.raw_message).includes("must-not-project"), false);
+  }
+});
+
 test("ignores outbound, group, broadcast, newsletter, and empty messages", () => {
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "15551234567@s.whatsapp.net", fromMe: true }, message: { conversation: "self" } }), null);
   assert.equal(normalizeBaileysInbound("wa-main", { key: { id: "x", remoteJid: "1@g.us" }, message: { conversation: "hi" } }), null);

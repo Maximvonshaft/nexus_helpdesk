@@ -98,16 +98,16 @@ def _signup_session(
     session_id: str,
     tenant_id: int,
     requested_by: int,
+    for_update: bool = False,
 ) -> WhatsAppEmbeddedSignupSession | None:
-    return (
-        db.query(WhatsAppEmbeddedSignupSession)
-        .filter(
-            WhatsAppEmbeddedSignupSession.id == session_id,
-            WhatsAppEmbeddedSignupSession.tenant_id == tenant_id,
-            WhatsAppEmbeddedSignupSession.requested_by == requested_by,
-        )
-        .first()
+    query = db.query(WhatsAppEmbeddedSignupSession).filter(
+        WhatsAppEmbeddedSignupSession.id == session_id,
+        WhatsAppEmbeddedSignupSession.tenant_id == tenant_id,
+        WhatsAppEmbeddedSignupSession.requested_by == requested_by,
     )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def _completed_connection(
@@ -255,6 +255,13 @@ def complete_embedded_signup_session(
     signup: WhatsAppEmbeddedSignupSession | None = None
     try:
         with managed_session(db):
+            _signup_session(
+                db,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                requested_by=current_user.id,
+                for_update=True,
+            )
             signup = require_pending_signup_session(
                 db,
                 session_id=session_id,
@@ -278,13 +285,7 @@ def complete_embedded_signup_session(
             phone_number_id=payload.phone_number_id,
         )
     except EmbeddedSignupError as exc:
-        signup = _signup_session(
-            db,
-            session_id=session_id,
-            tenant_id=tenant_id,
-            requested_by=current_user.id,
-        )
-        if signup is not None and signup.status != "completed":
+        if signup is not None and signup.status == "exchanging":
             with managed_session(db):
                 if exc.retryable:
                     _restore_retryable_signup(signup, code=exc.code)
