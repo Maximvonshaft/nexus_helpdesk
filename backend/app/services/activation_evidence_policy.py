@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import base64
 import hashlib
-import hmac
 import json
 import os
 import re
@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from .activation_runtime_configuration import (
     activation_runtime_configuration_digest,
 )
@@ -19,11 +23,13 @@ from .activation_runtime_configuration import (
 _PROFILE_VALUES = {"controlled", "provider_canary", "full"}
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_SIGNATURE_VALUE = re.compile(r"^[A-Za-z0-9_-]{86}$")
+_KEY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,119}$")
 _DIGEST_IMAGE = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 _ENVIRONMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,159}$")
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _TEST_UNSIGNED_FLAG = "ACTIVATION_EVIDENCE_TEST_ALLOW_UNSIGNED"
+_MANIFEST_SCHEMA = "nexus.activation-evidence.v3"
 
 
 def _placeholder(value: str) -> bool:
@@ -168,54 +174,83 @@ def _bounded_file(path_value: str, *, field: str) -> bytes:
             payload = handle.read(_MAX_MANIFEST_BYTES + 1)
     except OSError as exc:
         raise ValueError(f"{field}_unavailable") from exc
-    if len(payload) > _MAX_MANIFEST_BYTES:
-        raise ValueError(f"{field}_too_large")
+    if not payload or len(payload) > _MAX_MANIFEST_BYTES:
+        raise ValueError(f"{field}_size_invalid")
     return payload
 
 
-def _manifest_and_key(environment: Mapping[str, str]) -> tuple[dict[str, Any], bytes]:
+def _manifest_and_verification_key(
+    environment: Mapping[str, str],
+) -> tuple[dict[str, Any], Ed25519PublicKey]:
     app_env = str(environment.get("APP_ENV") or "").strip().lower()
     inline_manifest = str(
         environment.get("ACTIVATION_EVIDENCE_MANIFEST_JSON") or ""
     ).strip()
-    inline_key = str(environment.get("ACTIVATION_EVIDENCE_SIGNING_KEY") or "")
+    inline_public_key = str(
+        environment.get("ACTIVATION_EVIDENCE_VERIFICATION_KEY") or ""
+    )
+    forbidden_signing_material = any(
+        str(environment.get(name) or "").strip()
+        for name in (
+            "ACTIVATION_EVIDENCE_SIGNING_KEY",
+            "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE",
+            "ACTIVATION_EVIDENCE_PRIVATE_KEY",
+            "ACTIVATION_EVIDENCE_PRIVATE_KEY_FILE",
+        )
+    )
+    if forbidden_signing_material:
+        raise ValueError("activation_evidence_signing_material_forbidden")
 
-    if inline_manifest or inline_key:
+    if inline_manifest or inline_public_key:
         if app_env != "test":
             raise ValueError("activation_evidence_inline_material_forbidden")
-        if not inline_manifest or not inline_key:
+        if not inline_manifest or not inline_public_key:
             raise ValueError("activation_evidence_inline_material_incomplete")
         manifest_bytes = inline_manifest.encode("utf-8")
-        key = inline_key.encode("utf-8")
+        key_bytes = inline_public_key.encode("utf-8")
     else:
         manifest_path = str(
             environment.get("ACTIVATION_EVIDENCE_MANIFEST_FILE") or ""
         ).strip()
         key_path = str(
-            environment.get("ACTIVATION_EVIDENCE_SIGNING_KEY_FILE") or ""
+            environment.get("ACTIVATION_EVIDENCE_VERIFICATION_KEY_FILE") or ""
         ).strip()
         if _placeholder(manifest_path):
             raise ValueError("activation_evidence_manifest_missing")
         if _placeholder(key_path):
-            raise ValueError("activation_evidence_signing_key_missing")
+            raise ValueError("activation_evidence_verification_key_missing")
         manifest_bytes = _bounded_file(
             manifest_path,
             field="activation_evidence_manifest",
         )
-        key = _bounded_file(
+        key_bytes = _bounded_file(
             key_path,
-            field="activation_evidence_signing_key",
+            field="activation_evidence_verification_key",
         ).strip()
 
-    if len(key) < 32:
-        raise ValueError("activation_evidence_signing_key_too_short")
     try:
         manifest = json.loads(manifest_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("activation_evidence_manifest_invalid") from exc
     if not isinstance(manifest, dict):
         raise ValueError("activation_evidence_manifest_not_object")
-    return manifest, key
+    try:
+        loaded_key = serialization.load_pem_public_key(key_bytes)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("activation_evidence_verification_key_invalid") from exc
+    if not isinstance(loaded_key, Ed25519PublicKey):
+        raise ValueError("activation_evidence_verification_key_algorithm_invalid")
+    return manifest, loaded_key
+
+
+def _decode_signature(value: str) -> bytes:
+    normalized = str(value or "").strip()
+    if not _SIGNATURE_VALUE.fullmatch(normalized):
+        raise ValueError("activation_evidence_signature_invalid")
+    try:
+        return base64.urlsafe_b64decode(normalized + "==")
+    except (ValueError, TypeError) as exc:
+        raise ValueError("activation_evidence_signature_invalid") from exc
 
 
 def _verified_manifest(
@@ -223,24 +258,26 @@ def _verified_manifest(
     *,
     candidate: Mapping[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    manifest, key = _manifest_and_key(environment)
-    if manifest.get("schema") != "nexus.activation-evidence.v2":
+    manifest, public_key = _manifest_and_verification_key(environment)
+    if manifest.get("schema") != _MANIFEST_SCHEMA:
         raise ValueError("activation_evidence_manifest_schema_invalid")
 
     signature = manifest.get("signature")
     if not isinstance(signature, dict):
         raise ValueError("activation_evidence_signature_missing")
-    if signature.get("algorithm") != "hmac-sha256":
+    if signature.get("algorithm") != "ed25519":
         raise ValueError("activation_evidence_signature_algorithm_invalid")
-    signature_value = str(signature.get("value") or "").strip().lower()
-    if not _HEX64.fullmatch(signature_value):
-        raise ValueError("activation_evidence_signature_invalid")
+    key_id = str(signature.get("key_id") or "").strip()
+    if not _KEY_ID.fullmatch(key_id):
+        raise ValueError("activation_evidence_signature_key_id_invalid")
+    signature_bytes = _decode_signature(str(signature.get("value") or ""))
 
     unsigned = dict(manifest)
     unsigned.pop("signature", None)
-    expected = hmac.new(key, _canonical_json(unsigned), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature_value):
-        raise ValueError("activation_evidence_signature_mismatch")
+    try:
+        public_key.verify(signature_bytes, _canonical_json(unsigned))
+    except InvalidSignature as exc:
+        raise ValueError("activation_evidence_signature_mismatch") from exc
 
     manifest_candidate = manifest.get("candidate")
     if not isinstance(manifest_candidate, dict):
@@ -370,7 +407,7 @@ def activation_evidence_snapshot(
         references[normalized_key] = value
 
     return {
-        "schema": "nexus.activation-evidence.v2",
+        "schema": _MANIFEST_SCHEMA,
         "status": "ready" if not reason_codes else "not_ready",
         "required": [key.lower() for key in required],
         "references": references,
@@ -408,9 +445,9 @@ def finalize_release_readiness(
     reason_codes.update(
         f"activation:{code}" for code in activation["reason_codes"]
     )
-    status = "ready" if not reason_codes else "not_ready"
-    production_authorized = status == "ready" and profile == "full"
-    provider_authorized = status == "ready" and profile in {
+    status_value = "ready" if not reason_codes else "not_ready"
+    production_authorized = status_value == "ready" and profile == "full"
+    provider_authorized = status_value == "ready" and profile in {
         "provider_canary",
         "full",
     }
@@ -422,7 +459,7 @@ def finalize_release_readiness(
         {
             "schema": "nexus.release-readiness.v2",
             "profile": profile,
-            "status": status,
+            "status": status_value,
             "reason_codes": sorted(reason_codes),
             "collectors": collectors,
             "production_authorized": production_authorized,
