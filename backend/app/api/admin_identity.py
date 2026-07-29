@@ -111,12 +111,23 @@ def _ensure_market(db: Session, tenant_id: int | None, market_id: int | None) ->
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Market not found or inactive")
 
 
-def _ensure_unique_team_name(db: Session, name: str, *, exclude_team_id: int | None = None) -> None:
-    query = db.query(Team).filter(func.lower(Team.name) == name.strip().lower())
+def _ensure_unique_team_name(
+    db: Session,
+    tenant_id: int | None,
+    name: str,
+    *,
+    exclude_team_id: int | None = None,
+) -> None:
+    query = apply_tenant_scope(db.query(Team), Team, tenant_id).filter(
+        func.lower(Team.name) == name.strip().lower()
+    )
     if exclude_team_id is not None:
         query = query.filter(Team.id != exclude_team_id)
     if query.first() is not None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Team name already exists")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team name already exists in this Tenant",
+        )
 
 
 def _active_user_counts(db: Session, tenant_id: int | None) -> dict[int, int]:
@@ -287,7 +298,7 @@ def create_identity_team(
 ):
     ensure_can_manage_users(current_user, db)
     tenant_id = actor_tenant_id(db, current_user)
-    _ensure_unique_team_name(db, payload.name)
+    _ensure_unique_team_name(db, tenant_id, payload.name)
     _ensure_market(db, tenant_id, payload.market_id)
     with managed_session(db):
         row = Team(
@@ -332,7 +343,12 @@ def update_identity_team(
 
     data = payload.model_dump(exclude_unset=True)
     if "name" in data:
-        _ensure_unique_team_name(db, data["name"], exclude_team_id=row.id)
+        _ensure_unique_team_name(
+            db,
+            tenant_id,
+            data["name"],
+            exclude_team_id=row.id,
+        )
     if "market_id" in data:
         _ensure_market(db, tenant_id, data["market_id"])
     active_users = int(
