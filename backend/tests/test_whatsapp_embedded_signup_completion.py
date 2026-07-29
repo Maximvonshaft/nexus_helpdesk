@@ -100,8 +100,8 @@ def _payload(state: str) -> EmbeddedSignupCompleteRequest:
     )
 
 
-def _create_connection(db_session, admin, *, account_id: str):
-    return admin_whatsapp_embedded_signup.create_whatsapp_connection(
+def _create_connection(db_session, admin, *, account_id: str) -> WhatsAppConnection:
+    created = admin_whatsapp_embedded_signup.create_whatsapp_connection(
         admin_whatsapp_embedded_signup.WhatsAppConnectionCreate(
             display_name="Meta Existing",
             account_id=account_id,
@@ -117,6 +117,9 @@ def _create_connection(db_session, admin, *, account_id: str):
         db_session,
         admin,
     )
+    connection = db_session.get(WhatsAppConnection, created.id)
+    assert connection is not None
+    return connection
 
 
 def test_completed_signup_retry_returns_existing_connection_without_code_exchange(
