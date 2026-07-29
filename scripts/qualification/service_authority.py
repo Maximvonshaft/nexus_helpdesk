@@ -4,7 +4,8 @@
 This read-only qualification consumes the canonical manifest and rejects
 independently callable private implementations, business-bearing shims,
 role-name authorization in declared authorities, import-time mutation of
-another module, and active Telephony compatibility/residue paths.
+another module, active Telephony compatibility/residue paths, and omission or
+redirection of the mandatory business responsibilities listed below.
 """
 
 from __future__ import annotations
@@ -21,6 +22,29 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "backend" / "app"
 MANIFEST = ROOT / "config" / "architecture" / "service-authority.v1.json"
 TELEPHONY_RESIDUE = ROOT / "scripts" / "ci" / "check_telephony_authority_residue.py"
+
+# This baseline is intentionally independent of the editable JSON manifest. A
+# manifest edit cannot silently remove a critical current responsibility or
+# redirect it to a parallel implementation while keeping this gate green.
+REQUIRED_RESPONSIBILITY_PATHS = {
+    "ticket-domain": "backend/app/services/ticket_service.py",
+    "durable-operator-task-lifecycle": "backend/app/services/operator_queue.py",
+    "webchat-handoff": "backend/app/services/webchat_handoff_service.py",
+    "scenario-handoff-routing-plan": "backend/app/services/handoff_routing_authority.py",
+    "conversation-first-webchat-initialization": "backend/app/services/conversation_first_service.py",
+    "webchat-public-message-service": "backend/app/services/webchat_message_service.py",
+    "customer-visible-message-persistence": "backend/app/services/customer_visible_message_service.py",
+    "customer-identity-binding": "backend/app/services/customer_identity_service.py",
+    "data-subject-lifecycle": "backend/app/services/data_lifecycle_service.py",
+    "whatsapp-account-lifecycle": "backend/app/services/whatsapp_connection_service.py",
+    "whatsapp-inbound-projection": "backend/app/services/whatsapp_inbound.py",
+    "whatsapp-outbound-delivery": "backend/app/services/whatsapp_delivery.py",
+    "whatsapp-media-persistence": "backend/app/services/whatsapp_media_service.py",
+    "activation-evidence-authorization": "backend/app/services/activation_evidence_policy.py",
+    "canonical-voice-session-lifecycle": "backend/app/services/voice_session_service.py",
+    "canonical-voice-command-lifecycle": "backend/app/services/voice_command_service.py",
+    "canonical-voice-command-dispatch": "backend/app/services/voice_command_dispatcher.py",
+}
 
 
 def _module_name(path: Path) -> str:
@@ -83,7 +107,9 @@ def _module_mutations(path: Path) -> list[str]:
             return
         root = _root_name(target)
         if root and root in aliases:
-            findings.append(f"{path.relative_to(ROOT)}:{line}:mutates_imported_module:{root}")
+            findings.append(
+                f"{path.relative_to(ROOT)}:{line}:mutates_imported_module:{root}"
+            )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -111,7 +137,9 @@ def _role_authorization_findings(path: Path) -> list[str]:
     source = path.read_text(encoding="utf-8")
     findings: list[str] = []
     if "UserRole" in source:
-        findings.append(f"role_name_authorization_in_authority:{path.relative_to(ROOT)}")
+        findings.append(
+            f"role_name_authorization_in_authority:{path.relative_to(ROOT)}"
+        )
     return findings
 
 
@@ -126,12 +154,19 @@ def _shim_findings(path: Path, expected_authority: str) -> list[str]:
             f"shim_does_not_import_authority:{path.relative_to(ROOT)}:{expected_authority}"
         )
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name != "__getattr__":
-            findings.append(f"shim_owns_function:{path.relative_to(ROOT)}:{node.name}")
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name != "__getattr__"
+        ):
+            findings.append(
+                f"shim_owns_function:{path.relative_to(ROOT)}:{node.name}"
+            )
         elif isinstance(node, ast.ClassDef):
             findings.append(f"shim_owns_class:{path.relative_to(ROOT)}:{node.name}")
     if len(source.splitlines()) > 24:
-        findings.append(f"shim_unbounded:{path.relative_to(ROOT)}:{len(source.splitlines())}")
+        findings.append(
+            f"shim_unbounded:{path.relative_to(ROOT)}:{len(source.splitlines())}"
+        )
     findings.extend(_module_mutations(path))
     findings.extend(_role_authorization_findings(path))
     return findings
@@ -175,6 +210,7 @@ def qualification_payload() -> dict[str, Any]:
         authorities = []
 
     responsibilities: set[str] = set()
+    authority_paths: dict[str, str] = {}
     public_paths: set[str] = set()
     private_paths: set[str] = set()
     shim_paths: set[str] = set()
@@ -189,8 +225,12 @@ def qualification_payload() -> dict[str, Any]:
         private = record.get("private_implementation")
         shims = record.get("compatibility_shims") or []
         if not responsibility or responsibility in responsibilities:
-            findings.append(f"responsibility_missing_or_duplicate:{responsibility}")
+            findings.append(
+                f"responsibility_missing_or_duplicate:{responsibility}"
+            )
         responsibilities.add(responsibility)
+        if responsibility:
+            authority_paths[responsibility] = public
         if not public or public in public_paths:
             findings.append(f"public_authority_missing_or_duplicate:{public}")
         public_paths.add(public)
@@ -217,7 +257,8 @@ def qualification_payload() -> dict[str, Any]:
                 findings.extend(_role_authorization_findings(private_file))
             if public_file.is_file() and private_module not in public_imports:
                 findings.append(
-                    f"public_authority_does_not_import_private_implementation:{public}:{private}"
+                    "public_authority_does_not_import_private_implementation:"
+                    f"{public}:{private}"
                 )
 
         if not isinstance(shims, list):
@@ -233,6 +274,16 @@ def qualification_payload() -> dict[str, Any]:
             elif public_file.is_file():
                 findings.extend(_shim_findings(shim_file, public))
 
+    for responsibility, expected_path in REQUIRED_RESPONSIBILITY_PATHS.items():
+        observed_path = authority_paths.get(responsibility)
+        if observed_path is None:
+            findings.append(f"mandatory_responsibility_missing:{responsibility}")
+        elif observed_path != expected_path:
+            findings.append(
+                "mandatory_responsibility_authority_mismatch:"
+                f"{responsibility}:observed={observed_path}:expected={expected_path}"
+            )
+
     production_files = [
         path for path in APP.rglob("*.py") if "__pycache__" not in path.parts
     ]
@@ -242,7 +293,8 @@ def qualification_payload() -> dict[str, Any]:
         for private_module, allowed_public in private_to_public.items():
             if private_module in imported and importer != allowed_public:
                 findings.append(
-                    f"private_implementation_imported_outside_authority:{private_module}:{importer}:{allowed_public}"
+                    "private_implementation_imported_outside_authority:"
+                    f"{private_module}:{importer}:{allowed_public}"
                 )
 
     expected_constraints = {
@@ -262,6 +314,7 @@ def qualification_payload() -> dict[str, Any]:
         "schema": "nexus.service-authority-qualification.v1",
         "status": "pass" if not findings else "fail",
         "authority_count": len(authorities),
+        "mandatory_responsibility_count": len(REQUIRED_RESPONSIBILITY_PATHS),
         "findings": sorted(set(findings)),
     }
 
