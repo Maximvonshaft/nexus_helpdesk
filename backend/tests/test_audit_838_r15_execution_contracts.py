@@ -51,7 +51,7 @@ from app.services.read_model_contracts import (  # noqa: E402
 from app.services.tenant_reference_runtime_contract import (  # noqa: E402
     install_tenant_reference_runtime_contract,
 )
-from app.services.voice_runtime_state_contract import (  # noqa: E402
+from app.services.voice_compliance_service import (  # noqa: E402
     apply_session_compliance_state,
 )
 from app.utils.time import utc_now  # noqa: E402
@@ -165,8 +165,10 @@ def test_team_and_market_identity_is_unique_inside_tenant_not_across_platform(
             is_active=True,
         )
     )
-    with pytest.raises(HTTPException, match="Team name already exists"):
+    with pytest.raises(HTTPException) as exc_info:
         db_session.flush()
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Team name already exists in this Tenant"
 
 
 def test_golden_journey_portfolio_rejects_unselected_runtime_scenario():
