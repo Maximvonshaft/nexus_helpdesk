@@ -9,6 +9,7 @@ from ..utils.time import utc_now
 from ..voice_models import WebchatVoiceSession, WebchatVoiceTranscriptSegment
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .customer_language import resolve_conversation_language
+from .voice_compliance_service import mark_capability_active
 from .webchat_ai_orchestration_service import process_webchat_ai_reply_job
 from .webchat_ai_service import AI_AUTHOR_LABEL
 from .webchat_service import add_visitor_message_to_conversation
@@ -56,7 +57,14 @@ def _record_segment(
     text: str,
     language: str | None,
 ) -> None:
-    if session.transcript_status != "active":
+    # Authorization alone is not represented as active. The first actual final
+    # transcript segment is the Provider/media receipt that moves persistence to
+    # active; without authorization no transcript payload is stored.
+    if session.transcript_status not in {
+        "authorized",
+        "start_requested",
+        "active",
+    }:
         return
     exists = (
         db.query(WebchatVoiceTranscriptSegment.id)
@@ -69,6 +77,10 @@ def _record_segment(
     )
     if exists:
         return
+    mark_capability_active(
+        session,
+        capability="transcript_persistence",
+    )
     db.add(
         WebchatVoiceTranscriptSegment(
             voice_session_id=session.id,
