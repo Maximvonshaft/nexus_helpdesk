@@ -1,7 +1,7 @@
 {
   "schema": "nexus.business-aggregate-authority.v1",
-  "version": "1.0.0",
-  "effective_at": "2026-07-27T00:00:00Z",
+  "version": "1.0.1",
+  "effective_at": "2026-07-29T00:00:00Z",
   "durable_case": {
     "model": "app.models.Ticket",
     "table": "tickets",
@@ -19,7 +19,7 @@
   "live_handoff": {
     "model": "app.webchat_models.WebchatHandoffRequest",
     "table": "webchat_handoff_requests",
-    "writer": "app.services.webchat_handoff_service_core"
+    "writer": "app.services.webchat_handoff_service"
   },
   "operator_queue_projection": {
     "model": "app.operator_models.OperatorTask",
