@@ -27,6 +27,10 @@ from app.services.case_scenario_service import (
     reclassify_case_scenario,
     scenario_review_overdue,
 )
+from app.services.scenario_portfolio_authority import (
+    load_scenario_portfolio,
+    portfolio_projection,
+)
 
 register_all_models()
 
@@ -79,7 +83,7 @@ def _ticket(
     )
 
 
-def test_ticket_insert_pins_one_versioned_scenario_contract(db_session):
+def test_ticket_insert_pins_catalog_and_portfolio_identity(db_session):
     ticket = _ticket(
         "PIN",
         case_type="delivery",
@@ -91,11 +95,14 @@ def test_ticket_insert_pins_one_versioned_scenario_contract(db_session):
     row = current_case_scenario_assignment(db_session, ticket_id=ticket.id)
     assert row is not None
     assert row.scenario_key == "delivery_eta_delay_inquiry"
+    assert "+portfolio.2.0.0" in row.catalog_version
     assert len(row.catalog_sha256) == 64
     snapshot = json.loads(row.scenario_snapshot_json)
     assert snapshot["schema"] == "nexus.case-scenario-assignment.v1"
     assert snapshot["scenario"]["scenario_key"] == row.scenario_key
     assert snapshot["scenario"]["observation_period_seconds"] == 86400
+    assert snapshot["catalog_version"] == row.catalog_version
+    assert snapshot["catalog_sha256"] == row.catalog_sha256
 
 
 def test_review_due_is_governance_warning_not_runtime_expiry():
@@ -106,7 +113,23 @@ def test_review_due_is_governance_warning_not_runtime_expiry():
     assert scenario.lifecycle.expires_at is None
 
 
-def test_conflicting_legacy_aliases_fail_closed_on_insert(db_session):
+def test_portfolio_selects_exact_five_without_copying_scenario_contract():
+    portfolio = load_scenario_portfolio()
+    assert portfolio.selected_scenario_keys == {
+        "tracking_status_inquiry",
+        "delivery_eta_delay_inquiry",
+        "address_contact_correction",
+        "delivery_followup_work_order",
+        "failed_repeated_delivery_attempt",
+    }
+    projection = portfolio_projection()
+    assert projection["version"] == "2.0.0"
+    assert len(projection["source_sha256"]) == 64
+
+
+def test_conflicting_selected_and_unselected_aliases_fail_closed_on_insert(
+    db_session,
+):
     ticket = _ticket(
         "CONFLICT",
         case_type="delivery_delay",
@@ -117,6 +140,16 @@ def test_conflicting_legacy_aliases_fail_closed_on_insert(db_session):
         db_session.flush()
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "case_scenario_identity_conflict"
+
+
+def test_unselected_automatic_scenario_cannot_enter_runtime(db_session):
+    ticket = _ticket("OUTSIDE", case_type="formal_complaint")
+    db_session.add(ticket)
+    with pytest.raises(HTTPException) as exc:
+        db_session.flush()
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "case_scenario_outside_selected_portfolio"
+    assert exc.value.detail["scenario_key"] == "formal_complaint"
 
 
 def test_ticket_load_does_not_rewrite_legacy_identity(db_session):
@@ -151,7 +184,9 @@ def test_generic_field_edit_cannot_silently_reclassify_case(db_session):
     )
 
 
-def test_explicit_reclassification_preserves_history_and_snapshot(db_session):
+def test_selected_explicit_reclassification_preserves_history_and_snapshot(
+    db_session,
+):
     ticket = _ticket("RECLASSIFY", case_type="delivery_delay")
     db_session.add(ticket)
     db_session.flush()
@@ -161,13 +196,13 @@ def test_explicit_reclassification_preserves_history_and_snapshot(db_session):
     new = reclassify_case_scenario(
         db_session,
         ticket=ticket,
-        scenario_key="formal_complaint",
-        reason="Customer submitted a formal complaint after review.",
+        scenario_key="tracking_status_inquiry",
+        reason="Verified request is now a tracking-only inquiry.",
         actor_id=None,
     )
     db_session.flush()
 
-    assert new.scenario_key == "formal_complaint"
+    assert new.scenario_key == "tracking_status_inquiry"
     assert old.superseded_at is not None
     assert old.superseded_by_id == new.id
     assert current_case_scenario_assignment(
@@ -183,6 +218,32 @@ def test_explicit_reclassification_preserves_history_and_snapshot(db_session):
     assert ticket.case_type == "delivery_delay"
 
 
+def test_unselected_explicit_reclassification_is_rejected_without_history_loss(
+    db_session,
+):
+    ticket = _ticket("REJECT-UNSELECTED", case_type="delivery_delay")
+    db_session.add(ticket)
+    db_session.flush()
+    current = current_case_scenario_assignment(db_session, ticket_id=ticket.id)
+    assert current is not None
+
+    with pytest.raises(HTTPException) as exc:
+        reclassify_case_scenario(
+            db_session,
+            ticket=ticket,
+            scenario_key="formal_complaint",
+            reason="Attempt to expand outside the selected portfolio.",
+            actor_id=None,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "case_scenario_outside_selected_portfolio"
+    assert current_case_scenario_assignment(
+        db_session,
+        ticket_id=ticket.id,
+    ).id == current.id
+    assert current.superseded_at is None
+
+
 def test_assignment_contract_columns_are_immutable(db_session):
     ticket = _ticket("IMMUTABLE", case_type="delivery_delay")
     db_session.add(ticket)
@@ -190,6 +251,6 @@ def test_assignment_contract_columns_are_immutable(db_session):
     row = current_case_scenario_assignment(db_session, ticket_id=ticket.id)
     assert row is not None
 
-    row.scenario_key = "formal_complaint"
+    row.scenario_key = "tracking_status_inquiry"
     with pytest.raises(ValueError, match="case_scenario_assignment_immutable"):
         db_session.flush()
