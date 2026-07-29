@@ -1,6 +1,6 @@
 {
   "schema": "nexus.data-field-authority.v1",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "effective_at": "2026-07-29T00:00:00Z",
   "ticket_as_case": {
     "source_of_truth": [
@@ -83,8 +83,9 @@
       "model": "app.models_channel_intake.EmailIntakeQuarantine",
       "subject_identity_path": "from_address -> customer_identity_bindings(email)",
       "tenant_key": "tenant_id",
-      "pii": ["provider_message_id", "mailbox_uid", "from_address", "from_name", "to_address", "cc", "subject", "body", "mailbox_message_id", "mailbox_references", "in_reply_to"],
-      "delete_action": "redact_and_reject"
+      "operational_dedupe_keys": ["provider_message_id", "mailbox_uid"],
+      "pii": ["from_address", "from_name", "to_address", "cc", "subject", "body", "mailbox_message_id", "mailbox_references", "in_reply_to"],
+      "delete_action": "redact_and_reject_preserving_dedupe_keys"
     },
     "tickets": {
       "model": "app.models.Ticket",
