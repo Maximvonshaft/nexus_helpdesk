@@ -241,6 +241,17 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 ):
                     row.tenant_key = tenant_key
 
+            # Historical Handoff fixtures predate CaseScenarioAssignment. Stamp
+            # their generic WebChat cases with one selected read-only Journey so
+            # tests exercise the production Scenario and Queue authority rather
+            # than bypassing it or forcing an arbitrary runtime fallback.
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "Ticket"
+                and not str(getattr(row, "case_type", "") or "").strip()
+            ):
+                row.case_type = "tracking_status_inquiry"
+
             # Historical WebCall tests create Ticket and scope rows directly
             # instead of using production factories. Their fixture vocabulary is
             # normalized to the same published Scenario and exact Queue contract;
