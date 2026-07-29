@@ -101,7 +101,6 @@ def _subject(db):
         source="email_intake",
     )
     account = OutboundEmailAccount(
-        tenant_id=tenant.id,
         display_name="Support Mailbox",
         host="smtp.example.test",
         port=587,
