@@ -513,10 +513,6 @@ def main() -> int:
                 "source_sha": evidence["candidate"]["source_sha"],
                 "transports": list(evidence["transports"]),
                 "media_required": evidence["requirements"]["media_required"],
-                "contains_secrets": evidence["contains_secrets"],
-                "contains_full_phone_numbers": evidence[
-                    "contains_full_phone_numbers"
-                ],
             },
             sort_keys=True,
         )
