@@ -14,7 +14,10 @@ from ..voice_models import (
 )
 from ..webchat_models import WebchatConversation, WebchatEvent
 from .voice_command_service import enqueue_voice_command
-from .voice_compliance_service import capability_authorized
+from .voice_compliance_service import (
+    capability_authorized,
+    mark_capability_start_requested,
+)
 from .voice_provider import VoiceProvider
 
 _CONTROLLER_ROLES = {"controller", "ai_controller"}
@@ -159,7 +162,9 @@ def ensure_recording_command(
     session: WebchatVoiceSession,
     actor: User | None = None,
 ) -> None:
-    if session.recording_status != "requested":
+    if session.recording_status not in {"authorized", "start_requested"}:
+        return
+    if session.recording_status == "start_requested":
         return
     configuration = (
         db.query(VoiceChannelConfiguration)
@@ -202,10 +207,12 @@ def ensure_recording_command(
         note="voice_recording_policy",
         idempotency_key=f"voice-recording-start:{session.id}",
     )
+    mark_capability_start_requested(session, capability="recording")
+    db.flush()
     _write_event(
         db,
         session=session,
-        event_type="voice.recording.requested",
+        event_type="voice.recording.start_requested",
         payload={
             "voice_session_id": session.public_id,
             "command_id": command.public_id,
