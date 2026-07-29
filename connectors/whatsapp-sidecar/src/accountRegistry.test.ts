@@ -57,3 +57,41 @@ test("readiness includes durable media retrieval backlog", () => {
   assert.equal(readiness.ready, true);
   assert.equal(readiness.pending_callbacks, 5);
 });
+
+test("send responses do not publish delivery callbacks before backend dispatch commits", async () => {
+  const deliveries: unknown[] = [];
+  const backend = {
+    pendingCallbacks: () => 0,
+    postInbound: async () => undefined,
+    postMedia: async () => undefined,
+    postStatus: async () => undefined,
+    postDelivery: async (_accountId: string, payload: unknown) => {
+      deliveries.push(payload);
+    }
+  } as any;
+  const registry = new AccountRegistry(config(), logger, backend);
+  await registry.start("wa-main", 1);
+  (registry.connector as any).setConnected("wa-main");
+
+  const textResult = await registry.send("wa-main", {
+    idempotency_key: "text-1",
+    target: "+15550000001",
+    body: "hello",
+    metadata: { outbound_part_id: 11 }
+  });
+  const mediaResult = await registry.sendMedia(
+    "wa-main",
+    {
+      idempotency_key: "media-1",
+      target: "+15550000001",
+      media_kind: "image",
+      media_type: "image/png",
+      metadata: { outbound_part_id: 12 }
+    },
+    Buffer.from("image")
+  );
+
+  assert.equal(textResult.status, "sent");
+  assert.equal(mediaResult.status, "sent");
+  assert.deepEqual(deliveries, []);
+});
