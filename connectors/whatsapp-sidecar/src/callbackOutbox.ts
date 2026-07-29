@@ -127,8 +127,9 @@ export class DurableCallbackOutbox {
   ): Promise<DrainResult> {
     const files = readdirSync(this.root)
       .filter((name) => name.endsWith(".json"))
-      .sort()
-      .slice(0, Math.max(1, Math.min(limit, 1000)));
+      .sort();
+    const dueLimit = Math.max(1, Math.min(limit, 1000));
+    let attemptedDue = 0;
     let delivered = 0;
     let pending = 0;
     for (const file of files) {
@@ -158,6 +159,10 @@ export class DurableCallbackOutbox {
         pending += 1;
         continue;
       }
+      if (attemptedDue >= dueLimit) {
+        break;
+      }
+      attemptedDue += 1;
       try {
         await sender(envelope);
         delivered += 1;
