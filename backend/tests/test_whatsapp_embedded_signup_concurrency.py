@@ -158,8 +158,8 @@ def test_losing_completion_request_does_not_overwrite_active_claim(db_session) -
 
     assert captured.value.status_code == 409
     assert captured.value.detail == {
-        "error_code": "embedded_signup_session_not_pending",
-        "retryable": False,
+        "error_code": "embedded_signup_exchange_in_progress",
+        "retryable": True,
     }
     db_session.expire_all()
     persisted = db_session.get(WhatsAppEmbeddedSignupSession, "claimed-session")
