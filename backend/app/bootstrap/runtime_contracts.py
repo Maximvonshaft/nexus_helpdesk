@@ -7,6 +7,7 @@ from ..services.golden_journey_portfolio import (
 from ..services.handoff_assignment_contract import (
     install_handoff_assignment_contract,
 )
+from ..services.knowledge_pdf_safety import install_knowledge_pdf_safety
 from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
 )
@@ -35,5 +36,6 @@ def register_runtime_contracts() -> None:
     install_handoff_assignment_contract()
     install_tenant_reference_runtime_contract()
     install_voice_runtime_state_contract()
+    install_knowledge_pdf_safety()
     install_read_model_contracts()
     _INSTALLED = True
