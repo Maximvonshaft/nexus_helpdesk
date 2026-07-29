@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+from datetime import datetime, timezone
+
 from app.services.activation_evidence_policy import (
     activation_evidence_snapshot,
     finalize_release_readiness,
+)
+from app.services.activation_runtime_configuration import (
+    activation_runtime_configuration_digest,
 )
 
 SOURCE_SHA = "a" * 40
 IMAGE_DIGEST = "sha256:" + "b" * 64
 IMAGE = f"ghcr.io/maximvonshaft/nexus_helpdesk@{IMAGE_DIGEST}"
+ENVIRONMENT_ID = "production-eu-1"
+SIGNING_KEY = "activation-evidence-test-signing-key-0123456789abcdef"
 
 
 def _identity() -> dict[str, object]:
@@ -23,21 +33,134 @@ def _configuration(**overrides) -> dict[str, object]:
     result: dict[str, object] = {
         "status": "ready",
         "reason_codes": [],
+        "provider": {
+            "enabled": True,
+            "mode": "full",
+            "kill_switch": False,
+            "canary_percent": 100,
+        },
         "webchat_ai_enabled": False,
         "voice_enabled": False,
         "outbound": {"enabled": False, "provider": "disabled"},
+        "whatsapp": {
+            "enabled": False,
+            "media_enabled": False,
+            "media_scanner": "disabled",
+        },
         "operations_mode": "disabled",
     }
     result.update(overrides)
     return result
 
 
-def _binding_env(**overrides: str) -> dict[str, str]:
+def _runtime_environment(profile: str) -> dict[str, str]:
+    if profile == "provider_canary":
+        return {
+            "PRODUCTION_PROFILE": profile,
+            "PROVIDER_RUNTIME_ENABLED": "true",
+            "PROVIDER_RUNTIME_TRAFFIC_MODE": "canary",
+            "PROVIDER_RUNTIME_KILL_SWITCH": "false",
+            "PROVIDER_RUNTIME_CANARY_PERCENT": "5",
+            "WEBCHAT_AI_ENABLED": "false",
+            "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
+            "ENABLE_OUTBOUND_DISPATCH": "false",
+            "OUTBOUND_PROVIDER": "disabled",
+            "OPERATIONS_DISPATCH_MODE": "disabled",
+            "OPERATIONS_DISPATCH_ADAPTER": "disabled",
+        }
+    return {
+        "PRODUCTION_PROFILE": "full",
+        "PROVIDER_RUNTIME_ENABLED": "true",
+        "PROVIDER_RUNTIME_TRAFFIC_MODE": "full",
+        "PROVIDER_RUNTIME_KILL_SWITCH": "false",
+        "PROVIDER_RUNTIME_CANARY_PERCENT": "100",
+        "WEBCHAT_AI_ENABLED": "false",
+        "WEBCHAT_AI_AUTO_REPLY_MODE": "off",
+        "ENABLE_OUTBOUND_DISPATCH": "false",
+        "OUTBOUND_PROVIDER": "disabled",
+        "OPERATIONS_DISPATCH_MODE": "disabled",
+        "OPERATIONS_DISPATCH_ADAPTER": "disabled",
+    }
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _signed_environment(
+    references: dict[str, str],
+    *,
+    profile: str | None = None,
+    runtime_overrides: dict[str, str] | None = None,
+    **overrides: str,
+) -> dict[str, str]:
+    resolved_profile = profile or (
+        "provider_canary"
+        if "PROVIDER_CANARY_E2E_EVIDENCE_URL" in references
+        else "full"
+    )
     result = {
+        "APP_ENV": "test",
+        **_runtime_environment(resolved_profile),
         "ACTIVATION_EVIDENCE_SOURCE_SHA": SOURCE_SHA,
         "ACTIVATION_EVIDENCE_IMAGE_DIGEST": IMAGE_DIGEST,
+        "ACTIVATION_EVIDENCE_ENVIRONMENT_ID": ENVIRONMENT_ID,
+        "ACTIVATION_EVIDENCE_SIGNING_KEY": SIGNING_KEY,
+        **references,
     }
+    if runtime_overrides:
+        result.update(runtime_overrides)
     result.update(overrides)
+    configuration_digest = activation_runtime_configuration_digest(
+        profile=resolved_profile,
+        environment=result,
+    )
+    result["ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST"] = configuration_digest
+
+    candidate = {
+        "source_sha": SOURCE_SHA,
+        "image_digest": IMAGE_DIGEST,
+        "configuration_digest": configuration_digest,
+        "environment_id": ENVIRONMENT_ID,
+    }
+    generated_at = datetime.now(timezone.utc).isoformat()
+    evidence = {
+        key.lower(): {
+            "url": url,
+            "result": "pass",
+            "artifact_sha256": "sha256:" + hashlib.sha256(key.encode()).hexdigest(),
+            "source_sha": SOURCE_SHA,
+            "image_digest": IMAGE_DIGEST,
+            "configuration_digest": configuration_digest,
+            "environment_id": ENVIRONMENT_ID,
+            "generated_at": generated_at,
+        }
+        for key, url in references.items()
+    }
+    unsigned = {
+        "schema": "nexus.activation-evidence.v2",
+        "candidate": candidate,
+        "evidence": evidence,
+    }
+    signature = hmac.new(
+        SIGNING_KEY.encode("utf-8"),
+        _canonical(unsigned),
+        hashlib.sha256,
+    ).hexdigest()
+    result["ACTIVATION_EVIDENCE_MANIFEST_JSON"] = json.dumps(
+        {
+            **unsigned,
+            "signature": {
+                "algorithm": "hmac-sha256",
+                "value": signature,
+            },
+        }
+    )
     return result
 
 
@@ -53,18 +176,46 @@ def test_controlled_profile_never_requires_external_activation_evidence() -> Non
     assert result["required"] == []
     assert result["candidate"] is None
     assert result["reason_codes"] == []
+    assert result["manifest_sha256"] is None
 
 
-def test_provider_canary_requires_bound_canary_evidence_only() -> None:
+def test_provider_canary_rejects_url_without_signed_manifest() -> None:
     result = activation_evidence_snapshot(
         profile="provider_canary",
         configuration=_configuration(),
         identity=_identity(),
-        environment=_binding_env(
-            PROVIDER_CANARY_E2E_EVIDENCE_URL=(
+        environment={
+            **_runtime_environment("provider_canary"),
+            "ACTIVATION_EVIDENCE_SOURCE_SHA": SOURCE_SHA,
+            "ACTIVATION_EVIDENCE_IMAGE_DIGEST": IMAGE_DIGEST,
+            "PROVIDER_CANARY_E2E_EVIDENCE_URL": (
                 "https://evidence.example/provider-canary"
-            )
-        ),
+            ),
+        },
+    )
+
+    assert result["status"] == "not_ready"
+    assert "activation_evidence_configuration_digest_invalid" in result["reason_codes"]
+    assert "activation_evidence_environment_id_invalid" in result["reason_codes"]
+    assert "activation_evidence_manifest_missing" in result["reason_codes"]
+
+
+def test_provider_canary_requires_verified_candidate_bound_manifest() -> None:
+    reference = {
+        "PROVIDER_CANARY_E2E_EVIDENCE_URL": (
+            "https://evidence.example/provider-canary"
+        )
+    }
+    environment = _signed_environment(reference, profile="provider_canary")
+    expected_digest = activation_runtime_configuration_digest(
+        profile="provider_canary",
+        environment=environment,
+    )
+    result = activation_evidence_snapshot(
+        profile="provider_canary",
+        configuration=_configuration(),
+        identity=_identity(),
+        environment=environment,
     )
 
     assert result["status"] == "ready"
@@ -74,46 +225,120 @@ def test_provider_canary_requires_bound_canary_evidence_only() -> None:
         "image_digest": IMAGE_DIGEST,
         "runtime_source_sha": SOURCE_SHA,
         "runtime_image_digest": IMAGE_DIGEST,
+        "configuration_digest": expected_digest,
+        "environment_id": ENVIRONMENT_ID,
     }
+    assert result["manifest_sha256"].startswith("sha256:")
+    assert result["receipts"]["provider_canary_e2e_evidence_url"]["result"] == "pass"
 
 
-def test_full_profile_rejects_placeholder_or_wrong_candidate_evidence() -> None:
+def test_signed_manifest_rejects_tampering_and_wrong_candidate() -> None:
+    references = {
+        "PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production"
+    }
+    environment = _signed_environment(references)
+    manifest = json.loads(environment["ACTIVATION_EVIDENCE_MANIFEST_JSON"])
+    manifest["evidence"]["production_e2e_evidence_url"]["result"] = "failed"
+    environment["ACTIVATION_EVIDENCE_MANIFEST_JSON"] = json.dumps(manifest)
+
+    tampered = activation_evidence_snapshot(
+        profile="full",
+        configuration=_configuration(),
+        identity=_identity(),
+        environment=environment,
+    )
+    assert "activation_evidence_signature_mismatch" in tampered["reason_codes"]
+
+    wrong_candidate = _signed_environment(
+        references,
+        ACTIVATION_EVIDENCE_SOURCE_SHA="d" * 40,
+    )
     result = activation_evidence_snapshot(
         profile="full",
         configuration=_configuration(),
         identity=_identity(),
-        environment=_binding_env(
-            PRODUCTION_E2E_EVIDENCE_URL=(
-                "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/<run-id>"
-            )
-        ),
-    )
-    assert (
-        "activation_evidence_missing:production_e2e_evidence_url"
-        in result["reason_codes"]
-    )
-
-    result = activation_evidence_snapshot(
-        profile="full",
-        configuration=_configuration(),
-        identity=_identity(),
-        environment=_binding_env(
-            ACTIVATION_EVIDENCE_SOURCE_SHA="c" * 40,
-            PRODUCTION_E2E_EVIDENCE_URL="https://evidence.example/production",
-        ),
+        environment=wrong_candidate,
     )
     assert "activation_evidence_source_sha_mismatch" in result["reason_codes"]
 
+
+def test_runtime_configuration_drift_invalidates_signed_evidence() -> None:
+    references = {
+        "PROVIDER_CANARY_E2E_EVIDENCE_URL": (
+            "https://evidence.example/provider-canary"
+        )
+    }
+    environment = _signed_environment(references, profile="provider_canary")
+    environment["PROVIDER_RUNTIME_CANARY_PERCENT"] = "6"
+
+    result = activation_evidence_snapshot(
+        profile="provider_canary",
+        configuration=_configuration(),
+        identity=_identity(),
+        environment=environment,
+    )
+
+    assert result["status"] == "not_ready"
+    assert (
+        "activation_evidence_configuration_digest_mismatch"
+        in result["reason_codes"]
+    )
+    assert (
+        "activation_evidence_manifest_configuration_digest_mismatch"
+        in result["reason_codes"]
+    )
+
+
+def test_livekit_model_drift_invalidates_signed_evidence() -> None:
+    references = {
+        "PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production",
+        "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL": (
+            "https://evidence.example/telephony"
+        ),
+    }
+    environment = _signed_environment(
+        references,
+        runtime_overrides={
+            "WEBCHAT_HUMAN_CALL_ENABLED": "true",
+            "WEBCHAT_LIVE_AI_VOICE_ENABLED": "true",
+            "WEBCHAT_VOICE_PROVIDER": "livekit",
+            "LIVEKIT_URL": "wss://voice.example.test",
+            "LIVEKIT_WEBHOOK_ENABLED": "true",
+            "LIVEKIT_AGENT_NAME": "nexus-voice-agent",
+            "NEXUS_VOICE_STT_MODEL": "stt-v1",
+            "NEXUS_VOICE_TTS_MODEL": "tts-v1",
+            "LIVEKIT_API_KEY_FILE": "/run/secrets/livekit_api_key",
+            "LIVEKIT_API_SECRET_FILE": "/run/secrets/livekit_api_secret",
+            "LIVEKIT_AGENT_SHARED_SECRET_FILE": (
+                "/run/secrets/livekit_agent_shared_secret"
+            ),
+        },
+    )
+    environment["NEXUS_VOICE_TTS_MODEL"] = "tts-v2"
+
+    result = activation_evidence_snapshot(
+        profile="full",
+        configuration=_configuration(voice_enabled=True),
+        identity=_identity(),
+        environment=environment,
+    )
+
+    assert "activation_evidence_configuration_digest_mismatch" in result["reason_codes"]
+
+
+def test_full_profile_rejects_placeholder_evidence_even_with_manifest() -> None:
+    placeholder = (
+        "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/<run-id>"
+    )
     result = activation_evidence_snapshot(
         profile="full",
         configuration=_configuration(),
         identity=_identity(),
-        environment=_binding_env(
-            ACTIVATION_EVIDENCE_IMAGE_DIGEST="sha256:" + "d" * 64,
-            PRODUCTION_E2E_EVIDENCE_URL="https://evidence.example/production",
+        environment=_signed_environment(
+            {"PRODUCTION_E2E_EVIDENCE_URL": placeholder}
         ),
     )
-    assert "activation_evidence_image_digest_mismatch" in result["reason_codes"]
+    assert "activation_evidence_missing:production_e2e_evidence_url" in result["reason_codes"]
 
 
 def test_finalizer_is_the_only_authorization_boundary() -> None:
@@ -144,14 +369,22 @@ def test_finalizer_is_the_only_authorization_boundary() -> None:
     assert blocked["production_authorized"] is False
     assert blocked["webchat_ai_enablement_authorized"] is False
 
+    references = {
+        "PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production",
+        "WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL": (
+            "https://evidence.example/webchat-ai"
+        ),
+    }
+    environment = _signed_environment(
+        references,
+        runtime_overrides={
+            "WEBCHAT_AI_ENABLED": "true",
+            "WEBCHAT_AI_AUTO_REPLY_MODE": "runtime",
+        },
+    )
     allowed = finalize_release_readiness(
         collected,
-        environment=_binding_env(
-            PRODUCTION_E2E_EVIDENCE_URL="https://evidence.example/production",
-            WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL=(
-                "https://evidence.example/webchat-ai"
-            ),
-        ),
+        environment=environment,
     )
     assert allowed["status"] == "ready"
     assert allowed["production_authorized"] is True

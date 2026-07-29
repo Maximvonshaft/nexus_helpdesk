@@ -178,34 +178,20 @@ export class DurableCallbackOutbox {
           continue;
         }
         if (envelope.attempts >= MAX_CALLBACK_ATTEMPTS) {
-          if (envelope.kind === "inbound" || envelope.kind === "status") {
-            envelope.attempts = MAX_CALLBACK_ATTEMPTS;
-            envelope.next_attempt_at = this.now() + EXHAUSTED_AUTHORITY_RETRY_MS;
-            this.write(envelope);
-            pending += 1;
-            this.logger.error(
-              {
-                callback_id: envelope.id,
-                account_id: envelope.account_id,
-                callback_kind: envelope.kind,
-                attempts: envelope.attempts,
-                retained: true
-              },
-              "callback_outbox_dead_retained"
-            );
-            continue;
-          }
+          envelope.attempts = MAX_CALLBACK_ATTEMPTS;
+          envelope.next_attempt_at = this.now() + EXHAUSTED_AUTHORITY_RETRY_MS;
+          this.write(envelope);
+          pending += 1;
           this.logger.error(
             {
               callback_id: envelope.id,
               account_id: envelope.account_id,
               callback_kind: envelope.kind,
               attempts: envelope.attempts,
-              retained: false
+              retained: true
             },
-            "callback_outbox_dead"
+            "callback_outbox_dead_retained"
           );
-          rmSync(path, { force: true });
           continue;
         }
         const backoffMs = Math.min(

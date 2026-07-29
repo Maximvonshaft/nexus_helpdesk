@@ -25,6 +25,8 @@ class WhatsAppProductionActivationTests(unittest.TestCase):
 
     def _values(self) -> dict[str, str]:
         return {
+            "APP_ENV": "test",
+            "ACTIVATION_EVIDENCE_TEST_ALLOW_UNSIGNED": "true",
             "PRODUCTION_PROFILE": "full",
             "CONTROLLED_IMAGE": self.image,
             "GIT_SHA": self.source_sha,

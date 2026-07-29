@@ -33,6 +33,12 @@ from ..models_case_governance import (
 from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatAITurn, WebchatConversation, WebchatMessage
 from .audit_service import log_admin_audit
+from .channel_identity_privacy_lifecycle import (
+    ChannelIdentityPrivacyLifecycleError,
+    collect_channel_identity_subject_export,
+    collect_customer_identity_values,
+    redact_channel_identity_subject_records,
+)
 from .secret_crypto import SecretCryptoService
 from .tenant_authority import (
     ensure_resource_tenant,
@@ -149,13 +155,20 @@ def _fingerprint(value: str) -> str:
     return SecretCryptoService.privacy_identity().fingerprint(value)
 
 
-def _identity_candidates(customer: Customer) -> set[str]:
-    values = {
-        str(customer.email or "").strip().lower(),
-        str(customer.phone or "").strip(),
-        str(customer.external_ref or "").strip(),
-    }
-    return {value for value in values if value}
+def _identity_candidates(
+    db: Session,
+    *,
+    tenant_id: int,
+    customer: Customer,
+) -> set[str]:
+    try:
+        return collect_customer_identity_values(
+            db,
+            tenant_id=tenant_id,
+            customer_id=customer.id,
+        )
+    except ChannelIdentityPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
 
 
 def create_data_subject_request(
@@ -250,7 +263,11 @@ def qualify_data_subject_request(
     if not normalized:
         raise DataLifecycleError("dsar_identity_evidence_required", status_code=400)
     candidate = normalized.lower() if "@" in normalized else normalized
-    if candidate not in _identity_candidates(customer):
+    if candidate not in _identity_candidates(
+        db,
+        tenant_id=tenant_id,
+        customer=customer,
+    ):
         raise DataLifecycleError("dsar_identity_verification_failed", status_code=403)
     row.identity_evidence_hash = _fingerprint(candidate)
     row.status = "qualified"
@@ -442,6 +459,15 @@ def build_data_subject_export(
         "conversations",
     )
     try:
+        channel_identity_export = collect_channel_identity_subject_export(
+            db,
+            tenant_id=tenant_id,
+            customer_id=customer.id,
+            max_rows=MAX_EXPORT_ROWS_PER_COLLECTION,
+        )
+    except ChannelIdentityPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
+    try:
         whatsapp_export = collect_whatsapp_subject_export(
             db,
             ticket_ids=ticket_ids,
@@ -537,6 +563,7 @@ def build_data_subject_export(
             }
             for row in messages
         ],
+        **channel_identity_export,
         **whatsapp_export,
         "attachments": [
             {"id": attachment_id, "external_blob": True}
@@ -710,6 +737,16 @@ def _anonymize_subject_graph(
     related = 0
     message_count = 0
     customer = graph.customer
+    try:
+        related += redact_channel_identity_subject_records(
+            db,
+            tenant_id=tenant_id,
+            customer_id=customer.id,
+            anonymize=_anonymized,
+        )
+    except ChannelIdentityPrivacyLifecycleError as exc:
+        raise DataLifecycleError(str(exc)) from exc
+
     customer.name = _anonymized(
         customer.name,
         namespace="customer",

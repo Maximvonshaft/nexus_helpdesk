@@ -1,17 +1,4 @@
 {
-  "exceptions": [
-    {
-      "expires_on": "2026-10-31",
-      "owner": "security-engineering",
-      "path": "backend/app/services/speedaf/track_query.py",
-      "reason": "Speedaf's upstream wire protocol requires this exact MD5 compatibility digest; usedforsecurity=False documents that it is not used for password or security hashing.",
-      "required_markers": [
-        "Speedaf wire protocol mandates MD5",
-        "usedforsecurity=False"
-      ],
-      "rule_id": "py/weak-sensitive-data-hashing",
-      "start_line": 429
-    }
-  ],
+  "exceptions": [],
   "schema_version": "nexus_codeql_exception_policy_v1"
 }

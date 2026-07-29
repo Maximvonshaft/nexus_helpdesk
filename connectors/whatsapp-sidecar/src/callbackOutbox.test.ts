@@ -191,24 +191,36 @@ test("retains replaceable account status after retry exhaustion and later recove
   }
 });
 
-test("terminal delivery callback remains bounded and is removed", async () => {
+test("retains terminal delivery callback after exhaustion and later recovers", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-delivery-outbox-"));
   const secret = "callback-outbox-secret-" + "y".repeat(48);
   let now = Date.parse("2026-07-28T00:00:00Z");
   try {
     const outbox = new DurableCallbackOutbox(root, logger, secret, () => now);
+    const payload = { provider_message_id: "delivery-1", status: "read" };
     outbox.enqueue({
       kind: "delivery",
       accountId: "wa-main",
-      payload: { provider_message_id: "delivery-1", status: "read" }
+      payload
     });
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      await outbox.drain(async () => {
+      const result = await outbox.drain(async () => {
         throw new Error("backend unavailable");
       });
+      assert.equal(result.delivered, 0);
+      assert.equal(result.pending, 1);
       now += 5 * 60 * 1000 + 1;
     }
+    assert.equal(outbox.count(), 1, "read receipt must remain replayable after exhaustion");
+
+    now += 60 * 60 * 1000 + 1;
+    const observed: unknown[] = [];
+    const recovered = await outbox.drain(async (envelope) => {
+      observed.push(envelope.payload);
+    });
+    assert.equal(recovered.delivered, 1);
     assert.equal(outbox.count(), 0);
+    assert.deepEqual(observed, [payload]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,12 +31,18 @@ def test_customer_visible_message_has_one_physical_persistence_authority() -> No
 
 
 def test_customer_visible_message_authority_is_declared() -> None:
-    manifest = _source("config/architecture/service-authority.v1.json")
+    manifest = json.loads(
+        _source("config/architecture/service-authority.v1.json")
+    )
     inventory = _source(
         "docs/ai/codebase-rationalization-inventory.v2.yaml"
     )
     path = "backend/app/services/customer_visible_message_service.py"
-    assert '"responsibility": "customer-visible-message-persistence"' in manifest
-    assert path in manifest
+    declared = {
+        str(record.get("responsibility")): str(record.get("public_authority"))
+        for record in manifest.get("authorities", [])
+        if isinstance(record, dict)
+    }
+    assert declared["customer-visible-message-persistence"] == path
     assert "customer_visible_message_persistence" in inventory
     assert path in inventory

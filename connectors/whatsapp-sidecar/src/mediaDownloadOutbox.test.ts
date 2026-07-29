@@ -159,6 +159,71 @@ test("fills the batch for the requested account instead of truncating on other a
   }
 });
 
+test("does not count future retries toward the same-account due batch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "nexus-media-download-due-batch-"));
+  const secret = "media-download-secret-" + "q".repeat(48);
+  try {
+    const outbox = new DurableMediaDownloadOutbox(root, logger, secret);
+    const healthyCandidates = Array.from({ length: 1024 }, (_, index) => {
+      const messageId = `due-${index}`;
+      return { messageId, hash: spoolId("wa-main", messageId) };
+    }).sort((left, right) => left.hash.localeCompare(right.hash));
+    const healthy = healthyCandidates.at(-1);
+    assert.ok(healthy);
+    const blockers = Array.from({ length: 8192 }, (_, index) => {
+      const messageId = `future-${index}`;
+      return { messageId, hash: spoolId("wa-main", messageId) };
+    })
+      .filter((candidate) => candidate.hash < healthy.hash)
+      .sort((left, right) => left.hash.localeCompare(right.hash))
+      .slice(0, 20);
+    assert.equal(blockers.length, 20);
+
+    for (const blocker of blockers) {
+      outbox.enqueue({
+        accountId: "wa-main",
+        externalMessageId: blocker.messageId,
+        mediaKind: "image",
+        mediaType: "image/jpeg",
+        rawMessage: rawMessage(blocker.messageId)
+      });
+    }
+    const firstNow = Date.now() + 1_000;
+    const scheduled = await outbox.drainAccount(
+      "wa-main",
+      async () => {
+        throw new Error("temporary provider outage");
+      },
+      20,
+      firstNow
+    );
+    assert.equal(scheduled.pending, 20);
+
+    outbox.enqueue({
+      accountId: "wa-main",
+      externalMessageId: healthy.messageId,
+      mediaKind: "image",
+      mediaType: "image/jpeg",
+      rawMessage: rawMessage(healthy.messageId)
+    });
+
+    const observed: string[] = [];
+    const delivered = await outbox.drainAccount(
+      "wa-main",
+      async (envelope) => {
+        observed.push(envelope.external_message_id);
+      },
+      20,
+      firstNow + 500
+    );
+    assert.deepEqual(observed, [healthy.messageId]);
+    assert.equal(delivered.delivered, 1);
+    assert.equal(outbox.count(), 20);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("replaces terminal raw media work with a scrubbed failure receipt", async () => {
   const root = mkdtempSync(join(tmpdir(), "nexus-media-download-dead-"));
   const secret = "media-download-secret-" + "y".repeat(48);

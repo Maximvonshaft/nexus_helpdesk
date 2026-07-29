@@ -149,9 +149,9 @@ export class DurableMediaDownloadOutbox {
     let delivered = 0;
     let pending = 0;
     let dead = 0;
-    let selected = 0;
+    let selectedDue = 0;
     for (const file of files) {
-      if (selected >= batchLimit) break;
+      if (selectedDue >= batchLimit) break;
       const path = resolve(join(this.root, file));
       let envelope: MediaDownloadEnvelope;
       try {
@@ -173,11 +173,11 @@ export class DurableMediaDownloadOutbox {
         continue;
       }
       if (envelope.account_id !== safeAccountId) continue;
-      selected += 1;
       if (envelope.next_attempt_at > now) {
         pending += 1;
         continue;
       }
+      selectedDue += 1;
       try {
         await sender(envelope);
         rmSync(path, { force: true });

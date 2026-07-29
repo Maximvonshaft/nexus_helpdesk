@@ -27,6 +27,32 @@ TEXT_MIME_BY_EXTENSION = {
 OFFICE_OPEN_XML_MIME_BY_EXTENSION = {
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+KNOWN_MIME_EXTENSIONS = {
+    'application/json': {'.json'},
+    'application/pdf': {'.pdf'},
+    'application/msword': {'.doc'},
+    'application/vnd.ms-excel': {'.xls'},
+    'application/vnd.ms-powerpoint': {'.ppt'},
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {'.docx'},
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {'.xlsx'},
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': {'.pptx'},
+    'image/jpeg': {'.jpg', '.jpeg'},
+    'image/png': {'.png'},
+    'image/webp': {'.webp'},
+    'audio/aac': {'.aac'},
+    'audio/amr': {'.amr'},
+    'audio/mpeg': {'.mp3'},
+    'audio/mp4': {'.m4a', '.mp4'},
+    'audio/ogg': {'.ogg'},
+    'audio/opus': {'.opus'},
+    'video/mp4': {'.mp4'},
+    'video/3gpp': {'.3gp', '.3gpp'},
+    'text/plain': {'.txt'},
+    'text/csv': {'.csv'},
+    'text/markdown': {'.md', '.markdown'},
+    'text/html': {'.html', '.htm'},
 }
 
 
@@ -59,6 +85,15 @@ def _validate_persist_bytes_inputs(*, content: bytes, filename: str, media_type:
     normalized_media_type = (media_type or 'application/octet-stream').split(';', 1)[0].strip().lower()
     if max_bytes is not None and len(content) > max_bytes:
         raise HTTPException(status_code=413, detail='Persisted attachment exceeds configured size limit')
+    known_extensions = KNOWN_MIME_EXTENSIONS.get(normalized_media_type)
+    if known_extensions is not None and suffix not in known_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"File extension '{suffix}' does not match MIME type "
+                f"'{normalized_media_type}'"
+            ),
+        )
     if allowed_extensions is not None and suffix not in allowed_extensions and suffix not in {'.bin', '.json', '.txt'}:
         raise HTTPException(status_code=400, detail=f"File extension '{suffix}' is not allowed")
     if suffix in TEXT_UPLOAD_EXTENSIONS and allowed_mime_types is not None:

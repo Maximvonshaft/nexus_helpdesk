@@ -18,6 +18,7 @@ from .whatsapp_media_service import (
 
 _MEDIA_LOCK_SECONDS = 300
 _MEDIA_BATCH_LIMIT = 10
+_MALWARE_ERROR_CODE = "whatsapp_media_malware_detected"
 
 
 def dispatch_pending_whatsapp_media(
@@ -57,12 +58,17 @@ def dispatch_pending_whatsapp_media(
             processed.append(asset_id)
         except WhatsAppMediaError as exc:
             db.rollback()
+            malware_detected = exc.code == _MALWARE_ERROR_CODE
             _record_media_failure(
                 db,
                 asset_id=asset_id,
                 worker_id=lease_owner,
                 error_code=exc.code,
                 retryable=exc.retryable,
+                terminal_storage_status=(
+                    "quarantined" if malware_detected else None
+                ),
+                terminal_scan_status=("infected" if malware_detected else None),
             )
             processed.append(asset_id)
         except Exception as exc:
@@ -170,6 +176,8 @@ def _record_media_failure(
     worker_id: str,
     error_code: str,
     retryable: bool,
+    terminal_storage_status: str | None = None,
+    terminal_scan_status: str | None = None,
 ) -> None:
     asset = db.get(WhatsAppMediaAsset, asset_id)
     if asset is None:
@@ -183,8 +191,19 @@ def _record_media_failure(
     asset.last_error_message = error_code[:500]
     asset.locked_at = None
     asset.locked_by = None
+    if terminal_storage_status is not None:
+        if terminal_storage_status not in {"quarantined", "rejected", "deleted"}:
+            db.rollback()
+            raise ValueError("whatsapp_media_terminal_storage_status_invalid")
+        asset.storage_status = terminal_storage_status
+    if terminal_scan_status is not None:
+        if terminal_scan_status not in {"infected", "failed", "unavailable"}:
+            db.rollback()
+            raise ValueError("whatsapp_media_terminal_scan_status_invalid")
+        asset.scan_status = terminal_scan_status
     terminal = (
-        not retryable
+        terminal_storage_status is not None
+        or not retryable
         or asset.attempt_count >= asset.max_attempts
         or asset.storage_status in {"quarantined", "rejected", "deleted"}
     )
