@@ -52,6 +52,7 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
     tenant = f"queue-pg-{suffix}"
     country = "ZZ"
     channel = "webchat"
+    queue_key = "legacy"
     now = datetime.now(timezone.utc).replace(microsecond=0)
     market = Market(
         code=f"Q{suffix[:8]}",
@@ -81,6 +82,7 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
             tenant_key=tenant,
             country_code=country,
             channel_key=channel,
+            queue_key=queue_key,
             enabled=True,
             granted_by=None,
         )
@@ -141,6 +143,7 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
                 tenant_key=tenant,
                 country_code=country,
                 channel_key=channel,
+                queue_key=queue_key,
                 source_type="ticket",
                 priority="urgent",
                 sort="oldest",
