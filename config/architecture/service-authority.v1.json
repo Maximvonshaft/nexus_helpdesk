@@ -45,6 +45,12 @@
       "compatibility_shims": []
     },
     {
+      "responsibility": "scenario-handoff-routing-plan",
+      "public_authority": "backend/app/services/handoff_routing_authority.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
       "responsibility": "webchat-session-identity",
       "public_authority": "backend/app/services/webchat_session_identity.py",
       "private_implementation": null,
@@ -89,6 +95,48 @@
     {
       "responsibility": "webchat-agent-turn-orchestration",
       "public_authority": "backend/app/services/webchat_ai_orchestration_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "customer-identity-binding",
+      "public_authority": "backend/app/services/customer_identity_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "data-subject-lifecycle",
+      "public_authority": "backend/app/services/data_lifecycle_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "whatsapp-account-lifecycle",
+      "public_authority": "backend/app/services/whatsapp_connection_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "whatsapp-inbound-projection",
+      "public_authority": "backend/app/services/whatsapp_inbound.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "whatsapp-outbound-delivery",
+      "public_authority": "backend/app/services/whatsapp_delivery.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "whatsapp-media-persistence",
+      "public_authority": "backend/app/services/whatsapp_media_service.py",
+      "private_implementation": null,
+      "compatibility_shims": []
+    },
+    {
+      "responsibility": "activation-evidence-authorization",
+      "public_authority": "backend/app/services/activation_evidence_policy.py",
       "private_implementation": null,
       "compatibility_shims": []
     },
