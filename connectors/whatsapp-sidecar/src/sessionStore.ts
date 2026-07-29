@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  futimesSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -14,6 +17,7 @@ import type { SendResult } from "./types.js";
 
 const SAFE_ACCOUNT_ID = /^[a-zA-Z0-9._-]{1,160}$/;
 const OWNER_STALE_MS = 5 * 60_000;
+const OWNER_HEARTBEAT_MS = 60_000;
 
 export function assertSafeAccountId(accountId: string): string {
   const cleaned = accountId.trim();
@@ -28,7 +32,25 @@ export interface AccountOwnerLease {
 }
 
 export class SessionStore {
-  constructor(private readonly root: string) {}
+  private readonly ownerHeartbeatMs: number;
+
+  constructor(
+    private readonly root: string,
+    private readonly ownerStaleMs = OWNER_STALE_MS,
+    ownerHeartbeatMs?: number
+  ) {
+    this.ownerHeartbeatMs = ownerHeartbeatMs ?? OWNER_HEARTBEAT_MS;
+    if (
+      !Number.isFinite(this.ownerStaleMs) ||
+      this.ownerStaleMs <= 0 ||
+      !Number.isFinite(this.ownerHeartbeatMs) ||
+      this.ownerHeartbeatMs <= 0 ||
+      this.ownerHeartbeatMs >= this.ownerStaleMs
+    ) {
+      throw new Error("invalid_owner_lease_timing");
+    }
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+  }
 
   accountPath(accountId: string): string {
     const path = this.safeAccountPath(accountId);
@@ -74,39 +96,79 @@ export class SessionStore {
   acquireOwner(accountId: string): AccountOwnerLease {
     const safe = assertSafeAccountId(accountId);
     const ownerPath = resolve(join(this.root, `.owner-${safe}`));
+    const ownerFile = join(ownerPath, "owner.json");
     this.assertInsideRoot(ownerPath);
-    const acquire = () => {
+    const token = randomUUID();
+    const acquiredAt = new Date().toISOString();
+
+    const acquire = (): number => {
       mkdirSync(ownerPath, { mode: 0o700 });
-      writeFileSync(
-        join(ownerPath, "owner.json"),
-        JSON.stringify({ pid: process.pid, token: randomUUID(), acquired_at: new Date().toISOString() }),
-        { mode: 0o600 }
-      );
+      try {
+        writeFileSync(
+          ownerFile,
+          JSON.stringify({ pid: process.pid, token, acquired_at: acquiredAt }),
+          { mode: 0o600 }
+        );
+        return openSync(ownerFile, "r+");
+      } catch (error) {
+        rmSync(ownerPath, { recursive: true, force: true });
+        throw error;
+      }
     };
+
+    let descriptor: number;
     try {
-      acquire();
+      descriptor = acquire();
     } catch (error) {
       if (!existsSync(ownerPath)) throw error;
       let stale = false;
       try {
-        stale = Date.now() - statSync(ownerPath).mtimeMs > OWNER_STALE_MS;
+        const leaseMtime = existsSync(ownerFile)
+          ? statSync(ownerFile).mtimeMs
+          : statSync(ownerPath).mtimeMs;
+        stale = Date.now() - leaseMtime > this.ownerStaleMs;
       } catch {
         stale = true;
       }
       if (!stale) throw new Error("whatsapp_connection_owner_busy");
       rmSync(ownerPath, { recursive: true, force: true });
       try {
-        acquire();
+        descriptor = acquire();
       } catch (retryError) {
         throw new Error("whatsapp_connection_owner_busy", { cause: retryError });
       }
     }
+
     let released = false;
+    const heartbeat = setInterval(() => {
+      if (released) return;
+      try {
+        const now = new Date();
+        futimesSync(descriptor, now, now);
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, this.ownerHeartbeatMs);
+    heartbeat.unref?.();
+
     return {
       release: () => {
         if (released) return;
         released = true;
-        rmSync(ownerPath, { recursive: true, force: true });
+        clearInterval(heartbeat);
+        try {
+          closeSync(descriptor);
+        } catch {
+          // Descriptor may already be closed after an unrecoverable filesystem error.
+        }
+        try {
+          const current = JSON.parse(readFileSync(ownerFile, "utf8")) as { token?: unknown };
+          if (current.token === token) {
+            rmSync(ownerPath, { recursive: true, force: true });
+          }
+        } catch {
+          // A newer owner may already have replaced the lease path.
+        }
       }
     };
   }
@@ -121,7 +183,8 @@ export class SessionStore {
       if (
         typeof raw.created_at !== "number" ||
         Date.now() - raw.created_at > ttlMs ||
-        !raw.result
+        !raw.result ||
+        raw.result.retryable === true
       ) {
         rmSync(path, { force: true });
         return null;
@@ -134,6 +197,10 @@ export class SessionStore {
 
   writeSendResult(accountId: string, idempotencyKey: string, result: SendResult): void {
     const path = this.idempotencyPath(accountId, idempotencyKey);
+    if (result.retryable === true) {
+      rmSync(path, { force: true });
+      return;
+    }
     const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     writeFileSync(
       temporary,
