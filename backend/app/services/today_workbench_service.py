@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from ..enums import (
@@ -11,6 +11,7 @@ from ..enums import (
     JobStatus,
     MessageStatus,
     SourceChannel,
+    TicketPriority,
     TicketStatus,
 )
 from ..models import BackgroundJob, Ticket, TicketOutboundMessage, User
@@ -56,16 +57,19 @@ def _visible_ticket_query(db: Session, user: User):
     query = scope.tickets(db)
     if not has_global_case_visibility(user, db):
         query = query.filter(
-            or_(Ticket.team_id == user.team_id, Ticket.assignee_id == user.id)
+            or_(
+                Ticket.team_id == user.team_id,
+                Ticket.assignee_id == user.id,
+            )
         )
     return query
 
 
-def _active_tickets(query):
+def _active_tickets(query):  # noqa: ANN001
     return query.filter(Ticket.status.in_(ACTIVE_TICKET_STATUSES))
 
 
-def _count(query) -> int:
+def _count(query) -> int:  # noqa: ANN001
     return int(query.with_entities(func.count(Ticket.id)).scalar() or 0)
 
 
@@ -173,28 +177,68 @@ def _metric(
     }
 
 
+def _effective_due_expression():
+    pending_first_response_due = case(
+        (Ticket.first_response_at.is_not(None), None),
+        else_=Ticket.first_response_due_at,
+    )
+    return case(
+        (pending_first_response_due.is_(None), Ticket.resolution_due_at),
+        (Ticket.resolution_due_at.is_(None), pending_first_response_due),
+        (
+            pending_first_response_due <= Ticket.resolution_due_at,
+            pending_first_response_due,
+        ),
+        else_=Ticket.resolution_due_at,
+    )
+
+
 def _sla_due_at(ticket: Ticket) -> datetime | None:
-    due_values = [
-        ensure_utc(value)
-        for value in (ticket.first_response_due_at, ticket.resolution_due_at)
-        if value is not None
-    ]
+    due_values = []
+    if ticket.first_response_at is None and ticket.first_response_due_at is not None:
+        due_values.append(ensure_utc(ticket.first_response_due_at))
+    if ticket.resolution_due_at is not None:
+        due_values.append(ensure_utc(ticket.resolution_due_at))
     return min(due_values) if due_values else None
 
 
 def _minutes_to_due(ticket: Ticket, now: datetime) -> int | None:
     due_at = _sla_due_at(ticket)
-    if due_at is None:
+    observed_now = ensure_utc(now)
+    if due_at is None or observed_now is None:
         return None
-    return int((due_at - ensure_utc(now)).total_seconds() // 60)
+    return int((due_at - observed_now).total_seconds() // 60)
 
 
-def _sla_priority_rows(
-    db: Session,
-    user: User,
-    now: datetime,
-) -> list[dict[str, Any]]:
-    rows = (
+def _sla_priority_query(db: Session, user: User, now: datetime):
+    """Return the globally ordered bounded SLA queue for the actor scope.
+
+    The complete business ordering is expressed in SQL before ``LIMIT``. This
+    prevents representative-volume workloads from hiding a more urgent Case
+    outside an arbitrary database sample.
+    """
+
+    effective_due = _effective_due_expression()
+    overdue_rank = case(
+        (
+            or_(
+                Ticket.first_response_breached.is_(True),
+                Ticket.resolution_breached.is_(True),
+                effective_due < now,
+            ),
+            0,
+        ),
+        else_=1,
+    )
+    due_missing_rank = case((effective_due.is_(None), 1), else_=0)
+    priority_rank = case(
+        (Ticket.priority == TicketPriority.urgent, 0),
+        (Ticket.priority == TicketPriority.high, 1),
+        (Ticket.priority == TicketPriority.medium, 2),
+        (Ticket.priority == TicketPriority.low, 3),
+        else_=4,
+    )
+    return (
         _active_tickets(_visible_ticket_query(db, user))
         .options(
             joinedload(Ticket.customer),
@@ -209,16 +253,24 @@ def _sla_priority_rows(
                 Ticket.resolution_breached.is_(True),
             )
         )
-        .limit(80)
-        .all()
-    )
-    rows.sort(
-        key=lambda ticket: (
-            _minutes_to_due(ticket, now) is None,
-            _minutes_to_due(ticket, now) or 0,
-            ticket.id,
+        .order_by(
+            overdue_rank.asc(),
+            due_missing_rank.asc(),
+            effective_due.asc(),
+            priority_rank.asc(),
+            Ticket.created_at.asc(),
+            Ticket.id.asc(),
         )
+        .limit(6)
     )
+
+
+def _sla_priority_rows(
+    db: Session,
+    user: User,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    rows = _sla_priority_query(db, user, now).all()
     return [
         {
             "ticket_id": ticket.id,
@@ -250,7 +302,7 @@ def _sla_priority_rows(
             ),
             "href": "/workspace",
         }
-        for ticket in rows[:6]
+        for ticket in rows
     ]
 
 
@@ -444,7 +496,6 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
                 "按语言、市场和负载分配",
                 "workspace",
                 "/workspace",
-                enabled=True,
             )
         )
     if CAP_RUNTIME_MANAGE in capabilities:
@@ -458,7 +509,6 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
                 "进入运行与审计页面修复",
                 "runtime",
                 "/runtime",
-                enabled=True,
             )
         )
 
@@ -568,3 +618,6 @@ def build_today_workbench(db: Session, current_user: User) -> dict[str, Any]:
             ),
         ],
     }
+
+
+__all__ = ["build_today_workbench"]
