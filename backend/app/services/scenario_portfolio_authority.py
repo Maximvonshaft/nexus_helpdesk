@@ -99,13 +99,7 @@ def require_selected_scenario(scenario_key: str) -> None:
 def selected_runtime_catalog(
     catalog: BusinessScenarioCatalog,
 ) -> BusinessScenarioCatalog:
-    """Project the Catalog through the executable product portfolio.
-
-    Scenario behavior remains owned by the Business Scenario Catalog. The
-    portfolio contributes only selection and a digest-bound catalog identity so
-    every immutable Assignment proves both the behavior revision and the product
-    scope that authorized it.
-    """
+    """Return selected definitions with a Catalog+Portfolio assignment identity."""
 
     portfolio = load_scenario_portfolio()
     by_key = catalog.by_key()
@@ -138,23 +132,68 @@ def selected_runtime_catalog(
 
 
 def install_runtime_portfolio_guard(case_scenario_service_module) -> None:  # noqa: ANN001
-    """Install selection into the sole Assignment service.
+    """Converge automatic and explicit Assignment on the portfolio boundary.
 
-    The model family imports this after ``case_scenario_service`` has registered
-    lifecycle listeners. Replacing its runtime catalog loader affects automatic
-    Core inserts and explicit ORM reclassification without creating another
-    Assignment writer or modifying historical snapshot reads.
+    Full Catalog resolution remains authoritative for alias conflict detection.
+    After resolution, an unselected scenario is rejected explicitly. Assignment
+    snapshots are written with a digest/version that combines Catalog behavior
+    and the portfolio selection that authorized production execution.
     """
 
     if getattr(case_scenario_service_module, "_portfolio_guard_installed", False):
         return
-    original_loader = case_scenario_service_module.load_runtime_scenario_catalog
 
-    @wraps(original_loader)
-    def guarded_loader(*, at=None):  # noqa: ANN001
-        return selected_runtime_catalog(original_loader(at=at))
+    original_candidate = case_scenario_service_module.resolve_candidate_scenario
+    original_explicit = case_scenario_service_module.resolve_explicit_scenario
+    original_assignment_values = case_scenario_service_module._assignment_values
 
-    case_scenario_service_module.load_runtime_scenario_catalog = guarded_loader
+    @wraps(original_candidate)
+    def guarded_candidate(ticket, catalog, *, at=None):  # noqa: ANN001
+        scenario = original_candidate(ticket, catalog, at=at)
+        if scenario is None:
+            return None
+        try:
+            require_selected_scenario(scenario.scenario_key)
+        except ScenarioPortfolioError as exc:
+            raise case_scenario_service_module._http_conflict(
+                "case_scenario_outside_selected_portfolio",
+                ticket_id=getattr(ticket, "id", None),
+                scenario_key=scenario.scenario_key,
+                portfolio_version=load_scenario_portfolio().version,
+            ) from exc
+        return scenario
+
+    @wraps(original_explicit)
+    def guarded_explicit(catalog, scenario_key, *, at=None):  # noqa: ANN001
+        scenario = original_explicit(catalog, scenario_key, at=at)
+        try:
+            require_selected_scenario(scenario.scenario_key)
+        except ScenarioPortfolioError as exc:
+            raise case_scenario_service_module._http_conflict(
+                "case_scenario_outside_selected_portfolio",
+                scenario_key=scenario.scenario_key,
+                portfolio_version=load_scenario_portfolio().version,
+            ) from exc
+        return scenario
+
+    @wraps(original_assignment_values)
+    def guarded_assignment_values(
+        ticket,
+        catalog,
+        scenario,
+        **kwargs,
+    ):  # noqa: ANN001
+        require_selected_scenario(scenario.scenario_key)
+        return original_assignment_values(
+            ticket,
+            selected_runtime_catalog(catalog),
+            scenario,
+            **kwargs,
+        )
+
+    case_scenario_service_module.resolve_candidate_scenario = guarded_candidate
+    case_scenario_service_module.resolve_explicit_scenario = guarded_explicit
+    case_scenario_service_module._assignment_values = guarded_assignment_values
     case_scenario_service_module._portfolio_guard_installed = True
 
 
@@ -174,8 +213,6 @@ def _enforce_assignment_portfolio(
     _connection,
     target: CaseScenarioAssignment,
 ) -> None:  # noqa: ANN001
-    """Guard direct ORM writes in addition to the runtime catalog projection."""
-
     require_selected_scenario(target.scenario_key)
 
 
