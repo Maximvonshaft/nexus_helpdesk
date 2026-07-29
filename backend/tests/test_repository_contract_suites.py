@@ -33,6 +33,7 @@ def test_release_deployment_and_remediation_contract_suites_are_canonical_backen
             "backend/tests/test_webchat_round_b.py::test_public_webchat_init_send_poll_and_background_ai_reply",
             "backend/tests/test_webchat_terminal_fallback_delivery.py::test_exhausted_webchat_ai_job_commits_one_safe_ticketless_terminal_outcome",
             "backend/tests/test_whatsapp_embedded_signup_retryability.py",
+            "backend/tests/test_whatsapp_embedded_signup_concurrency.py::test_losing_completion_request_does_not_overwrite_active_claim",
             "backend/tests/test_ticketless_whatsapp_delivery.py",
             "backend/tests/test_whatsapp_ticketless_media_processing_scope.py",
             "backend/tests/test_whatsapp_ticketless_media_projection.py",
