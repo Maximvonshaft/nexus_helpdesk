@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
-import hmac
 import json
 from datetime import datetime, timezone
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.services.activation_evidence_policy import (
     activation_evidence_snapshot,
@@ -17,7 +20,12 @@ SOURCE_SHA = "a" * 40
 IMAGE_DIGEST = "sha256:" + "b" * 64
 IMAGE = f"ghcr.io/maximvonshaft/nexus_helpdesk@{IMAGE_DIGEST}"
 ENVIRONMENT_ID = "production-eu-1"
-SIGNING_KEY = "activation-evidence-test-signing-key-0123456789abcdef"
+KEY_ID = "activation-test-2026-01"
+PRIVATE_KEY = Ed25519PrivateKey.generate()
+PUBLIC_KEY_PEM = PRIVATE_KEY.public_key().public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+).decode("utf-8")
 
 
 def _identity() -> dict[str, object]:
@@ -97,6 +105,9 @@ def _signed_environment(
     *,
     profile: str | None = None,
     runtime_overrides: dict[str, str] | None = None,
+    private_key: Ed25519PrivateKey = PRIVATE_KEY,
+    public_key_pem: str = PUBLIC_KEY_PEM,
+    key_id: str = KEY_ID,
     **overrides: str,
 ) -> dict[str, str]:
     resolved_profile = profile or (
@@ -110,7 +121,7 @@ def _signed_environment(
         "ACTIVATION_EVIDENCE_SOURCE_SHA": SOURCE_SHA,
         "ACTIVATION_EVIDENCE_IMAGE_DIGEST": IMAGE_DIGEST,
         "ACTIVATION_EVIDENCE_ENVIRONMENT_ID": ENVIRONMENT_ID,
-        "ACTIVATION_EVIDENCE_SIGNING_KEY": SIGNING_KEY,
+        "ACTIVATION_EVIDENCE_VERIFICATION_KEY": public_key_pem,
         **references,
     }
     if runtime_overrides:
@@ -143,20 +154,19 @@ def _signed_environment(
         for key, url in references.items()
     }
     unsigned = {
-        "schema": "nexus.activation-evidence.v2",
+        "schema": "nexus.activation-evidence.v3",
         "candidate": candidate,
         "evidence": evidence,
     }
-    signature = hmac.new(
-        SIGNING_KEY.encode("utf-8"),
-        _canonical(unsigned),
-        hashlib.sha256,
-    ).hexdigest()
+    signature = base64.urlsafe_b64encode(
+        private_key.sign(_canonical(unsigned))
+    ).decode("ascii").rstrip("=")
     result["ACTIVATION_EVIDENCE_MANIFEST_JSON"] = json.dumps(
         {
             **unsigned,
             "signature": {
-                "algorithm": "hmac-sha256",
+                "algorithm": "ed25519",
+                "key_id": key_id,
                 "value": signature,
             },
         }
@@ -171,7 +181,6 @@ def test_controlled_profile_never_requires_external_activation_evidence() -> Non
         identity=_identity(),
         environment={},
     )
-
     assert result["status"] == "ready"
     assert result["required"] == []
     assert result["candidate"] is None
@@ -179,7 +188,7 @@ def test_controlled_profile_never_requires_external_activation_evidence() -> Non
     assert result["manifest_sha256"] is None
 
 
-def test_provider_canary_rejects_url_without_signed_manifest() -> None:
+def test_provider_canary_rejects_url_without_verified_manifest() -> None:
     result = activation_evidence_snapshot(
         profile="provider_canary",
         configuration=_configuration(),
@@ -193,7 +202,6 @@ def test_provider_canary_rejects_url_without_signed_manifest() -> None:
             ),
         },
     )
-
     assert result["status"] == "not_ready"
     assert "activation_evidence_configuration_digest_invalid" in result["reason_codes"]
     assert "activation_evidence_environment_id_invalid" in result["reason_codes"]
@@ -217,8 +225,8 @@ def test_provider_canary_requires_verified_candidate_bound_manifest() -> None:
         identity=_identity(),
         environment=environment,
     )
-
     assert result["status"] == "ready"
+    assert result["schema"] == "nexus.activation-evidence.v3"
     assert result["required"] == ["provider_canary_e2e_evidence_url"]
     assert result["candidate"] == {
         "source_sha": SOURCE_SHA,
@@ -232,7 +240,7 @@ def test_provider_canary_requires_verified_candidate_bound_manifest() -> None:
     assert result["receipts"]["provider_canary_e2e_evidence_url"]["result"] == "pass"
 
 
-def test_signed_manifest_rejects_tampering_and_wrong_candidate() -> None:
+def test_manifest_rejects_tampering_wrong_public_key_and_signing_material() -> None:
     references = {
         "PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production"
     }
@@ -240,7 +248,6 @@ def test_signed_manifest_rejects_tampering_and_wrong_candidate() -> None:
     manifest = json.loads(environment["ACTIVATION_EVIDENCE_MANIFEST_JSON"])
     manifest["evidence"]["production_e2e_evidence_url"]["result"] = "failed"
     environment["ACTIVATION_EVIDENCE_MANIFEST_JSON"] = json.dumps(manifest)
-
     tampered = activation_evidence_snapshot(
         profile="full",
         configuration=_configuration(),
@@ -249,44 +256,60 @@ def test_signed_manifest_rejects_tampering_and_wrong_candidate() -> None:
     )
     assert "activation_evidence_signature_mismatch" in tampered["reason_codes"]
 
-    wrong_candidate = _signed_environment(
-        references,
-        ACTIVATION_EVIDENCE_SOURCE_SHA="d" * 40,
-    )
-    result = activation_evidence_snapshot(
+    other_private = Ed25519PrivateKey.generate()
+    other_public = other_private.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    wrong_key = _signed_environment(references, public_key_pem=other_public)
+    wrong_key_result = activation_evidence_snapshot(
         profile="full",
         configuration=_configuration(),
         identity=_identity(),
-        environment=wrong_candidate,
+        environment=wrong_key,
     )
-    assert "activation_evidence_source_sha_mismatch" in result["reason_codes"]
+    assert "activation_evidence_signature_mismatch" in wrong_key_result["reason_codes"]
+
+    forbidden = _signed_environment(references)
+    forbidden["ACTIVATION_EVIDENCE_SIGNING_KEY"] = "runtime-cannot-sign"
+    forbidden_result = activation_evidence_snapshot(
+        profile="full",
+        configuration=_configuration(),
+        identity=_identity(),
+        environment=forbidden,
+    )
+    assert "activation_evidence_signing_material_forbidden" in forbidden_result["reason_codes"]
 
 
-def test_runtime_configuration_drift_invalidates_signed_evidence() -> None:
+def test_signed_manifest_rejects_wrong_candidate_and_configuration_drift() -> None:
     references = {
         "PROVIDER_CANARY_E2E_EVIDENCE_URL": (
             "https://evidence.example/provider-canary"
         )
     }
+    wrong_candidate = _signed_environment(
+        {"PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production"},
+        ACTIVATION_EVIDENCE_SOURCE_SHA="d" * 40,
+    )
+    wrong_result = activation_evidence_snapshot(
+        profile="full",
+        configuration=_configuration(),
+        identity=_identity(),
+        environment=wrong_candidate,
+    )
+    assert "activation_evidence_source_sha_mismatch" in wrong_result["reason_codes"]
+
     environment = _signed_environment(references, profile="provider_canary")
     environment["PROVIDER_RUNTIME_CANARY_PERCENT"] = "6"
-
-    result = activation_evidence_snapshot(
+    drift = activation_evidence_snapshot(
         profile="provider_canary",
         configuration=_configuration(),
         identity=_identity(),
         environment=environment,
     )
-
-    assert result["status"] == "not_ready"
-    assert (
-        "activation_evidence_configuration_digest_mismatch"
-        in result["reason_codes"]
-    )
-    assert (
-        "activation_evidence_manifest_configuration_digest_mismatch"
-        in result["reason_codes"]
-    )
+    assert drift["status"] == "not_ready"
+    assert "activation_evidence_configuration_digest_mismatch" in drift["reason_codes"]
+    assert "activation_evidence_manifest_configuration_digest_mismatch" in drift["reason_codes"]
 
 
 def test_livekit_model_drift_invalidates_signed_evidence() -> None:
@@ -315,14 +338,12 @@ def test_livekit_model_drift_invalidates_signed_evidence() -> None:
         },
     )
     environment["NEXUS_VOICE_TTS_MODEL"] = "tts-v2"
-
     result = activation_evidence_snapshot(
         profile="full",
         configuration=_configuration(voice_enabled=True),
         identity=_identity(),
         environment=environment,
     )
-
     assert "activation_evidence_configuration_digest_mismatch" in result["reason_codes"]
 
 
@@ -363,7 +384,6 @@ def test_finalizer_is_the_only_authorization_boundary() -> None:
         "outbound_enablement_authorized": False,
         "operations_enablement_authorized": False,
     }
-
     blocked = finalize_release_readiness(collected, environment={})
     assert blocked["status"] == "not_ready"
     assert blocked["production_authorized"] is False
