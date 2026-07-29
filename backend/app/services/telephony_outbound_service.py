@@ -30,6 +30,7 @@ from .identity_tenant_scope import actor_tenant_id
 from .livekit_voice_provider import LiveKitVoiceProvider
 from .mock_voice_provider import MockVoiceProvider
 from .voice_command_service import enqueue_voice_command, serialize_voice_command
+from .voice_compliance_service import apply_session_compliance_state
 from .voice_provider import VoiceProvider, VoiceProviderError
 from .voice_room_control_service import (
     dispatch_room_controller,
@@ -364,19 +365,8 @@ def create_outbound_call(
             direction="outbound",
             locale=locale,
             called_number=normalized_phone,
-            recording_consent=(
-                configuration.recording_policy == "always"
-            ),
-            recording_status=(
-                "requested"
-                if configuration.recording_policy == "always"
-                else "disabled"
-            ),
-            transcript_status=(
-                "active"
-                if configuration.transcription_policy == "always"
-                else "disabled"
-            ),
+            recording_status="disabled",
+            transcript_status="disabled",
             summary_status="pending",
             ai_agent_status=(
                 "controller_dispatching"
@@ -394,6 +384,12 @@ def create_outbound_call(
         )
         db.add(session)
         db.flush()
+        apply_session_compliance_state(
+            db,
+            session=session,
+            recording_policy=configuration.recording_policy,
+            transcription_policy=configuration.transcription_policy,
+        )
         dispatch_room_controller(
             db,
             session=session,
