@@ -57,7 +57,7 @@ def test_csp_remains_closed_when_signup_is_disabled(monkeypatch) -> None:
     assert embedded_signup_csp_enabled("/channels") is False
 
 
-def test_meta_sdk_timeout_clears_cached_promise_for_operator_retry() -> None:
+def test_meta_sdk_timeout_resets_loader_for_operator_retry() -> None:
     source = (
         Path(__file__).resolve().parents[2]
         / "webapp"
@@ -65,11 +65,18 @@ def test_meta_sdk_timeout_clears_cached_promise_for_operator_retry() -> None:
         / "lib"
         / "metaEmbeddedSignup.ts"
     ).read_text(encoding="utf-8")
+
+    reset_block = source.split(
+        "const resetMetaSdkLoad = (code: string) => {",
+        1,
+    )[1].split("\n    }", 1)[0]
+    assert "window.clearTimeout(timeout)" in reset_block
+    assert "document.getElementById(SDK_ID)?.remove()" in reset_block
+    assert "sdkPromise = null" in reset_block
+    assert "reject(new Error(code))" in reset_block
+
     timeout_block = source.split(
         "const timeout = window.setTimeout(() => {",
         1,
     )[1].split("}, 15_000)", 1)[0]
-    assert "sdkPromise = null" in timeout_block
-    assert timeout_block.index("sdkPromise = null") < timeout_block.index(
-        "meta_sdk_load_timeout"
-    )
+    assert "resetMetaSdkLoad('meta_sdk_load_timeout')" in timeout_block
