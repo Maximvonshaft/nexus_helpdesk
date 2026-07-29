@@ -37,7 +37,8 @@ def test_release_authorization_is_derived_by_one_public_key_evidence_policy() ->
     assert "Ed25519PublicKey" in policy
     assert "public_key.verify" in policy
     assert '"nexus.activation-evidence.v3"' in policy
-    assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE" not in policy
+    assert "activation_evidence_private_key_material_forbidden" in policy
+    assert "ACTIVATION_EVIDENCE_PRIVATE_KEY_FILE" in policy
 
 
 def test_storage_and_activation_use_one_readiness_authority() -> None:
