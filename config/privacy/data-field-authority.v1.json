@@ -1,7 +1,7 @@
 {
   "schema": "nexus.data-field-authority.v1",
-  "version": "1.1.0",
-  "effective_at": "2026-07-27T00:00:00Z",
+  "version": "1.2.0",
+  "effective_at": "2026-07-29T00:00:00Z",
   "ticket_as_case": {
     "source_of_truth": [
       "id",
@@ -72,6 +72,20 @@
       "pii": ["name", "email", "email_normalized", "phone", "phone_normalized", "external_ref"],
       "delete_action": "anonymize"
     },
+    "customer_identity_bindings": {
+      "model": "app.models_channel_intake.CustomerIdentityBinding",
+      "subject_key": "customer_id",
+      "tenant_key": "tenant_id",
+      "pii": ["normalized_value"],
+      "delete_action": "anonymize_in_place_preserving_uniqueness"
+    },
+    "email_intake_quarantine": {
+      "model": "app.models_channel_intake.EmailIntakeQuarantine",
+      "subject_identity_path": "from_address -> customer_identity_bindings(email)",
+      "tenant_key": "tenant_id",
+      "pii": ["provider_message_id", "mailbox_uid", "from_address", "from_name", "to_address", "cc", "subject", "body", "mailbox_message_id", "mailbox_references", "in_reply_to"],
+      "delete_action": "redact_and_reject"
+    },
     "tickets": {
       "model": "app.models.Ticket",
       "subject_key": "customer_id",
@@ -116,19 +130,19 @@
     },
     "webchat_messages": {
       "model": "app.webchat_models.WebchatMessage",
-      "subject_path": "conversation.ticket.customer_id",
+      "subject_paths": ["conversation.ticket.customer_id", "conversation.conversation_control.customer_id"],
       "pii": ["body", "body_text", "payload_json", "metadata_json", "author_label", "safety_reasons_json"],
       "delete_action": "redact"
     },
     "whatsapp_inbound_messages": {
       "model": "app.models.WhatsAppInboundMessage",
-      "subject_path": "ticket.customer_id",
+      "subject_paths": ["ticket.customer_id", "conversation.conversation_control.customer_id"],
       "pii": ["chat_jid", "sender_jid", "sender_phone", "body_text", "raw_payload_json"],
       "delete_action": "redact"
     },
     "whatsapp_media_assets": {
       "model": "app.models_whatsapp.WhatsAppMediaAsset",
-      "subject_paths": ["inbound_message.ticket.customer_id", "outbound_message.ticket.customer_id"],
+      "subject_paths": ["inbound_message.ticket.customer_id", "inbound_message.conversation.conversation_control.customer_id", "outbound_message.ticket.customer_id"],
       "pii": ["provider_media_id", "file_name", "storage_key", "last_error_message"],
       "blob_authority": "ticket_attachments",
       "delete_action": "redact_metadata_after_blob_receipt"
