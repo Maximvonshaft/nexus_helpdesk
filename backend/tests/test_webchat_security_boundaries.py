@@ -32,6 +32,31 @@ def test_webchat_token_transport_is_header_or_same_origin_only() -> None:
     assert "visitor_token: state.visitorToken" not in widget
 
 
+def test_external_webcall_uses_nexus_canonical_api_origin() -> None:
+    widget = _read("backend/app/static/webchat/widget.js")
+
+    assert "apiBase + '/webcall/'" in widget
+    assert "var canonicalCallUrl = new URL(callUrl, scriptUrl.origin).toString();" in widget
+    assert "window.open(canonicalCallUrl" in widget
+    assert "window.location.assign(canonicalCallUrl)" in widget
+    assert "window.open('/webcall/'" not in widget
+    assert "window.location.assign('/webcall/'" not in widget
+
+
+def test_public_widget_exposes_receive_degradation_and_recovery() -> None:
+    widget = _read("backend/app/static/webchat/widget.js")
+
+    assert 'statusEl.setAttribute("role", "status")' not in widget
+    assert "statusEl.setAttribute('role', 'status')" in widget
+    assert "statusEl.setAttribute('aria-live', 'polite')" in widget
+    assert "function markReceiveDegraded" in widget
+    assert "function markReceiveHealthy" in widget
+    assert "Connection interrupted. Retrying" in widget
+    assert "Realtime connection lost. Using fallback and reconnecting" in widget
+    assert "Message was not sent. Check your connection and retry" in widget
+    assert "state.receiveFailureCount" in widget
+
+
 def test_public_webchat_payload_does_not_expose_internal_identifiers() -> None:
     projection = _read("backend/app/services/webchat_public_payload.py")
     for forbidden in (
