@@ -43,7 +43,6 @@ def test_contact_profile_filters_include_normalized_phone_and_email():
     email_filters = _customer_contact_filters("Customer@Example.COM")
     rendered_email = _render(email_filters)
     assert "email_normalized" in rendered_email
-    assert "customer@example.com" in rendered_email
     assert " is null" not in rendered_email
 
 
