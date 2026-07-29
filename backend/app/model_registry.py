@@ -54,6 +54,7 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_privacy_runtime",
     "app.models_job_scope",
     "app.models_channel_intake",
+    "app.models_integration_scope",
     "app.models_whatsapp",
     "app.models_whatsapp_signup_checkpoint",
     "app.models_whatsapp_outbound",
@@ -85,6 +86,7 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_privacy_runtime": "data_processing_restrictions",
     "app.models_job_scope": "background_job_scopes",
     "app.models_channel_intake": "customer_identity_bindings",
+    "app.models_integration_scope": "integration_client_scopes",
     "app.models_whatsapp": "whatsapp_connections",
     "app.models_whatsapp_signup_checkpoint": (
         "whatsapp_embedded_signup_exchange_checkpoints"
@@ -152,7 +154,7 @@ def validate_model_registry() -> tuple[str, ...]:
 
 
 def register_all_models() -> tuple[str, ...]:
-    """Import every required model family and every explicitly enabled plugin."""
+    """Import every required model family and canonicalize shared metadata."""
 
     modules = validate_model_registry()
     imported: list[str] = []
@@ -166,4 +168,10 @@ def register_all_models() -> tuple[str, ...]:
                 f"missing module or dependency {missing_name!r}"
             ) from exc
         imported.append(module_name)
+
+    from .services.tenant_reference_uniqueness import (
+        install_tenant_reference_uniqueness_metadata,
+    )
+
+    install_tenant_reference_uniqueness_metadata()
     return tuple(imported)
