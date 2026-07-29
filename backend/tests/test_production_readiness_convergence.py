@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -10,7 +9,7 @@ def test_controlled_templates_use_current_audit_migration_head() -> None:
         "deploy/.env.controlled.local-postgres.example",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "EXPECTED_MIGRATION_HEAD=20260729_wa5_signup_checkpoint" in text
+        assert "EXPECTED_MIGRATION_HEAD=20260729_r15_integration_scope" in text
 
 
 def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
@@ -24,7 +23,7 @@ def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
     assert "without granting activation authority" in collector
     assert '"production_authorized": False' in collector
     assert "PRODUCTION_E2E_EVIDENCE_URL" not in collector
-    assert "production_authorized = status ==" in policy
+    assert 'production_authorized = status_value == "ready"' in policy
     assert "PRODUCTION_E2E_EVIDENCE_URL" in policy
     assert "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL" in policy
     assert "ACTIVATION_EVIDENCE_SOURCE_SHA" in policy
@@ -32,9 +31,12 @@ def test_release_authorization_is_derived_by_one_evidence_policy() -> None:
     assert "ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST" in policy
     assert "ACTIVATION_EVIDENCE_ENVIRONMENT_ID" in policy
     assert "ACTIVATION_EVIDENCE_MANIFEST_FILE" in policy
+    assert "ACTIVATION_EVIDENCE_VERIFICATION_KEY_FILE" in policy
+    assert "Ed25519PublicKey" in policy
+    assert "public_key.verify" in policy
+    assert '"nexus.activation-evidence.v3"' in policy
     assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE" in policy
-    assert "hmac.compare_digest" in policy
-    assert '"nexus.activation-evidence.v2"' in policy
+    assert "activation_evidence_signing_material_forbidden" in policy
 
 
 def test_storage_and_activation_use_one_readiness_authority() -> None:
@@ -78,7 +80,12 @@ def test_production_activation_overlay_is_profile_specific_candidate_bound_and_e
     assert "ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST=sha256:" in env
     assert "ACTIVATION_EVIDENCE_ENVIRONMENT_ID=" in env
     assert "ACTIVATION_EVIDENCE_MANIFEST_FILE=/run/nexus/activation/manifest.json" in env
-    assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE=/run/nexus/activation/signing_key" in env
+    assert (
+        "ACTIVATION_EVIDENCE_VERIFICATION_KEY_FILE="
+        "/run/nexus/activation/verification_public_key.pem"
+    ) in env
+    assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE=" not in env
+    assert "--private-key-file" in env
     assert "PRODUCTION_E2E_EVIDENCE_URL=https://" in env
     assert "production-activation-preflight:" in compose
     assert "network_mode: none" in compose
@@ -95,7 +102,8 @@ def test_production_activation_overlay_is_profile_specific_candidate_bound_and_e
     assert "ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST:" in compose
     assert "ACTIVATION_EVIDENCE_ENVIRONMENT_ID:" in compose
     assert "ACTIVATION_EVIDENCE_MANIFEST_FILE:" in compose
-    assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE:" in compose
+    assert "ACTIVATION_EVIDENCE_VERIFICATION_KEY_FILE:" in compose
+    assert "ACTIVATION_EVIDENCE_SIGNING_KEY_FILE:" not in compose
     assert ":/run/nexus/activation:ro" in compose
     assert "PRODUCTION_E2E_EVIDENCE_URL: ${PRODUCTION_E2E_EVIDENCE_URL:-}" in compose
     assert "PROVIDER_CANARY_E2E_EVIDENCE_URL: ${PROVIDER_CANARY_E2E_EVIDENCE_URL:-}" in compose
