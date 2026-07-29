@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 _SCHEMA = "nexus.activation-evidence.v3"
 _ALGORITHM = "ed25519"
+_KEY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{2,119}$")
 _MAX_BYTES = 1024 * 1024
 _MAX_PRIVATE_KEY_BYTES = 64 * 1024
 
@@ -91,15 +93,20 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
     return key
 
 
+def _validated_key_id(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not _KEY_ID.fullmatch(normalized):
+        raise SignActivationEvidenceError("key_id_invalid")
+    return normalized
+
+
 def sign_manifest(
     unsigned: dict[str, Any],
     *,
     private_key: Ed25519PrivateKey,
     key_id: str,
 ) -> dict[str, Any]:
-    normalized_key_id = str(key_id or "").strip()
-    if not normalized_key_id or len(normalized_key_id) > 120:
-        raise SignActivationEvidenceError("key_id_invalid")
+    normalized_key_id = _validated_key_id(key_id)
     signature = private_key.sign(_canonical_json(unsigned))
     return {
         **unsigned,
@@ -141,10 +148,11 @@ def run(
 ) -> dict[str, Any]:
     unsigned = _load_unsigned(input_path)
     private_key = _load_private_key(private_key_path)
+    normalized_key_id = _validated_key_id(key_id)
     signed = sign_manifest(
         unsigned,
         private_key=private_key,
-        key_id=key_id,
+        key_id=normalized_key_id,
     )
     encoded = _canonical_json(signed) + b"\n"
     _atomic_write(output_path, encoded, mode=0o644)
@@ -155,7 +163,7 @@ def run(
         "manifest_sha256": "sha256:"
         + hashlib.sha256(_canonical_json(signed)).hexdigest(),
         "signature_algorithm": _ALGORITHM,
-        "key_id": key_id,
+        "key_id": normalized_key_id,
         "private_key_exported": False,
         "contains_secrets": False,
     }
