@@ -55,6 +55,7 @@ REQUIRED_MODEL_MODULES: tuple[str, ...] = (
     "app.models_job_scope",
     "app.models_channel_intake",
     "app.models_whatsapp",
+    "app.models_whatsapp_signup_checkpoint",
     "app.models_whatsapp_outbound",
 )
 
@@ -85,6 +86,9 @@ REPRESENTATIVE_TABLES: dict[str, str] = {
     "app.models_job_scope": "background_job_scopes",
     "app.models_channel_intake": "customer_identity_bindings",
     "app.models_whatsapp": "whatsapp_connections",
+    "app.models_whatsapp_signup_checkpoint": (
+        "whatsapp_embedded_signup_exchange_checkpoints"
+    ),
     "app.models_whatsapp_outbound": "whatsapp_outbound_parts",
 }
 
