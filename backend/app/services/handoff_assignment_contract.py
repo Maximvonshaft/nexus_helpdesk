@@ -5,13 +5,28 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from ..models import User
+from ..models import Ticket, User
+from ..models_agent_routing import ConversationControl
+from ..utils.time import utc_now
+from ..voice_models import WebchatVoiceSession
+from ..webchat_models import (
+    WebchatConversation,
+    WebchatHandoffDecision,
+    WebchatHandoffRequest,
+)
 from .permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
+    ensure_ticket_visible,
     resolve_capabilities,
 )
 
 _INSTALLED = False
+
+
+def _lock(query, db: Session):
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        return query.with_for_update()
+    return query
 
 
 def _eligible_voice_agents(
@@ -20,11 +35,7 @@ def _eligible_voice_agents(
     request_row,
     control,
 ):
-    """Return Voice candidates not attempted in the current generation.
-
-    Historical offers belong to their prior generation and do not permanently
-    remove an otherwise eligible agent from bounded recovery.
-    """
+    """Return Voice candidates not attempted in the current generation."""
 
     from . import agent_routing_service as routing
 
@@ -62,14 +73,12 @@ def _ticketless_declined(
     request_id: int,
     user_id: int,
 ) -> bool:
-    from . import agent_routing_service as routing
-
     return bool(
-        db.query(routing._core.WebchatHandoffDecision.id)
+        db.query(WebchatHandoffDecision.id)
         .filter(
-            routing._core.WebchatHandoffDecision.request_id == request_id,
-            routing._core.WebchatHandoffDecision.actor_id == user_id,
-            routing._core.WebchatHandoffDecision.decision == "declined",
+            WebchatHandoffDecision.request_id == request_id,
+            WebchatHandoffDecision.actor_id == user_id,
+            WebchatHandoffDecision.decision == "declined",
         )
         .first()
     )
@@ -80,16 +89,16 @@ def _eligible_text_request_for_agent(
     *,
     user: User,
 ):
-    """Use generation attempts for Ticket-backed routing, legacy decision for Ticketless."""
+    """Use generation attempts for Ticket-backed routing and legacy Ticketless decline."""
 
     from . import agent_routing_service as routing
 
     voice_exists = (
-        db.query(routing._core.WebchatVoiceSession.id)
+        db.query(WebchatVoiceSession.id)
         .filter(
-            routing._core.WebchatVoiceSession.conversation_id
-            == routing._core.WebchatHandoffRequest.conversation_id,
-            routing._core.WebchatVoiceSession.status.in_(
+            WebchatVoiceSession.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatVoiceSession.status.in_(
                 sorted(routing._core.VOICE_OPEN_SESSION_STATUSES)
             ),
         )
@@ -97,33 +106,31 @@ def _eligible_text_request_for_agent(
     )
     query = (
         db.query(
-            routing._core.WebchatHandoffRequest,
-            routing._core.WebchatConversation,
-            routing._core.ConversationControl,
+            WebchatHandoffRequest,
+            WebchatConversation,
+            ConversationControl,
         )
         .join(
-            routing._core.WebchatConversation,
-            routing._core.WebchatConversation.id
-            == routing._core.WebchatHandoffRequest.conversation_id,
+            WebchatConversation,
+            WebchatConversation.id == WebchatHandoffRequest.conversation_id,
         )
         .join(
-            routing._core.ConversationControl,
-            routing._core.ConversationControl.conversation_id
-            == routing._core.WebchatConversation.id,
+            ConversationControl,
+            ConversationControl.conversation_id == WebchatConversation.id,
         )
         .filter(
-            routing._core.WebchatHandoffRequest.status == "requested",
-            routing._core.WebchatConversation.status == "open",
-            routing._core.ConversationControl.country_code.is_not(None),
+            WebchatHandoffRequest.status == "requested",
+            WebchatConversation.status == "open",
+            ConversationControl.country_code.is_not(None),
             ~voice_exists,
         )
         .order_by(
-            routing._core.WebchatHandoffRequest.requested_at.asc(),
-            routing._core.WebchatHandoffRequest.id.asc(),
+            WebchatHandoffRequest.requested_at.asc(),
+            WebchatHandoffRequest.id.asc(),
         )
         .limit(100)
     )
-    for request_row, conversation, control in routing._core._lock(query, db).all():
+    for request_row, conversation, control in _lock(query, db).all():
         plan = routing.ensure_handoff_routing_plan(db, request_row=request_row)
         if plan is None and _ticketless_declined(
             db,
@@ -149,10 +156,10 @@ def _accept_ticket_handoff(
     current_user: User,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """Accept a Ticket-backed Handoff through the canonical routing authority."""
+    """Accept a Ticket-backed Handoff through the public routing authority."""
 
     from . import agent_routing_service as routing
-    from . import webchat_handoff_service_core as core
+    from . import webchat_handoff_service as handoff
 
     capabilities = resolve_capabilities(current_user, db)
     if CAP_WEBCHAT_HANDOFF_ACCEPT not in capabilities:
@@ -161,9 +168,25 @@ def _accept_ticket_handoff(
             detail="webchat_handoff_accept_requires_capability",
         )
 
-    row = core._request_by_id(db, request_id, lock=True)
-    conversation, ticket = core._load_conversation_ticket(db, row)
-    core._ensure_visible(current_user, ticket, db)
+    row = _lock(
+        db.query(WebchatHandoffRequest).filter(
+            WebchatHandoffRequest.id == int(request_id)
+        ),
+        db,
+    ).first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="webchat handoff request not found",
+        )
+    conversation = db.get(WebchatConversation, row.conversation_id)
+    ticket = db.get(Ticket, row.ticket_id) if row.ticket_id is not None else None
+    if conversation is None or ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="webchat handoff source is missing",
+        )
+    ensure_ticket_visible(current_user, ticket, db)
 
     if row.status == "accepted":
         if row.assigned_agent_id != current_user.id:
@@ -171,7 +194,7 @@ def _accept_ticket_handoff(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="webchat handoff already accepted by another agent",
             )
-        return core.serialize_handoff_request(
+        return handoff.serialize_handoff_request(
             db,
             row,
             current_user=current_user,
@@ -191,17 +214,18 @@ def _accept_ticket_handoff(
         user=current_user,
         mode="manual_accept",
     )
-    row = db.get(type(row), int(request_id))
+    row = db.get(WebchatHandoffRequest, int(request_id))
     if row is None:
         raise RuntimeError("handoff_disappeared_after_assignment")
-    row.decision_note = core._clip(note, core.MAX_NOTE_CHARS)
-    row.updated_at = routing._core.utc_now()
+    cleaned_note = " ".join(str(note or "").strip().split())[:1000]
+    row.decision_note = cleaned_note or None
+    row.updated_at = utc_now()
     db.flush()
-    conversation = db.get(type(conversation), conversation.id)
-    ticket = db.get(type(ticket), ticket.id)
+    conversation = db.get(WebchatConversation, conversation.id)
+    ticket = db.get(Ticket, ticket.id)
     if conversation is None or ticket is None:
         raise RuntimeError("handoff_context_disappeared_after_assignment")
-    return core.serialize_handoff_request(
+    return handoff.serialize_handoff_request(
         db,
         row,
         current_user=current_user,
@@ -217,11 +241,14 @@ def install_handoff_assignment_contract() -> None:
     if _INSTALLED:
         return
     from . import agent_routing_service as routing
-    from . import webchat_handoff_service_core as core
+    from . import webchat_handoff_service as handoff
 
     routing._eligible_voice_agents = _eligible_voice_agents
     routing._eligible_text_request_for_agent = _eligible_text_request_for_agent
-    core.accept_handoff_request = _accept_ticket_handoff
+    # The public facade is the sole authorized owner of the private transition
+    # implementation; update it through that facade rather than importing the
+    # private module from a second authority.
+    handoff._core.accept_handoff_request = _accept_ticket_handoff
     _INSTALLED = True
 
 
