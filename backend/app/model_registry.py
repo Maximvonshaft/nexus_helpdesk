@@ -152,7 +152,7 @@ def validate_model_registry() -> tuple[str, ...]:
 
 
 def register_all_models() -> tuple[str, ...]:
-    """Import every required model family and install metadata invariants."""
+    """Import every required model family and install metadata/runtime invariants."""
 
     modules = validate_model_registry()
     imported: list[str] = []
@@ -169,10 +169,14 @@ def register_all_models() -> tuple[str, ...]:
 
     try:
         from app.tenant_reference_schema import install_tenant_reference_schema
+        from app.voice_runtime_state_authority import (
+            install_voice_runtime_state_events,
+        )
 
         install_tenant_reference_schema()
+        install_voice_runtime_state_events()
     except Exception as exc:
         raise ModelRegistryError(
-            f"failed to install Tenant reference schema: {type(exc).__name__}"
+            f"failed to install model runtime invariants: {type(exc).__name__}"
         ) from exc
     return tuple(imported)
