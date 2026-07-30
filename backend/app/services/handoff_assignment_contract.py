@@ -14,6 +14,9 @@ from ..webchat_models import (
     WebchatHandoffDecision,
     WebchatHandoffRequest,
 )
+from .handoff_assignment_state_contract import (
+    install_handoff_assignment_state_contract,
+)
 from .permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_ticket_visible,
@@ -254,6 +257,7 @@ def install_handoff_assignment_contract() -> None:
     from . import agent_routing_service as routing
     from . import webchat_handoff_service as handoff
 
+    install_handoff_assignment_state_contract()
     routing._eligible_voice_agents = _eligible_voice_agents
     routing._eligible_text_request_for_agent = _eligible_text_request_for_agent
     handoff._core.accept_handoff_request = _accept_ticket_handoff
