@@ -202,9 +202,17 @@ class RecoveryReviewRegressionTests(unittest.TestCase):
         self.assertIn("dependency.deptype IN ('i', 'a')", rollback)
         self.assertIn("rollback_target_not_empty", rollback)
 
-    def test_image_rollback_restarts_runtime_warmer(self) -> None:
+    def test_image_rollback_restarts_current_runtime_services(self) -> None:
         rollback = (ROOT / "scripts" / "deploy" / "rollback_release.sh").read_text(encoding="utf-8")
-        self.assertIn("runtime-warmer", rollback)
+        for service in (
+            "app-controlled",
+            "worker-outbound-controlled",
+            "worker-background-controlled",
+            "worker-webchat-ai-controlled",
+        ):
+            self.assertIn(service, rollback)
+        self.assertNotIn("runtime-warmer", rollback)
+        self.assertNotIn("worker-handoff-snapshot-controlled", rollback)
         self.assertIn("--no-build --pull always", rollback)
 
     def test_recovery_timeline_rejects_restore_before_backup_completion(self) -> None:

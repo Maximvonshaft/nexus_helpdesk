@@ -366,12 +366,23 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 )
                 _write_executable(fake_bin / "curl", curl_script)
                 status = root / "rollback-result.json"
+                controlled_env = root / "controlled.env"
+                controlled_env.write_text(
+                    "CONTROLLED_IMAGE=nexus:test-old\n"
+                    "IMAGE_TAG=nexus:test-old\n"
+                    "GIT_SHA=0123456789abcdef0123456789abcdef01234567\n"
+                    "FRONTEND_BUILD_SHA=0123456789abcdef0123456789abcdef01234567\n"
+                    "EXPECTED_MIGRATION_HEAD=20260713_0059\n",
+                    encoding="utf-8",
+                )
                 completed = _run(
                     rollback,
                     env=_env(
                         fake_bin,
                         ROLLBACK_CONFIRM="I_UNDERSTAND",
                         OLD_IMAGE_TAG="nexus:test-old",
+                        ROLLBACK_CONTROLLED_ENV_FILE=str(controlled_env),
+                        ROLLBACK_DATABASE_TOPOLOGY="external",
                         ROLLBACK_HEALTH_URL="http://127.0.0.1:18082",
                         ROLLBACK_STATUS_FILE=str(status),
                     ),
@@ -384,27 +395,25 @@ class OperatorRecoveryContractTests(unittest.TestCase):
                 self.assertNotIn("HEALTH_VERIFIED", payload["states"])
 
     def test_workflow_proves_role_extension_separation_and_quarantine(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "osr-recovery-qualification.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "controlled-candidate-convergence.yml").read_text(encoding="utf-8")
+        gate = (ROOT / "scripts" / "release" / "run_controlled_recovery_gate.sh").read_text(encoding="utf-8")
         runner = (ROOT / "scripts" / "qualification" / "recovery" / "run_recovery_qualification.sh").read_text(encoding="utf-8")
         self.assertIn("POSTGRES_USER: nexus_recovery_admin", workflow)
-        self.assertIn("CREATE ROLE nexus_recovery_source", workflow)
-        self.assertIn("CREATE ROLE nexus_recovery_restore", workflow)
+        self.assertIn("run_controlled_recovery_gate.sh", workflow)
+        self.assertIn("CREATE ROLE nexus_recovery_source", gate)
+        self.assertIn("CREATE ROLE nexus_recovery_restore", gate)
         self.assertNotIn("PGUSER:", workflow)
         self.assertIn("CREATE DATABASE nexus_source WITH OWNER nexus_recovery_source TEMPLATE template0", runner)
         self.assertIn("CREATE DATABASE nexus_restore WITH OWNER nexus_recovery_restore TEMPLATE template0", runner)
         self.assertIn("CREATE EXTENSION vector", runner)
         self.assertIn("recovery_vector_preinstall_proof_failed", runner)
         self.assertIn("recovery_role_identity_collision", runner)
-        clean = workflow.index("- name: Upload clean bounded qualification evidence")
-        failure = workflow.index("- name: Upload sanitized recovery failure status")
-        enforce = workflow.index("- name: Enforce recovery qualification")
-        self.assertLess(clean, failure)
-        self.assertLess(failure, enforce)
-        self.assertIn("steps.artifact_scan.outputs.exit_code == '0'", workflow[clean:failure])
-        self.assertIn("artifacts/recovery/*.json", workflow[clean:failure])
-        self.assertIn("steps.artifact_scan.outputs.exit_code != '0'", workflow[failure:enforce])
-        self.assertIn("qualification-status.json", workflow[failure:enforce])
-        self.assertNotIn("artifacts/recovery/*.json", workflow[failure:enforce])
+        cleanup = gate.index("rm -rf artifacts/recovery/backups")
+        scan = gate.index("python scripts/security/scan_artifacts.py")
+        self.assertLess(cleanup, scan)
+        self.assertIn("artifacts/recovery/*.json", gate[scan:])
+        self.assertIn("path: artifacts/recovery/*.json", workflow)
+        self.assertNotIn("path: artifacts/recovery/backups", workflow)
 
 
 class RecoveryEvidenceTests(unittest.TestCase):
