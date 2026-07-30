@@ -47,6 +47,7 @@ from .webchat_ai_turn_service import (
     mark_ai_turn_processing,
     suppress_stale_reply_if_needed,
 )
+from .webchat_handoff_service import request_webchat_handoff
 
 settings = get_settings()
 LOGGER = logging.getLogger("nexusdesk")
@@ -520,7 +521,10 @@ def process_webchat_ai_reply_job(
             "reply_source": "suppressed",
         }
 
-    if (settings.webchat_ai_auto_reply_mode or "runtime").lower() == "off":
+    auto_reply_disabled = (
+        settings.webchat_ai_auto_reply_mode or "runtime"
+    ).lower() == "off"
+    if auto_reply_disabled:
         _record_disabled(
             db,
             conversation=conversation,
@@ -551,4 +555,23 @@ def process_webchat_ai_reply_job(
         turn=turn,
         result=normalized_result,
     )
+    if auto_reply_disabled:
+        handoff = request_webchat_handoff(
+            db,
+            conversation=conversation,
+            ticket=ticket,
+            source="ai_auto",
+            trigger_type="auto_reply_disabled",
+            reason_code="webchat_ai_auto_reply_off",
+            reason_text="Automatic WebChat replies are disabled.",
+            recommended_agent_action="Reply to the customer manually.",
+            trigger_message_id=visitor_message.id,
+            ai_turn_id=turn.id if turn else None,
+            requested_by_actor_type="system",
+            note=(
+                "WebChat AI auto reply is disabled; routed to the human queue."
+            ),
+        )
+        normalized_result["handoff_triggered"] = True
+        normalized_result["handoff_request_id"] = handoff.id
     return normalized_result

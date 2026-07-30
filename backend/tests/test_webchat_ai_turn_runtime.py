@@ -535,6 +535,65 @@ def test_stale_turn_is_superseded_and_does_not_write_agent_reply(monkeypatch):
         db.close()
 
 
+def test_disabled_auto_reply_routes_ticketless_conversation_to_human_queue(
+    monkeypatch,
+):
+    _ensure_schema_and_user()
+    _clear_webchat_ai_jobs()
+    from app.services import webchat_ai_orchestration_service
+
+    monkeypatch.setattr(
+        webchat_ai_orchestration_service.settings,
+        "webchat_ai_auto_reply_mode",
+        "off",
+    )
+    client = TestClient(app)
+    conversation_id, visitor_token = _init_conversation(client)
+    sent = _send(
+        client,
+        conversation_id,
+        visitor_token,
+        "I need a human response",
+        "turn-runtime-ai-off-handoff-1",
+    )
+
+    _dispatch_turn(sent["ai_turn_id"], worker_id="pytest-ai-off-handoff")
+
+    db = SessionLocal()
+    try:
+        conversation = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == conversation_id)
+            .one()
+        )
+        handoff = (
+            db.query(WebchatHandoffRequest)
+            .filter(WebchatHandoffRequest.conversation_id == conversation.id)
+            .one()
+        )
+        turn = db.get(WebchatAITurn, sent["ai_turn_id"])
+        assert conversation.ticket_id is None
+        assert conversation.current_handoff_request_id == handoff.id
+        assert conversation.handoff_status == "requested"
+        assert conversation.ai_suspended is True
+        assert handoff.status == "requested"
+        assert handoff.trigger_message_id == sent["message"]["id"]
+        assert handoff.trigger_type == "auto_reply_disabled"
+        assert handoff.reason_code == "webchat_ai_auto_reply_off"
+        assert turn is not None and turn.status == "completed"
+        assert (
+            db.query(WebchatMessage)
+            .filter(
+                WebchatMessage.conversation_id == conversation.id,
+                WebchatMessage.direction == "agent",
+            )
+            .count()
+            == 0
+        )
+    finally:
+        db.close()
+
+
 def test_ai_turn_completes_and_clears_pending_after_dispatch(monkeypatch):
     _ensure_schema_and_user()
     _clear_webchat_ai_jobs()

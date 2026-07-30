@@ -319,7 +319,7 @@ export interface SupportConversationResolution {
   conversation: {
     session_key: string
     conversation_id: string
-    ticket_id: number
+    ticket_id: number | null
     handoff_request_id?: number | null
     channel: SupportConversationChannel
     source?: string | null
@@ -330,7 +330,7 @@ export interface SupportConversationResolution {
     ticket_no: string
     status: string
     priority: string
-  }
+  } | null
   source: 'nexus_support_conversation_resolver'
 }
 export interface SupportConversationMetrics {
