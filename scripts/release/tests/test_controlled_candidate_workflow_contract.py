@@ -106,6 +106,23 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn('test "${pulled_image_id}" = "${expected_local_id}"', HELPERS)
         self.assertIn("whatsapp-sidecar-registry-publish-receipt.json", combined)
 
+    def test_distroless_runtime_smoke_does_not_require_a_shell(self) -> None:
+        self.assertNotIn(
+            'docker run --rm --entrypoint sh "$CANDIDATE_IMAGE"',
+            WORKFLOW,
+        )
+        self.assertEqual(
+            WORKFLOW.count(
+                'docker run --rm --entrypoint /usr/local/bin/python "$CANDIDATE_IMAGE"'
+            ),
+            2,
+        )
+        self.assertIn(
+            "-c 'import app.main, psycopg, cryptography, argon2'",
+            WORKFLOW,
+        )
+        self.assertIn("-m gunicorn --check-config app.main:app", WORKFLOW)
+
     def test_failure_evidence_is_bounded_and_blocks_publication(self) -> None:
         for marker in (
             "id: controlled_rc",
