@@ -87,9 +87,13 @@ retired_paths_must_be_absent:
   - deploy/docker-compose.operations-dispatch.yml
   - deploy/systemd/nexusdesk-worker.service
   - deploy/systemd/nexusdesk-api.service
+  - deploy/nginx/nexusdesk.edge.env.example
+  - deploy/nginx/nexusdesk.edge.conf.template
   - scripts/deploy/prepare_production_release_env.sh
   - scripts/smoke/worker_daemon_readiness_probe.py
+  - scripts/smoke/smoke_e2e_runtime_health.sh
   - scripts/probe_webcall_livekit_custom_domain.sh
+  - scripts/upsert_nigeria_direct_answer_kb.sh
   - docs/deployment/release-metadata.md
   - docs/deploy-server-local-postgres.md
   - docs/deploy-server-external-postgres.md
