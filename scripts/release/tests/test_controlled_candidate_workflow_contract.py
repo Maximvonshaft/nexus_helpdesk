@@ -78,6 +78,20 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         self.assertIn("attestations: write", WORKFLOW)
         self.assertIn("id-token: write", WORKFLOW)
 
+    def test_job_level_environment_uses_github_context_directly(self) -> None:
+        illegal = re.findall(
+            r"(?m)^ {6}[A-Z][A-Z0-9_]*:.*\$\{\{\s*env\.",
+            WORKFLOW,
+        )
+        self.assertEqual(illegal, [])
+        for marker in (
+            "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}",
+            "RC_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}",
+            "CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-${{ github.event.workflow_run.head_sha }}",
+            "SIDECAR_IMAGE: nexusdesk/whatsapp-sidecar:controlled-${{ github.event.workflow_run.head_sha }}",
+        ):
+            self.assertIn(marker, WORKFLOW)
+
     def test_application_rc_is_reused_and_sidecar_is_built_exactly_once(self) -> None:
         combined = WORKFLOW + "\n" + HELPERS
         self.assertIn("scripts/release/run_rc_test_candidate.sh", combined)

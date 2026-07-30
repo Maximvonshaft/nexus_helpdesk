@@ -65,8 +65,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 105
     env:
-      SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
-      RC_SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      RC_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
       RC_ENV_FILE: deploy/.env.rc-test
       RC_EVIDENCE_DIR: artifacts/rc-test
       RC_FAILURE_DIR: artifacts/controlled-rc-failure
@@ -75,8 +75,8 @@ jobs:
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
       COMPOSE_PROJECT_NAME: nexus_controlled_${{ github.run_id }}
-      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-${{ env.CANDIDATE_SHA }}
-      SIDECAR_IMAGE: nexusdesk/whatsapp-sidecar:controlled-${{ env.CANDIDATE_SHA }}
+      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-${{ github.event.workflow_run.head_sha }}
+      SIDECAR_IMAGE: nexusdesk/whatsapp-sidecar:controlled-${{ github.event.workflow_run.head_sha }}
       RELEASE_IMAGE_DIR: artifacts/release-image
       SIDECAR_RELEASE_DIR: artifacts/sidecar-image
       CONTROLLED_DIR: artifacts/controlled
@@ -356,7 +356,7 @@ jobs:
       RTO_TARGET_SECONDS: "120"
       RPO_TARGET_SECONDS: "60"
       EVIDENCE_ROOT: artifacts/recovery
-      SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -398,7 +398,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
       FINAL_DIR: artifacts/final-controlled-candidate
       CANONICAL_ACCEPTANCE_RUN_ID: ${{ github.event.workflow_run.id }}
       CANONICAL_ACCEPTANCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
