@@ -206,6 +206,10 @@ for image in "${RC_POSTGRES_IMAGE}" "${RC_NGINX_IMAGE}"; do
   docker pull "${image}" >/dev/null
   docker image inspect "${image}" --format '{{json .RepoDigests}}'
 done > "${EVIDENCE_DIR}/base-image-digests.jsonl"
+docker image inspect "${RC_POSTGRES_IMAGE}" >/dev/null
+docker image inspect "${RC_NGINX_IMAGE}" >/dev/null
+printf '%s\n' "${RC_POSTGRES_IMAGE}" > "${EVIDENCE_DIR}/postgres-image-digest.txt"
+printf '%s\n' "${RC_NGINX_IMAGE}" > "${EVIDENCE_DIR}/nginx-image-digest.txt"
 
 set_stage build
 DOCKER_BUILDKIT=1 docker build --pull=false \

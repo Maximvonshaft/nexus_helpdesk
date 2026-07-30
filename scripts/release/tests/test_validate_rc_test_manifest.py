@@ -218,6 +218,16 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
                 self.compose + self.env_example + self.runner,
             )
 
+    def test_runner_records_both_pulled_base_image_identities(self):
+        self.assertIn(
+            'printf \'%s\\n\' "${RC_POSTGRES_IMAGE}" > "${EVIDENCE_DIR}/postgres-image-digest.txt"',
+            self.runner,
+        )
+        self.assertIn(
+            'printf \'%s\\n\' "${RC_NGINX_IMAGE}" > "${EVIDENCE_DIR}/nginx-image-digest.txt"',
+            self.runner,
+        )
+
     def test_rc_operator_seed_is_password_idempotent(self):
         self.assertIn("from app.auth_service import hash_password, verify_password", self.runner)
         self.assertIn('password = os.environ["RC_TEST_ADMIN_PASSWORD"]', self.runner)
