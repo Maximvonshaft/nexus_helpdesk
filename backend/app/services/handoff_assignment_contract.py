@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..enums import ConversationState, TicketStatus
 from ..models import Ticket, User
 from ..models_agent_routing import ConversationControl
 from ..utils.time import utc_now
@@ -14,9 +16,6 @@ from ..webchat_models import (
     WebchatHandoffDecision,
     WebchatHandoffRequest,
 )
-from .handoff_assignment_state_contract import (
-    install_handoff_assignment_state_contract,
-)
 from .permissions import (
     CAP_WEBCHAT_HANDOFF_ACCEPT,
     ensure_ticket_visible,
@@ -24,12 +23,66 @@ from .permissions import (
 )
 
 _INSTALLED = False
+_CANONICAL_ASSIGN_HANDOFF: Any | None = None
 
 
 def _lock(query, db: Session):
     if db.bind and db.bind.dialect.name.startswith("postgresql"):
         return query.with_for_update()
     return query
+
+
+def _project_ticket_case_ownership(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    user: User,
+) -> None:
+    """Project an accepted Ticket-backed Handoff onto Ticket-as-Case."""
+
+    if conversation.ticket_id is None:
+        return
+    ticket = db.get(Ticket, int(conversation.ticket_id))
+    if ticket is None:
+        raise RuntimeError("assigned_handoff_ticket_missing")
+    ticket.assignee_id = int(user.id)
+    ticket.status = TicketStatus.in_progress
+    ticket.conversation_state = ConversationState.human_owned
+    ticket.required_action = None
+    ticket.updated_at = utc_now()
+
+
+def _assign_handoff_to_agent(
+    db: Session,
+    *,
+    request_row: WebchatHandoffRequest,
+    conversation: WebchatConversation,
+    user: User,
+    mode: str = "automatic",
+    voice_offer=None,
+) -> dict[str, Any]:
+    """Run the canonical assignment and complete its Ticket state atomically."""
+
+    if _CANONICAL_ASSIGN_HANDOFF is None:
+        raise RuntimeError("handoff_assignment_authority_not_installed")
+    result = _CANONICAL_ASSIGN_HANDOFF(
+        db,
+        request_row=request_row,
+        conversation=conversation,
+        user=user,
+        mode=mode,
+        voice_offer=voice_offer,
+    )
+    assigned_conversation = db.get(WebchatConversation, int(conversation.id))
+    if assigned_conversation is None:
+        raise RuntimeError("assigned_handoff_conversation_missing")
+    _project_ticket_case_ownership(
+        db,
+        conversation=assigned_conversation,
+        user=user,
+    )
+    db.flush()
+    return result
 
 
 def _eligible_voice_agents(
@@ -251,13 +304,19 @@ def _accept_ticket_handoff(
 def install_handoff_assignment_contract() -> None:
     """Install one recovery and acceptance authority for Text and Voice Handoffs."""
 
-    global _INSTALLED
+    global _INSTALLED, _CANONICAL_ASSIGN_HANDOFF
     if _INSTALLED:
         return
     from . import agent_routing_service as routing
     from . import webchat_handoff_service as handoff
 
-    install_handoff_assignment_state_contract()
+    _CANONICAL_ASSIGN_HANDOFF = routing.assign_handoff_to_agent
+    routing.assign_handoff_to_agent = _assign_handoff_to_agent
+    operator_api = sys.modules.get(
+        f"{__package__.split('.', 1)[0]}.api.operator_agent_state"
+    )
+    if operator_api is not None:
+        operator_api.assign_handoff_to_agent = _assign_handoff_to_agent
     routing._eligible_voice_agents = _eligible_voice_agents
     routing._eligible_text_request_for_agent = _eligible_text_request_for_agent
     handoff._core.accept_handoff_request = _accept_ticket_handoff
