@@ -122,6 +122,47 @@ class AssertSarifCleanTests(unittest.TestCase):
             self.assertEqual(payload["status"], "fail")
             self.assertEqual(payload["unused_exception_count"], 1)
 
+    def test_differential_scan_may_allow_valid_unused_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_file = root / "backend/app/protocol.py"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("protocol marker\n", encoding="utf-8")
+            policy = root / "exceptions.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "nexus_codeql_exception_policy_v1",
+                        "exceptions": [
+                            {
+                                "rule_id": "py/weak-sensitive-data-hashing",
+                                "path": "backend/app/protocol.py",
+                                "start_line": 1,
+                                "owner": "security-engineering",
+                                "expires_on": (date.today() + timedelta(days=30)).isoformat(),
+                                "reason": "Upstream wire protocol requires this exact compatibility digest.",
+                                "required_markers": ["protocol marker"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            sarif = root / "python.sarif"
+            sarif.write_text(
+                json.dumps({"version": "2.1.0", "runs": [{"results": []}]}),
+                encoding="utf-8",
+            )
+            payload = evaluate(
+                [sarif],
+                exceptions=_load_exceptions(policy, root=root),
+                allow_unused_exceptions=True,
+            )
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["result_count"], 0)
+            self.assertEqual(payload["unused_exception_count"], 1)
+            self.assertTrue(payload["unused_exceptions_allowed"])
+
     def test_expired_exception_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

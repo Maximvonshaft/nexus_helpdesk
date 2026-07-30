@@ -586,7 +586,19 @@ jobs:
           output: /tmp/nexus-security/codeql
           category: canonical-security
       - name: Enforce zero CodeQL findings
-        run: python scripts/security/assert_sarif_clean.py --input /tmp/nexus-security/codeql --exceptions config/security/codeql-exceptions.json --output /tmp/nexus-security/codeql-summary.json
+        env:
+          CODEQL_ALLOW_UNUSED_EXCEPTIONS: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+        run: |
+          set -Eeuo pipefail
+          exception_args=()
+          if [[ "$CODEQL_ALLOW_UNUSED_EXCEPTIONS" = "true" ]]; then
+            exception_args+=(--allow-unused-exceptions)
+          fi
+          python scripts/security/assert_sarif_clean.py \
+            --input /tmp/nexus-security/codeql \
+            --exceptions config/security/codeql-exceptions.json \
+            --output /tmp/nexus-security/codeql-summary.json \
+            "${exception_args[@]}"
       - name: Upload security evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
