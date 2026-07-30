@@ -2,52 +2,52 @@
 
 ## Scope
 
-This runbook covers the first controlled production pilot for `channel=email` outbound sending through SMTP. It assumes the backend registry, SMTP runtime, admin UI, and operator Email subject UX are deployed.
+This runbook covers the first bounded production pilot for `channel=email` through SMTP. It does not authorize a broad rollout. Attachments, templates, bounce processing, delivery receipts and alternate Provider APIs remain outside this pilot unless separately qualified.
 
-Do not treat this as a broad rollout. Attachments, templates, bounce processing, delivery receipts, and provider API alternatives are outside this pilot.
+The pilot is a capability activation on top of an already healthy controlled deployment. It is not a second deployment procedure.
 
 ## Preconditions
 
-- PR-1, PR-2, and PR-3 are deployed from `main`.
-- `frontend_dist/index.html` was built from the same release SHA as the backend.
-- PostgreSQL migrations are at head.
-- Worker process is deployed and healthy.
-- `OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE` points to a mounted Fernet key file with restricted permissions, for example:
+- The exact source and immutable image passed Canonical Acceptance and controlled server preflight.
+- `frontend_dist` and backend runtime report the same source identity.
+- PostgreSQL is at the expected Alembic head.
+- `app-controlled` and `worker-outbound-controlled` are healthy.
+- A verified rollback image/environment and current database/upload backups exist.
+- `OUTBOUND_EMAIL_ENCRYPTION_KEY_FILE` points to a mounted Fernet key file with restricted permissions.
+- The signed activation evidence contains a passing outbound Email entry bound to the exact source, image, configuration digest and environment ID.
+
+Example key installation on the target server:
 
 ```bash
-install -m 0600 -o nexus -g nexus /secure/source/outbound_email_encryption_key /run/nexus/outbound_email_encryption_key
+install -m 0600 -o nexus -g nexus \
+  /secure/source/outbound_email_encryption_key \
+  /run/nexus/outbound_email_encryption_key
 ```
 
-## Safe Env Defaults
+## Fail-closed defaults
 
-Keep these defaults until the test-send gate passes:
+Keep these values until the controlled test-send passes:
 
-```bash
+```text
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false
 OUTBOUND_EMAIL_TEST_SEND_MAX_AGE_HOURS=24
 ```
 
-The current outbound runtime still uses the shared external dispatch kill switch. For the pilot window, only enable real dispatch after the SMTP account has passed a fresh test-send:
+Do not enable SMTP dispatch merely because an account can be saved in the UI.
 
-```bash
-ENABLE_OUTBOUND_DISPATCH=true
-OUTBOUND_PROVIDER=email
-OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true
-```
+## Configure the SMTP account
 
-## Configure SMTP Account
-
-1. Log in as an admin with `channel_account.manage`.
+1. Log in with `channel_account.manage`.
 2. Open `/outbound-email`.
-3. Create a global fallback SMTP account first. Add market-specific accounts only after global fallback is tested.
-4. Use `STARTTLS` or `SSL/TLS` unless the mail platform explicitly requires `plain` inside a controlled private network.
-5. Save the account. Confirm the UI shows only password configured/masked state, not plaintext.
+3. Create and test the global fallback account before adding market-specific accounts.
+4. Use `STARTTLS` or `SSL/TLS` unless the mail platform explicitly requires a private-network exception.
+5. Confirm the UI exposes only configured/masked password state, never plaintext.
 
-## Browser Smoke
+## Browser smoke
 
-Use the manual staging smoke workflow with `check_outbound_email_admin=true`, or run locally against a deployed URL:
+Run against the deployed controlled URL:
 
 ```bash
 cd webapp
@@ -58,11 +58,11 @@ NEXUS_ADMIN_PASSWORD='...' \
 npx playwright test e2e/outbound-email-admin-real.spec.ts
 ```
 
-Expected result: admin login succeeds, `/outbound-email` renders `SMTP 账号配置`, and the test-send controls are visible.
+Expected result: authentication succeeds, the SMTP configuration page renders, and the test-send controls are available to the authorized operator.
 
-## Test-Send Gate
+## Real test-send gate
 
-The gate sends a real email to the controlled test recipient. Do not use a customer address.
+Use a controlled non-customer recipient:
 
 ```bash
 NEXUS_BASE_URL=https://support.example.com \
@@ -73,36 +73,74 @@ OUTBOUND_EMAIL_TEST_SEND_CONFIRM=I_UNDERSTAND_THIS_SENDS_REAL_EMAIL \
 python scripts/smoke/outbound_email_test_send_gate.py
 ```
 
-Optional: set `OUTBOUND_EMAIL_ACCOUNT_ID=123` to force a specific account. Otherwise the gate uses the first active account with a configured password.
+Optional: set `OUTBOUND_EMAIL_ACCOUNT_ID` to force a reviewed account.
 
 Pass criteria:
 
-- API returns `ok=true`.
-- `provider_status` is successful.
-- The account persists `health_status=ok`, `last_test_status=success`, and a fresh `last_test_at`.
-- The production readiness endpoint reports at least one successful Outbound Email test-send account when `OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true`.
+- API result is successful;
+- Provider status is successful;
+- account health persists `ok` with a fresh successful test timestamp;
+- the controlled recipient receives the message;
+- no customer address was used;
+- production readiness recognizes a fresh successful SMTP account.
 
-## Pilot Send
+## Activate the bounded pilot
 
-After the gate passes, enable the pilot flags and restart `app` plus `worker`. Limit the pilot to a known market/team and one test customer ticket first.
+After the test-send and signed evidence are complete, set the reviewed production activation values:
 
-Operator checklist before clicking send:
+```text
+ENABLE_OUTBOUND_DISPATCH=true
+OUTBOUND_PROVIDER=email
+OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=true
+OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL=<signed-manifest-matching-https-url>
+```
 
-- Channel is `Email`.
-- Recipient is the expected customer email.
-- Subject is explicit and reviewed.
-- Body contains no unsupported claims, credentials, or internal details.
-- External SMTP confirmation checkbox is checked intentionally.
-
-## Rollback
-
-To stop real Email dispatch immediately:
+Re-render and validate the complete controlled plus activation environment:
 
 ```bash
+python scripts/deploy/validate_production_activation.py \
+  --env-file deploy/.env.controlled \
+  --env-file deploy/.env.production-activation \
+  --output /tmp/nexus-email-pilot-activation.json
+
+docker compose \
+  --env-file deploy/.env.controlled \
+  --env-file deploy/.env.production-activation \
+  -f deploy/docker-compose.controlled.yml \
+  -f deploy/docker-compose.production-activation.yml \
+  up -d --no-build --pull always \
+  production-activation-preflight \
+  app-controlled \
+  worker-outbound-controlled
+```
+
+The activation preflight must complete successfully before the application and outbound Worker are accepted as active.
+
+## Pilot send
+
+Begin with one reviewed test Case in one approved market/team. Before sending, verify:
+
+- channel is Email;
+- recipient and subject are explicitly reviewed;
+- body contains no unsupported claims, credentials or internal details;
+- external SMTP confirmation is intentional;
+- the outbox row progresses from pending/processing to Provider-confirmed sent or an explicit failure/review state;
+- the controlled recipient actually receives the message.
+
+API acceptance alone is not delivery evidence.
+
+## Immediate stop and rollback
+
+To stop new external Email dispatch, restore the master and capability kill switches in the reviewed activation environment:
+
+```text
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false
-docker compose -f deploy/docker-compose.server.yml up -d app worker
 ```
 
-Then disable the SMTP account in `/outbound-email`. Existing pending Email outbox rows will not be dispatched while the kill switch is off.
+Validate and reapply the controlled posture to `app-controlled` and `worker-outbound-controlled`. Existing pending rows must remain undispatched while the master switch is off.
+
+If the image itself must be rolled back, use `scripts/deploy/rollback_release.sh` with the previous immutable digest and its matching controlled environment. Do not rebuild an old checkout on the production server.
+
+Finally disable the affected SMTP account and preserve Provider responses, outbox state and customer-impact evidence for review.
