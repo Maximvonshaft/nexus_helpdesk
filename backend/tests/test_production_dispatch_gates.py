@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.enums import MessageStatus, SourceChannel
-from app.services import message_dispatch
+from app.services import message_dispatch, outbound_dispatch_transaction_boundary
 
 
 class ProviderCalled(RuntimeError):
@@ -67,6 +67,63 @@ def test_ensure_external_dispatch_allowed_fails_for_unknown_provider(monkeypatch
     monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "unknown")
     with pytest.raises(RuntimeError, match="Unsupported OUTBOUND_PROVIDER"):
         message_dispatch.ensure_external_dispatch_allowed()
+
+
+def test_outbound_worker_blocks_email_provider_without_pilot(monkeypatch):
+    monkeypatch.setattr(message_dispatch.settings, "enable_outbound_dispatch", True)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
+    monkeypatch.setattr(
+        message_dispatch.settings,
+        "outbound_email_production_pilot_enabled",
+        False,
+    )
+
+    blocked = outbound_dispatch_transaction_boundary._runtime_dispatch_block_reason(
+        message_dispatch
+    )
+
+    assert blocked == (
+        "outbound_email_pilot_disabled",
+        "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false blocks SMTP dispatch",
+    )
+
+
+def test_email_message_requires_email_provider_and_pilot(monkeypatch):
+    row = _message(SourceChannel.email)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "native")
+    monkeypatch.setattr(
+        message_dispatch.settings,
+        "outbound_email_production_pilot_enabled",
+        True,
+    )
+    assert outbound_dispatch_transaction_boundary._message_dispatch_block_reason(
+        message_dispatch,
+        row,
+    )[0] == "outbound_email_provider_not_authorized"
+
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "smtp")
+    monkeypatch.setattr(
+        message_dispatch.settings,
+        "outbound_email_production_pilot_enabled",
+        False,
+    )
+    assert outbound_dispatch_transaction_boundary._message_dispatch_block_reason(
+        message_dispatch,
+        row,
+    )[0] == "outbound_email_pilot_disabled"
+
+    monkeypatch.setattr(
+        message_dispatch.settings,
+        "outbound_email_production_pilot_enabled",
+        True,
+    )
+    assert (
+        outbound_dispatch_transaction_boundary._message_dispatch_block_reason(
+            message_dispatch,
+            row,
+        )
+        is None
+    )
 
 
 def test_process_external_message_provider_disabled_never_calls_provider(monkeypatch):
