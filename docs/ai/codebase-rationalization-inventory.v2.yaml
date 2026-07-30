@@ -81,7 +81,21 @@ retired_paths_must_be_absent:
   - backend/app/services/auto_reply_service.py
   - backend/scripts/run_api_manual.py
   - backend/scripts/run_worker_manual.py
+  - backend/scripts/run_operations_dispatch_worker.py
+  - deploy/docker-compose.server.yml
+  - deploy/docker-compose.candidate.yml
+  - deploy/docker-compose.operations-dispatch.yml
   - deploy/systemd/nexusdesk-worker.service
+  - deploy/systemd/nexusdesk-api.service
+  - scripts/deploy/prepare_production_release_env.sh
+  - scripts/smoke/worker_daemon_readiness_probe.py
+  - scripts/probe_webcall_livekit_custom_domain.sh
+  - docs/deployment/release-metadata.md
+  - docs/deploy-server-local-postgres.md
+  - docs/deploy-server-external-postgres.md
+  - docs/ops/release-governance.md
+  - docs/worker-healthcheck-policy.md
+  - docs/deployment/runtime-topology.md
   - docs/legacy-frontend-deprecation.md
   - docs/backend-refactor-roadmap.md
   - docs/backend-module-split-plan.md
