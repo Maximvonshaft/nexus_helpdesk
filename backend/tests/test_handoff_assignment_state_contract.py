@@ -167,3 +167,34 @@ def test_accepted_handoff_fails_closed_without_conversation_ownership(db_session
         match="accepted_handoff_conversation_projection_invalid",
     ):
         db_session.flush()
+
+
+def test_ticketless_accepted_handoff_stays_outside_ticket_projection(db_session):
+    agent, _ticket, _conversation, _request = _fixture(db_session)
+    conversation = WebchatConversation(
+        public_id="ticketless-handoff-state-conversation",
+        visitor_token_hash="ticketless-hash",
+        tenant_key="handoff-state",
+        channel_key="voice",
+        status="open",
+    )
+    db_session.add(conversation)
+    db_session.flush()
+    request = WebchatHandoffRequest(
+        conversation_id=conversation.id,
+        source="voice_call",
+        trigger_type="voice_inbound",
+        status="accepted",
+        reason_code="inbound_voice_call",
+        accepted_by_user_id=agent.id,
+        assigned_agent_id=agent.id,
+        requested_at=utc_now(),
+        accepted_at=utc_now(),
+    )
+    db_session.add(request)
+
+    db_session.flush()
+
+    assert request.status == "accepted"
+    assert request.ticket_id is None
+    assert conversation.ticket_id is None
