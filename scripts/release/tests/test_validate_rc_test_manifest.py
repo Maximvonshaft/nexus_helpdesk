@@ -362,8 +362,10 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             session_key,
             operator_path,
             body_selector,
+            "page.locator('#login-password').fill(adminPassword)",
         ):
             self.assertIn(marker, self.browser)
+        self.assertNotIn("getByLabel('密码')", self.browser)
         self.assertLess(
             self.browser.index(identity_extract),
             self.browser.index(session_key),
