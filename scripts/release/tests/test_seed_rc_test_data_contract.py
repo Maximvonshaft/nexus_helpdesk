@@ -82,6 +82,11 @@ class RcSeedContractTest(unittest.TestCase):
         self.assertIn("WebchatPublicOriginBinding.normalized_origin == origin", self.source)
         self.assertIn("if binding is None:", self.source)
         self.assertIn("if grant is None:", self.source)
+        self.assertIn("from app.auth_service import hash_password, verify_password", self.source)
+        self.assertIn(
+            "if not verify_password(password, user.password_hash):",
+            self.source,
+        )
         self.assertIn("db.commit()", self.source)
         self.assertIn("db.refresh(binding)", self.source)
         self.assertIn("db.rollback()", self.source)

@@ -16,7 +16,7 @@ _backend_text = str(_BACKEND_ROOT)
 if _backend_text not in sys.path:
     sys.path.insert(0, _backend_text)
 
-from app.auth_service import hash_password
+from app.auth_service import hash_password, verify_password
 from app.db import SessionLocal
 from app.enums import UserRole
 from app.model_registry import register_all_models
@@ -114,7 +114,8 @@ def seed_rc_authorities() -> WebchatPublicOriginBinding:
             )
             db.add(user)
         else:
-            user.password_hash = hash_password(password)
+            if not verify_password(password, user.password_hash):
+                user.password_hash = hash_password(password)
             user.role = UserRole.admin
             user.is_active = True
         user.tenant_id = tenant.id
