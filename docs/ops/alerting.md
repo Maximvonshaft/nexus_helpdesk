@@ -1,24 +1,30 @@
 # NexusDesk Operational Alerting Runbook
 
-This runbook defines the minimum alerting contract for NexusDesk production or controlled-pilot operations. The application already exposes request logging, request IDs, health endpoints, readiness checks, queue counters, and a token-gated metrics endpoint. Operations are not closed until these signals are checked or wired into monitoring.
+This runbook defines the minimum alerting contract for controlled-pilot and production operations. Operations are not closed until health, readiness, Worker progress, queue semantics, storage and Metrics authentication are checked or wired into monitoring.
 
 ## Mandatory probes
 
 | Signal | Source | Severity | Action |
 |---|---|---:|---|
-| `/readyz` is not HTTP 200 | HTTP probe | P1 | Stop deployment, inspect DB connectivity and migration revision. |
-| `/healthz` is not HTTP 200 | HTTP probe | P1 | Restart app only after reading logs. Do not blindly rebuild. |
-| `external_pending_outbound > 0` while `ENABLE_OUTBOUND_DISPATCH=false` | `scripts/probe_nexus_runtime.sh` or `/api/admin/queues/summary` | P1/P2 | Confirm this is intended queued-only mode; otherwise enable provider after safety review. |
-| `external_dead_outbound > 0` | Queue summary | P1/P2 | Inspect `failure_code`, `failure_reason`, provider route, and safety gate result. |
-| worker service missing or unhealthy | `scripts/smoke/worker_daemon_readiness_probe.py` | P2 | Inspect `worker-outbound`, `worker-background`, `worker-webchat-ai`, and `worker-handoff-snapshot` logs. |
-| worker logs contain repeated cycle failures | `docker compose logs worker-*` | P2 | Inspect DB, queue lock, dispatch gate, and provider config. |
-| disk usage above 80% | host probe | P2 | Clean logs, rotate backups, or expand disk before uploads fail. |
-| uploads write probe fails | `scripts/probe_nexus_runtime.sh` | P1 | Stop accepting production attachments/POD until storage is fixed. |
+| `/readyz` is not HTTP 200 | HTTP probe | P1 | Stop deployment; inspect database connectivity, migration identity, release metadata, storage and runtime signing. |
+| `/healthz` is not HTTP 200 | HTTP probe | P1 | Read application logs before restart. Do not blindly rebuild. |
+| external outbound backlog exists while dispatch is disabled | `scripts/probe_nexus_runtime.sh` or `/api/admin/queues/summary` | P1/P2 | Confirm queued-only mode is intentional; otherwise keep traffic disabled until Provider qualification is complete. |
+| dead outbound work exists | Queue summary | P1/P2 | Inspect failure code, Provider route, safety gate and retry policy. |
+| Worker progress is stale or service is unhealthy | `scripts/probe_nexus_runtime.sh` | P2 | Inspect `worker-outbound-controlled`, `worker-background-controlled` and `worker-webchat-ai-controlled`. |
+| Worker logs contain repeated cycle failures | controlled Compose logs | P2 | Inspect database, queue lock, dispatch gate and Provider configuration. |
+| unauthenticated Metrics request does not return 401 | runtime probe | P1 | Stop exposure and verify proxy ACL plus `METRICS_TOKEN`. |
+| authenticated Metrics request is not HTTP 200 | runtime probe | P2 | Verify Metrics configuration and application logs. |
+| disk usage above 80% | host probe | P2 | Rotate logs/backups or expand capacity before uploads fail. |
+| upload write probe or backup readiness fails | runtime probe and `/readyz` | P1 | Stop accepting production attachments/POD until storage is healthy. |
 
 ## Recommended controlled-pilot command
 
 ```bash
-APP_DIR=/opt/nexus_helpdesk APP_URL=http://127.0.0.1:18081 bash scripts/probe_nexus_runtime.sh
+APP_DIR=/opt/nexus_helpdesk \
+APP_URL=http://127.0.0.1:18095 \
+NEXUS_DATABASE_TOPOLOGY=external \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+bash scripts/probe_nexus_runtime.sh
 ```
 
 Exit codes:
@@ -31,17 +37,17 @@ Exit codes:
 
 ## Metrics endpoint
 
-`/metrics` is intentionally disabled unless `METRICS_ENABLED=true`. If enabled in production, `METRICS_TOKEN` must be set and callers must pass:
+The controlled topology requires Metrics to be enabled and token protected. Callers pass:
 
 ```text
 X-Metrics-Token: <token>
 ```
 
-Do not expose `/metrics` publicly without network restrictions and token protection.
+The runtime probe verifies both negative and positive behavior: no token must be rejected, and the configured token must succeed. Keep the proxy network restrictions in place; never expose Metrics publicly on token protection alone.
 
 ## Outbound-specific incident triage
 
-When a user says a message was sent but the customer did not receive it, do not stop at the API response. Check final delivery state:
+When an operator sees a technical send response but the customer did not receive the message, inspect the persisted final delivery state rather than treating the request response as completion:
 
 ```sql
 select id, ticket_id, channel, status, provider_status, failure_code, failure_reason, sent_at
@@ -50,23 +56,22 @@ order by id desc
 limit 50;
 ```
 
-Interpretation:
-
 | State | Meaning |
 |---|---|
-| `pending` | Queued only, not provider-confirmed. |
-| `processing` | Claimed by worker. |
+| `pending` | Queued only, not Provider-confirmed. |
+| `processing` | Claimed by the outbound Worker. |
 | `sent` + external channel | Provider path reported sent. |
 | `sent` + `web_chat` | Local WebChat delivery only. |
-| `draft` + safety provider status | Human review required. |
-| `dead` | Dispatch failed or blocked. |
+| `draft` + safety Provider status | Human review required. |
+| `dead` | Dispatch failed or was blocked. |
 
 ## Deployment acceptance evidence
 
-Each production rollout should attach:
+Each rollout should attach:
 
-1. Git SHA and image tag from `/healthz`.
-2. Migration revision from `/readyz`.
-3. Output from `scripts/probe_nexus_runtime.sh`.
-4. CI run link for `backend-ci` and `frontend-ci`.
-5. Explicit statement that outbound is either `disabled/queued-only`, `enabled/native`, `enabled/email`, or another approved provider adapter.
+1. source SHA, frontend SHA and image digest from `/healthz`;
+2. migration revision and readiness reason codes from `/readyz`;
+3. output from `scripts/probe_nexus_runtime.sh`;
+4. Canonical Acceptance run bound to the deployed source;
+5. controlled preflight result;
+6. explicit statement of which capabilities remain disabled and which have real E2E authorization.
