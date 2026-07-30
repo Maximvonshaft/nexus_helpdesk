@@ -142,7 +142,9 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   await expect(page.getByTestId('operator-workspace')).toBeVisible({ timeout: 20_000 })
 
   markStage('operator-case')
-  await expect(page.locator('.operator-message p', { hasText: message }).first()).toBeVisible({ timeout: 25_000 })
+  await expect(
+    page.getByTestId('operator-message-timeline').getByText(message, { exact: true }),
+  ).toBeVisible({ timeout: 25_000 })
 
   markStage('completed')
 })
