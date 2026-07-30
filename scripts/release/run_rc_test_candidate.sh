@@ -467,6 +467,7 @@ python3 "${ROOT_DIR}/scripts/release/validate_rc_test_manifest.py" \
   "${EVIDENCE_DIR}/candidate-manifest.json"
 
 set_stage completed
+rm -f "${STATUS_FILE}" "${EVIDENCE_DIR}/base-image-digests.jsonl"
 echo "RC0_TEST_DEPLOYABLE=true"
 echo "PRODUCTION_READY=false"
 echo "FULL_OSR_AUTOMATION=NO_GO"
