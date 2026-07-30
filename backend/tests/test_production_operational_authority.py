@@ -6,8 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
+ACTIVATION_COMPOSE = ROOT / "deploy/docker-compose.production-activation.yml"
 
 
 def _load_module(name: str, relative: str):
@@ -80,3 +83,50 @@ def test_operational_authorities_are_release_evidence_inputs() -> None:
         "docs/runbooks/outbound-email-production-pilot.md",
     }
     assert required <= set(supply_chain.SUPPLY_CHAIN_INPUTS)
+
+
+def _activation_services() -> dict:
+    payload = yaml.safe_load(ACTIVATION_COMPOSE.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    services = payload.get("services")
+    assert isinstance(services, dict)
+    return services
+
+
+def test_email_pilot_flag_reaches_preflight_app_and_outbound_worker() -> None:
+    services = _activation_services()
+    for service_name in (
+        "production-activation-preflight",
+        "app-controlled",
+        "worker-outbound-controlled",
+    ):
+        environment = services[service_name].get("environment") or {}
+        assert "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED" in environment
+
+
+def test_mailbox_sync_is_visible_only_to_fail_closed_preflight() -> None:
+    services = _activation_services()
+    preflight_environment = (
+        services["production-activation-preflight"].get("environment") or {}
+    )
+    assert "EMAIL_MAILBOX_SYNC_ENABLED" in preflight_environment
+    for service_name in (
+        "app-controlled",
+        "worker-background-controlled",
+    ):
+        environment = services[service_name].get("environment") or {}
+        assert "EMAIL_MAILBOX_SYNC_ENABLED" not in environment
+
+
+def test_external_effect_processes_wait_for_activation_preflight() -> None:
+    services = _activation_services()
+    for service_name in (
+        "app-controlled",
+        "worker-outbound-controlled",
+        "worker-background-controlled",
+        "worker-webchat-ai-controlled",
+        "whatsapp-sidecar-controlled",
+    ):
+        depends_on = services[service_name].get("depends_on") or {}
+        preflight = depends_on.get("production-activation-preflight") or {}
+        assert preflight.get("condition") == "service_completed_successfully"
