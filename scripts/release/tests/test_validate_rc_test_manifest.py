@@ -275,7 +275,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         )
         self.assertIn("ref: ${{ env.CANDIDATE_SHA }}", self.workflow)
         self.assertIn(
-            "RC_SOURCE_SHA: ${{ env.CANDIDATE_SHA }}",
+            "RC_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}",
             self.workflow,
         )
         self.assertIn(
