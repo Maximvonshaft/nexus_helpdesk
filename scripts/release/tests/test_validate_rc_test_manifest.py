@@ -218,6 +218,16 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
                 self.compose + self.env_example + self.runner,
             )
 
+    def test_rc_application_uses_shellless_exec_vector(self):
+        app_block = self.compose.split("  app-rc:\n", 1)[1].split(
+            "\n  worker-outbound-rc:\n",
+            1,
+        )[0]
+        for forbidden in ("- /bin/sh", "- /bin/bash", "- sh", "- bash"):
+            self.assertNotIn(forbidden, app_block)
+        for required in ("- python", "- gunicorn", "- app.main:app"):
+            self.assertIn(required, app_block)
+
     def test_postgres_receives_only_database_environment(self):
         block = self.compose.split("  postgres-rc:\n", 1)[1].split(
             "\n  migrate-rc:\n",
