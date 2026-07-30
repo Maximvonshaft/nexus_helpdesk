@@ -25,6 +25,8 @@ case "$args" in
     ;;
 esac
 
+command -v docker >/dev/null 2>&1 || fail "docker is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 [[ -f "$CONTROLLED_ENV_FILE" ]] || fail "controlled environment file not found: $CONTROLLED_ENV_FILE"
 [[ -f "$CONTROLLED_COMPOSE" ]] || fail "controlled compose file not found: $CONTROLLED_COMPOSE"
 [[ -f "$NGINX_CONF" ]] || fail "nginx conf not found: $NGINX_CONF"
@@ -46,27 +48,52 @@ GIT_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
 FRONTEND_BUILD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
 BUILD_TIME="2026-01-01T00:00:00Z" \
 APP_VERSION="smoke" \
-docker compose --env-file "$CONTROLLED_ENV_FILE" "${compose_files[@]}" config \
-  >/tmp/nexusdesk-runtime-compose-config.yml
+docker compose --env-file "$CONTROLLED_ENV_FILE" "${compose_files[@]}" config --format json \
+  >/tmp/nexusdesk-runtime-compose-config.json
 
-grep -q "gunicorn app.main:app" /tmp/nexusdesk-runtime-compose-config.yml || fail "app command does not contain gunicorn app.main:app"
-grep -q "uvicorn.workers.UvicornWorker" /tmp/nexusdesk-runtime-compose-config.yml || fail "app command does not contain UvicornWorker"
-if grep -q "command: uvicorn app.main:app" /tmp/nexusdesk-runtime-compose-config.yml; then
-  fail "app command still appears to use single-process uvicorn"
-fi
+python3 - /tmp/nexusdesk-runtime-compose-config.json <<'PY'
+import json
+import sys
+from pathlib import Path
 
-for service in \
-  app-controlled \
-  worker-outbound-controlled \
-  worker-background-controlled \
-  worker-webchat-ai-controlled \
-  worker-handoff-snapshot-controlled; do
-  grep -q "^  ${service}:" /tmp/nexusdesk-runtime-compose-config.yml || fail "controlled service missing: $service"
-done
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+services = payload.get("services") or {}
+required = {
+    "app-controlled",
+    "worker-outbound-controlled",
+    "worker-background-controlled",
+    "worker-webchat-ai-controlled",
+}
+missing = sorted(required - set(services))
+if missing:
+    raise SystemExit("controlled services missing: " + ",".join(missing))
 
-grep -q "WEB_CONCURRENCY" /tmp/nexusdesk-runtime-compose-config.yml || fail "WEB_CONCURRENCY is missing from app environment"
-grep -q "WEB_TIMEOUT" /tmp/nexusdesk-runtime-compose-config.yml || fail "WEB_TIMEOUT is missing from app environment"
-grep -q "check_worker_progress.py" /tmp/nexusdesk-runtime-compose-config.yml || fail "durable worker progress healthcheck missing"
+expected_queues = {
+    "worker-outbound-controlled": "outbound",
+    "worker-background-controlled": "background",
+    "worker-webchat-ai-controlled": "webchat-ai",
+}
+for service_name, queue in expected_queues.items():
+    service = services[service_name]
+    command = [str(token) for token in service.get("command") or []]
+    if "scripts/run_worker_supervised.py" not in command:
+        raise SystemExit(f"supervised worker command missing: {service_name}")
+    if "--queue" not in command:
+        raise SystemExit(f"worker queue missing: {service_name}")
+    index = command.index("--queue")
+    if index + 1 >= len(command) or command[index + 1] != queue:
+        raise SystemExit(f"worker queue mismatch: {service_name}")
+    healthcheck = json.dumps(service.get("healthcheck") or {}, sort_keys=True)
+    if "scripts/check_worker_progress.py" not in healthcheck:
+        raise SystemExit(f"durable progress healthcheck missing: {service_name}")
+
+app_command = [str(token) for token in services["app-controlled"].get("command") or []]
+for token in ("gunicorn", "app.main:app", "uvicorn.workers.UvicornWorker", "--workers", "--timeout"):
+    if token not in app_command:
+        raise SystemExit(f"app runtime token missing: {token}")
+if "uvicorn" in app_command and "gunicorn" not in app_command:
+    raise SystemExit("single-process uvicorn is not the controlled runtime")
+PY
 
 info "checking nginx cache/gzip/keepalive policy"
 grep -q "gzip on" "$NGINX_CONF" || fail "gzip is not enabled"

@@ -5,7 +5,6 @@ APP_DIR="${APP_DIR:-/opt/nexus_helpdesk}"
 NEXUS_DATABASE_TOPOLOGY="${NEXUS_DATABASE_TOPOLOGY:-external}"
 NEXUS_CONTROLLED_ENV_FILE="${NEXUS_CONTROLLED_ENV_FILE:-deploy/.env.controlled}"
 APP_URL="${APP_URL:-http://127.0.0.1:18095}"
-METRICS_TOKEN_VALUE="${METRICS_TOKEN:-}"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
@@ -73,6 +72,7 @@ print('enable_outbound_dispatch=', s.enable_outbound_dispatch)
 print('outbound_provider=', s.outbound_provider)
 print('webchat_rate_limit_backend=', s.webchat_rate_limit_backend)
 print('webchat_ai_auto_reply_mode=', s.webchat_ai_auto_reply_mode)
+print('metrics_enabled=', s.metrics_enabled)
 PY
 then
   check_ok "container settings readable"
@@ -123,8 +123,7 @@ section "9. Durable Worker progress"
 for service in \
   worker-outbound-controlled \
   worker-background-controlled \
-  worker-webchat-ai-controlled \
-  worker-handoff-snapshot-controlled; do
+  worker-webchat-ai-controlled; do
   if compose exec -T "$service" python scripts/check_worker_progress.py; then
     check_ok "$service progress is fresh"
   else
@@ -132,17 +131,40 @@ for service in \
   fi
 done
 
-section "10. Metrics endpoint"
-if curl -fsS "$APP_URL/metrics" >/tmp/nexus_metrics.out 2>/tmp/nexus_metrics.err; then
-  check_ok "metrics reachable without token"
+section "10. Metrics authentication"
+unauthenticated_code="$(
+  curl --silent --show-error --max-time 5 \
+    --output /tmp/nexus_metrics_unauthenticated.out \
+    --write-out '%{http_code}' \
+    "$APP_URL/metrics" || true
+)"
+if [[ "$unauthenticated_code" = "401" ]]; then
+  check_ok "metrics endpoint rejects unauthenticated requests"
 else
-  if grep -Eq '404|metrics disabled' /tmp/nexus_metrics.err /tmp/nexus_metrics.out 2>/dev/null; then
-    check_warn "metrics disabled; acceptable for controlled pilot if documented"
-  elif [[ -n "$METRICS_TOKEN_VALUE" ]] && curl -fsS -H "X-Metrics-Token: $METRICS_TOKEN_VALUE" "$APP_URL/metrics" >/tmp/nexus_metrics_token.out; then
-    check_ok "metrics reachable with token"
-  else
-    check_warn "metrics unavailable or token not provided"
-  fi
+  check_fail "metrics endpoint accepted an unauthenticated request or returned an unexpected status: $unauthenticated_code"
+fi
+
+if compose exec -T app-controlled python - <<'PY'
+import urllib.request
+from app.settings import get_settings
+
+settings = get_settings()
+if not settings.metrics_enabled or not settings.metrics_token:
+    raise SystemExit('metrics_not_configured')
+request = urllib.request.Request(
+    'http://127.0.0.1:8080/metrics',
+    headers={'X-Metrics-Token': settings.metrics_token},
+)
+with urllib.request.urlopen(request, timeout=5) as response:
+    payload = response.read(256).decode('utf-8', errors='replace')
+    if response.status != 200 or '# HELP' not in payload:
+        raise SystemExit('metrics_response_invalid')
+print('metrics_authenticated=true')
+PY
+then
+  check_ok "metrics authenticated probe passed"
+else
+  check_fail "metrics authenticated probe failed"
 fi
 
 section "11. Recent logs"
@@ -150,7 +172,6 @@ compose logs --tail=120 app-controlled || check_warn "app logs unavailable"
 compose logs --tail=120 worker-outbound-controlled || check_warn "outbound Worker logs unavailable"
 compose logs --tail=120 worker-background-controlled || check_warn "background Worker logs unavailable"
 compose logs --tail=120 worker-webchat-ai-controlled || check_warn "WebChat AI Worker logs unavailable"
-compose logs --tail=120 worker-handoff-snapshot-controlled || check_warn "handoff snapshot Worker logs unavailable"
 
 section "12. Summary"
 if [[ "$status" -ne 0 ]]; then

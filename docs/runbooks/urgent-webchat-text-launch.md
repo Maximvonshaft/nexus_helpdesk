@@ -1,41 +1,43 @@
-# Urgent WebChat text launch
+# Phase 1 production launch: WebChat text
 
 ## Decision
 
-Launch Nexus first as a narrow customer-support product:
+The first production release is a narrow but real customer-support product:
 
 - public WebChat text intake;
-- operator Workspace and manual human replies;
-- Ticket, Conversation, Handoff, Queue and audit persistence;
-- health, readiness, metrics and PostgreSQL-backed operation.
+- authenticated operator Workspace;
+- manual human ownership and replies;
+- Ticket-as-Case, Conversation, Handoff, Queue and audit persistence;
+- PostgreSQL-backed health, readiness, Metrics and supervised Worker operation.
 
-Keep the following disabled until their separate repository and real-provider acceptance is complete:
+The following capabilities remain disabled until their own real-environment qualification is complete:
 
 - AI automatic replies;
-- WebCall / Voice / LiveKit;
-- WhatsApp Meta and Baileys;
-- WhatsApp media;
-- Email mailbox sync and outbound email;
-- Speedaf write operations;
+- WebCall, Voice and LiveKit;
+- WhatsApp Meta/Baileys and media;
+- inbound mailbox synchronization and outbound Email;
+- Speedaf Provider writes and callbacks;
 - Operations dispatch.
 
-This is a real customer launch for WebChat text only. It is not authorization for any disabled capability.
+This is a production GO path for WebChat text only. It does not authorize any disabled capability.
 
-## Required image identity
+## Exact candidate
 
-Deploy one immutable image built from the accepted source. The current source baseline at creation of this runbook is:
+Use one immutable image built from the exact source commit that passed Canonical Acceptance. The controlled environment must bind:
 
 ```text
-GIT_SHA=991e5eea7d145ad19c3153efc20c4fe7ba60caf0
-FRONTEND_BUILD_SHA=991e5eea7d145ad19c3153efc20c4fe7ba60caf0
-EXPECTED_MIGRATION_HEAD=20260729_wa5_signup_checkpoint
+CONTROLLED_IMAGE=name@sha256:<digest>
+IMAGE_TAG=<same exact digest reference>
+GIT_SHA=<accepted 40-hex source SHA>
+FRONTEND_BUILD_SHA=<same source SHA>
+EXPECTED_MIGRATION_HEAD=<single executable Alembic head>
 ```
 
-`CONTROLLED_IMAGE` and `IMAGE_TAG` must be the same image reference using `name@sha256:<digest>`.
+Do not copy an old SHA or migration revision from documentation. Obtain them from the accepted candidate and executable migration graph.
 
 ## Configuration
 
-Start from `deploy/.env.controlled.example` or `deploy/.env.controlled.local-postgres.example` and set real host values. The following capability flags are mandatory for this launch:
+Create an untracked controlled environment from the example matching the selected database topology. At minimum, preserve these fail-closed values:
 
 ```dotenv
 COMPOSE_PROFILES=
@@ -48,12 +50,10 @@ ALLOW_DEV_AUTH=false
 WEBCHAT_AI_ENABLED=false
 WEBCHAT_AI_AUTO_REPLY_MODE=off
 WEBCHAT_AI_RECONCILER_ENABLED=false
-
 WEBCHAT_WS_ENABLED=false
 WEBCHAT_WS_PUBLIC_ENABLED=false
 WEBCHAT_WS_ADMIN_ENABLED=false
 WEBCHAT_WS_BROKER=database
-
 WEBCHAT_HUMAN_CALL_ENABLED=false
 WEBCHAT_LIVE_AI_VOICE_ENABLED=false
 WEBCHAT_VOICE_PROVIDER=mock
@@ -67,13 +67,13 @@ PRIVATE_AI_RUNTIME_ENABLED=false
 ENABLE_OUTBOUND_DISPATCH=false
 OUTBOUND_PROVIDER=disabled
 OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false
+EMAIL_MAILBOX_SYNC_ENABLED=false
 
 WHATSAPP_ENABLED=false
 WHATSAPP_EMBEDDED_SIGNUP_ENABLED=false
 WHATSAPP_MEDIA_ENABLED=false
 WHATSAPP_MEDIA_SCANNER=disabled
 
-EMAIL_MAILBOX_SYNC_ENABLED=false
 SPEEDAF_MCP_ENABLED=false
 SPEEDAF_TRACK_QUERY_ENABLED=false
 SPEEDAF_WORK_ORDER_CREATE_ENABLED=false
@@ -84,78 +84,102 @@ OPERATIONS_DISPATCH_MODE=disabled
 OPERATIONS_DISPATCH_ADAPTER=disabled
 ```
 
-Set `ALLOWED_ORIGINS` to the operator-console origin and `WEBCHAT_ALLOWED_ORIGINS` to the exact customer website origin. Do not use `*` and do not enable originless WebChat.
+Set `ALLOWED_ORIGINS` to the exact operator-console origin and `WEBCHAT_ALLOWED_ORIGINS` to the exact customer-site origin. Wildcards and originless WebChat remain forbidden.
 
-## Minimum services
+## Controlled deployment
 
-For this first launch, start only the services required by WebChat text and durable background operation:
+Start the complete controlled topology even though AI and external dispatch are disabled. Keeping the same supervised service set allows one health, rollback and observability contract across every release.
 
-```bash
-docker compose \
-  --env-file deploy/.env.controlled \
-  -f deploy/docker-compose.controlled.yml \
-  up -d migrate-controlled app-controlled worker-background-controlled
-```
-
-For the repository-managed local PostgreSQL topology:
+External PostgreSQL:
 
 ```bash
-docker compose \
-  --env-file deploy/.env.controlled.local-postgres \
-  -f deploy/docker-compose.controlled.yml \
-  -f deploy/docker-compose.controlled-postgres.yml \
-  up -d postgres-controlled migrate-controlled app-controlled worker-background-controlled
+NEXUS_DATABASE_TOPOLOGY=external \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+deploy/nexus-prod-compose.sh up -d --no-build --pull always \
+  migrate-controlled \
+  app-controlled \
+  worker-outbound-controlled \
+  worker-background-controlled \
+  worker-webchat-ai-controlled
 ```
 
-Do not start the WebChat AI Worker, outbound Worker, WhatsApp Sidecar or LiveKit Agent in this launch.
+Repository-managed local PostgreSQL:
 
-## Reverse proxy
+```bash
+NEXUS_DATABASE_TOPOLOGY=local \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled.local-postgres \
+deploy/nexus-prod-compose.sh up -d --no-build --pull always \
+  postgres-controlled \
+  migrate-controlled \
+  app-controlled \
+  worker-outbound-controlled \
+  worker-background-controlled \
+  worker-webchat-ai-controlled
+```
 
-Expose only the application through the existing HTTPS reverse proxy. Proxy the public website and operator console to `127.0.0.1:${CONTROLLED_APP_PORT}`. Preserve the original `Host` and trusted forwarding headers. Do not expose PostgreSQL, internal Worker ports or Sidecar ports.
+Disabled Workers may run their supervised loops, but their configuration must prevent Provider, AI, Voice, Email, WhatsApp, Speedaf and Operations effects.
 
-## Five-step acceptance
+## Runtime acceptance
 
-Do not open the Widget to all customers until all five checks pass on the actual domain:
+Run the canonical runtime probe before exposing the Widget:
 
-1. `GET /healthz` returns HTTP 200.
-2. `GET /readyz` returns HTTP 200 and reports the exact source SHA, frontend SHA and migration head.
-3. A customer opens the Widget on the approved website origin and sends a text message.
-4. An authorized operator sees the same Conversation, accepts/takes ownership where required, and sends a manual reply.
-5. The customer receives the reply through the polling fallback without duplicate messages, blank state or cross-tenant visibility.
+```bash
+APP_DIR=/opt/nexus_helpdesk \
+APP_URL=http://127.0.0.1:18095 \
+NEXUS_DATABASE_TOPOLOGY=external \
+NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+bash scripts/probe_nexus_runtime.sh
+```
 
-The manual WebChat reply is a local persisted delivery and does not require the external outbound Worker.
+The result must prove health, readiness, exact release identity, Alembic revision, upload persistence, Metrics authentication, queue semantics and fresh progress for all supervised Workers.
 
-## Initial operating limit
+## Customer-domain acceptance
+
+Do not open the Widget broadly until all checks pass on the real HTTPS domain:
+
+1. `/healthz` and `/readyz` return HTTP 200 with the exact source, frontend and migration identity.
+2. An approved customer origin can initialize the Widget and send a text message.
+3. An unauthorized origin is rejected.
+4. A scoped operator sees the same Conversation and takes ownership where required.
+5. The operator sends a manual reply and the customer receives it through the polling fallback.
+6. Reload/reconnect does not duplicate messages, lose ownership or expose another Tenant's data.
+7. Closing/reopening follows the governed Ticket/Conversation state rules.
+
+Manual WebChat replies are persisted local channel delivery and do not require the external outbound Worker.
+
+## Initial operating envelope
 
 For the first production window:
 
-- use one Tenant and one approved website origin;
-- use a small named operator group;
-- keep attachment/media upload out of the customer launch;
-- keep AI, Voice and all external Providers off;
-- monitor HTTP 5xx, `/readyz`, database connections, background Worker health and unassigned Conversation age;
-- retain a tested database backup before migration and before each image change.
+- one Tenant and one approved customer-site origin;
+- a small named operator group;
+- bounded traffic and an explicit support window;
+- AI, Voice and every external Provider kept off;
+- monitoring for HTTP 5xx, readiness, PostgreSQL connections, Worker progress, unassigned Conversation age and customer reply latency;
+- verified database and upload backups before migration and every image change.
+
+Do not advertise attachment/media support until its exact customer path has been accepted on the target environment.
 
 ## Rollback
 
 If message intake, operator visibility or customer replies fail:
 
-1. remove or disable the Widget on the customer website;
-2. keep Provider and outbound flags disabled;
-3. preserve application and database logs;
-4. stop the current application and Worker containers;
-5. restore the previous immutable image and configuration snapshot;
-6. do not roll back the database unless the migration has an explicitly tested downgrade path.
+1. remove or disable the Widget at the customer site;
+2. preserve logs, release identity and database evidence;
+3. keep all Provider and outbound flags disabled;
+4. run `scripts/deploy/rollback_release.sh` with the previous immutable image and matching controlled environment;
+5. restore the database only through the separately qualified recovery path when data restoration is actually required.
 
-## Expansion sequence
+## Expansion order
 
-After WebChat text is stable, enable capabilities independently in this order:
+After WebChat text is stable, qualify capabilities independently:
 
 1. WebSocket realtime transport;
 2. AI reply canary;
-3. Email;
+3. outbound Email pilot;
 4. WhatsApp text;
 5. WhatsApp media;
-6. WebCall / Voice.
+6. WebCall and Voice;
+7. Provider write operations.
 
-Each expansion must preserve the same Ticket, Customer, Conversation, Handoff and Queue authorities. No second product or temporary parallel implementation is permitted.
+Every expansion must preserve the same Customer, Conversation, Ticket-as-Case, Handoff, Queue and audit authorities. No temporary parallel product or alternate deployment topology is permitted.

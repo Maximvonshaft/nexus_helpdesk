@@ -10,16 +10,34 @@ from pathlib import Path
 RETIRED_DEPLOY_PATHS = (
     "deploy/docker-compose.server.yml",
     "deploy/docker-compose.candidate.yml",
+    "deploy/docker-compose.operations-dispatch.yml",
     "deploy/.env.prod.example",
     "deploy/.env.prod.local-postgres.example",
     "deploy/.env.prod.external-postgres.example",
     "deploy/.env.candidate.example",
     "deploy/systemd/nexusdesk-worker.service",
+    "deploy/systemd/nexusdesk-api.service",
+    "deploy/nginx/nexusdesk.edge.env.example",
+    "deploy/nginx/nexusdesk.edge.conf.template",
     "backend/scripts/run_api_manual.py",
     "backend/scripts/run_worker_manual.py",
+    "backend/scripts/run_operations_dispatch_worker.py",
     "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
+    "scripts/smoke/smoke_e2e_runtime_health.sh",
     "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
     "backend/tests/test_candidate_compose_contract.py",
+    "scripts/deploy/prepare_production_release_env.sh",
+    "backend/tests/test_release_metadata_security_contract.py",
+    "scripts/smoke/worker_daemon_readiness_probe.py",
+    "backend/tests/test_worker_daemon_readiness.py",
+    "scripts/upsert_nigeria_direct_answer_kb.sh",
+    "docs/deployment/release-metadata.md",
+    "docs/deploy-server-local-postgres.md",
+    "docs/deploy-server-external-postgres.md",
+    "docs/ops/release-governance.md",
+    "docs/worker-healthcheck-policy.md",
+    "docs/deployment/runtime-topology.md",
+    "scripts/probe_webcall_livekit_custom_domain.sh",
 )
 
 DEPLOYMENT_TEXT_SUFFIXES = {
@@ -32,6 +50,53 @@ DEPLOYMENT_TEXT_SUFFIXES = {
     ".env",
     ".example",
 }
+
+CURRENT_WORKER_SERVICES = (
+    "worker-outbound-controlled",
+    "worker-background-controlled",
+    "worker-webchat-ai-controlled",
+)
+
+OPERATIONAL_AUTHORITY_PATHS = (
+    "README.md",
+    "docs/runbook-production.md",
+    "docs/deployment-runbook.md",
+    "docs/ops/alerting.md",
+    "docs/performance-budgets.md",
+    "docs/runbooks/production-activation.md",
+    "docs/runbooks/release-metadata-consistency-gate.md",
+    "docs/runbooks/outbound-email-production-pilot.md",
+    "docs/runbooks/urgent-webchat-text-launch.md",
+    "deploy/docker-compose.production-activation.yml",
+    "scripts/deploy/validate_production_activation.py",
+    "scripts/probe_nexus_runtime.sh",
+    "scripts/smoke/runtime_performance_baseline.sh",
+    "scripts/deploy/rollback_release.sh",
+    "scripts/release_metadata_consistency_gate.py",
+)
+
+OPERATIONAL_WORKER_PATHS = (
+    "docs/runbooks/production-activation.md",
+    "scripts/probe_nexus_runtime.sh",
+    "scripts/smoke/runtime_performance_baseline.sh",
+    "scripts/deploy/rollback_release.sh",
+)
+
+RETIRED_OPERATIONAL_MARKERS = (
+    "worker-handoff-snapshot-controlled",
+    "worker-handoff-snapshot",
+    "handoff-snapshot",
+    "deploy/docker-compose.server.yml",
+    "deploy-app-1",
+    "WEBCHAT_VOICE_ENABLED",
+    "WHATSAPP_NATIVE_ENABLED",
+    "WHATSAPP_DISPATCH_MODE",
+    "http://127.0.0.1:18081",
+)
+
+RETIRED_OPERATIONAL_PATTERNS = (
+    r"deploy/\.env\.prod(?:$|[\s'\"\x60])",
+)
 
 
 def _deployment_files(root: Path) -> list[Path]:
@@ -46,6 +111,103 @@ def _deployment_files(root: Path) -> list[Path]:
             ):
                 paths.append(path)
     return sorted(set(paths))
+
+
+def _operational_authority_findings(root: Path) -> list[str]:
+    findings: list[str] = []
+    for relative in OPERATIONAL_AUTHORITY_PATHS:
+        path = root / relative
+        if not path.is_file():
+            findings.append(f"operational_authority_missing:{relative}")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for marker in RETIRED_OPERATIONAL_MARKERS:
+            if marker in text:
+                findings.append(
+                    f"retired_operational_marker:{relative}:{marker}"
+                )
+        for pattern in RETIRED_OPERATIONAL_PATTERNS:
+            if re.search(pattern, text):
+                findings.append(
+                    f"retired_operational_pattern:{relative}:{pattern}"
+                )
+
+    for relative in OPERATIONAL_WORKER_PATHS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for service in CURRENT_WORKER_SERVICES:
+            if service not in text:
+                findings.append(
+                    f"operational_worker_missing:{relative}:{service}"
+                )
+
+    probe = root / "scripts/probe_nexus_runtime.sh"
+    if probe.is_file():
+        text = probe.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "X-Metrics-Token",
+            "metrics endpoint accepted an unauthenticated request",
+            "metrics authenticated probe failed",
+        ):
+            if marker not in text:
+                findings.append(f"runtime_probe_contract_missing:{marker}")
+
+    activation = root / "docs/runbooks/production-activation.md"
+    if activation.is_file():
+        text = activation.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "deploy/nexus-prod-compose.sh",
+            "NEXUS_DATABASE_TOPOLOGY",
+            "NEXUS_CONTROLLED_ENV_FILE",
+        ):
+            if marker not in text:
+                findings.append(
+                    f"production_activation_authority_missing:{marker}"
+                )
+
+    activation_compose = root / "deploy/docker-compose.production-activation.yml"
+    if activation_compose.is_file():
+        text = activation_compose.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "production-activation-preflight:",
+            "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED",
+            "worker-webchat-ai-controlled:",
+            "whatsapp-sidecar-controlled:",
+            "condition: service_completed_successfully",
+        ):
+            if marker not in text:
+                findings.append(f"activation_compose_contract_missing:{marker}")
+        mailbox_keys = sum(
+            1
+            for line in text.splitlines()
+            if line.strip().startswith("EMAIL_MAILBOX_SYNC_ENABLED:")
+        )
+        if mailbox_keys != 1:
+            findings.append("mailbox_sync_must_be_preflight_only")
+
+    activation_validator = root / "scripts/deploy/validate_production_activation.py"
+    if activation_validator.is_file():
+        text = activation_validator.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "nexus.production-activation-preflight.v5",
+            "operations_dispatch_not_implemented",
+            "email_mailbox_sync_not_qualified",
+            "outbound_email_pilot_authority_invalid",
+        ):
+            if marker not in text:
+                findings.append(f"activation_validator_contract_missing:{marker}")
+
+    release_gate = root / "scripts/release_metadata_consistency_gate.py"
+    if release_gate.is_file():
+        text = release_gate.read_text(encoding="utf-8", errors="replace")
+        if 'parser.add_argument("--container", default="")' not in text:
+            findings.append("release_gate_container_must_not_be_guessed")
+        if "container_required" not in text:
+            findings.append("release_gate_container_requirement_missing")
+
+    return findings
 
 
 def deployment_authority_findings(root: Path) -> list[str]:
@@ -80,6 +242,8 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "/proc/1/cmdline",
             "controlled-worker-ok",
             "scripts/run_worker.py",
+            "worker-handoff-snapshot-controlled",
+            "handoff-snapshot",
         ):
             if forbidden in text:
                 findings.append(f"controlled_compose_forbidden:{forbidden}")
@@ -88,6 +252,7 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "scripts/check_worker_progress.py",
             "NEXUS_WORKER_ID",
             "NEXUS_WORKER_QUEUE",
+            *CURRENT_WORKER_SERVICES,
         ):
             if required not in text:
                 findings.append(f"controlled_compose_required_missing:{required}")
@@ -137,6 +302,7 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "rollback_controlled_image_mismatch",
             "docker-compose.controlled.yml",
             "app-controlled",
+            *CURRENT_WORKER_SERVICES,
         ):
             if marker not in text:
                 findings.append(f"rollback_controlled_contract_missing:{marker}")
@@ -146,9 +312,12 @@ def deployment_authority_findings(root: Path) -> list[str]:
             'IMAGE_TAG="$OLD_IMAGE_TAG" docker compose',
             "docker-compose.server.yml",
             "docker-compose.candidate.yml",
+            "worker-handoff-snapshot-controlled",
         ):
             if forbidden in text:
                 findings.append(f"rollback_legacy_path_present:{forbidden}")
+
+    findings.extend(_operational_authority_findings(root))
     return sorted(set(findings))
 
 
@@ -156,7 +325,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     findings = deployment_authority_findings(root)
     payload = {
-        "schema": "nexus.deployment-authority.v2",
+        "schema": "nexus.deployment-authority.v4",
         "status": "pass" if not findings else "fail",
         "findings": findings,
     }

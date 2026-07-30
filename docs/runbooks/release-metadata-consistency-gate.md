@@ -2,68 +2,73 @@
 
 ## Purpose
 
-This gate prevents a production release from passing when Docker is running one image but `/healthz` or `/readyz` reports a different `image_tag`.
-
-This failure previously occurred because the app-family containers were recreated with the correct image while stale metadata environment variables remained in the runtime override.
-
-## Scope
-
-This gate is read-only.
+This read-only gate prevents a release from passing when Docker is running one immutable image while `/healthz` or `/readyz` reports another identity.
 
 It checks:
 
-1. `docker inspect deploy-app-1 .Config.Image == /healthz image_tag`
-2. `/healthz image_tag == /readyz image_tag`
-3. `/readyz database == ok`
-4. `/readyz migration_revision` is non-empty
+1. the explicitly selected application container image equals `/healthz.image_tag`;
+2. `/healthz.image_tag` equals `/readyz.image_tag`;
+3. `/readyz.database` is `ok`;
+4. `/readyz.migration_revision` is non-empty;
+5. optionally, both endpoints report complete release metadata.
 
 The gate writes evidence files and exits non-zero on failure.
 
-## Command
+## Controlled command
+
+Resolve the application container through the canonical wrapper. Do not guess a Docker project/container name.
 
 ```bash
+container="$(
+  NEXUS_DATABASE_TOPOLOGY=external \
+  NEXUS_CONTROLLED_ENV_FILE=deploy/.env.controlled \
+  deploy/nexus-prod-compose.sh ps -q app-controlled
+)"
+test -n "$container"
+
 PYTHONPATH=backend python3 scripts/release_metadata_consistency_gate.py \
-  --container deploy-app-1 \
-  --base-url http://127.0.0.1 \
-  --evidence-dir forensics/release_metadata_consistency_gate_$(date -u +%Y%m%dT%H%M%SZ)
+  --container "$container" \
+  --base-url http://127.0.0.1:18095 \
+  --require-complete-metadata \
+  --evidence-dir "/tmp/nexus-release-metadata-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
+
+Use the selected local database topology and matching controlled environment when that is the actual deployment.
 
 ## Evidence contract
 
 The gate writes:
 
-- `docker_image_truth.json`
-- `healthz_payload.json`
-- `readyz_payload.json`
-- `final_assertion_result.json`
-- `final_assertion_result.txt`
+- `docker_image_truth.json`;
+- `healthz_payload.json`;
+- `readyz_payload.json`;
+- `final_assertion_result.json`;
+- `final_assertion_result.txt`.
 
-## Dry-run mode
+## Offline evaluation
 
-Dry-run mode does not require Docker or network access:
+Offline mode does not require Docker or network access:
 
-```bash id="4oby7w"
+```bash
 PYTHONPATH=backend python3 scripts/release_metadata_consistency_gate.py \
-  --docker-image nexusdesk/helpdesk:example \
+  --docker-image ghcr.io/example/nexus@sha256:<digest> \
   --healthz-file /tmp/healthz.json \
   --readyz-file /tmp/readyz.json \
+  --require-complete-metadata \
   --evidence-dir /tmp/release-metadata-gate
 ```
 
-## Production baseline
-
-Validated stable baseline:
-
-- Runtime image: `nexusdesk/helpdesk:main-cf13200-support-hours-policy-v2-20260521T130459Z`
-- Stable baseline archive: `/root/nexus_stable_baseline_freeze_20260521T133804Z.tar.gz`
+The image argument must be the exact image identity represented in the supplied endpoint payloads.
 
 ## Non-goals
 
-This gate must not modify:
+This gate does not modify:
 
-- Webchat Fast Reply behavior
-- Handoff or ticket creation behavior
-- Database schema
-- Frontend UI behavior
-- Docker Compose service topology
-- Worker service state (`worker-outbound`, `worker-background`, `worker-webchat-ai`, `worker-handoff-snapshot`)
+- WebChat behavior;
+- Handoff or Ticket state;
+- database schema;
+- frontend assets;
+- Compose topology;
+- `worker-outbound-controlled`;
+- `worker-background-controlled`;
+- `worker-webchat-ai-controlled`.

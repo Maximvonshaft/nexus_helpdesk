@@ -44,10 +44,7 @@ def _parse_env(paths: list[Path]) -> dict[str, str]:
     for path in paths:
         if not path.is_file() or path.is_symlink():
             raise ActivationError(f"env_file_invalid:{path.name}")
-        for number, raw in enumerate(
-            path.read_text(encoding="utf-8").splitlines(),
-            start=1,
-        ):
+        for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
@@ -99,9 +96,8 @@ def _token(values: dict[str, str], key: str, default: str) -> str:
 
 
 def _profiles(values: dict[str, str]) -> set[str]:
-    raw = values.get("COMPOSE_PROFILES", "").strip()
     result: set[str] = set()
-    for item in raw.split(","):
+    for item in values.get("COMPOSE_PROFILES", "").split(","):
         normalized = item.strip().lower()
         if not normalized:
             continue
@@ -167,8 +163,7 @@ def _require_graph_version(values: dict[str, str], key: str) -> str:
 
 def _require_one_of(values: dict[str, str], *keys: str) -> str:
     for key in keys:
-        value = values.get(key, "").strip()
-        if not _placeholder(value):
+        if not _placeholder(values.get(key, "")):
             return key
     raise ActivationError(f"configuration_missing_one_of:{','.join(keys)}")
 
@@ -200,11 +195,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         raise ActivationError("production_profile_invalid")
 
     provider_enabled = _bool(values, "PROVIDER_RUNTIME_ENABLED")
-    provider_mode = _token(
-        values,
-        "PROVIDER_RUNTIME_TRAFFIC_MODE",
-        "control",
-    )
+    provider_mode = _token(values, "PROVIDER_RUNTIME_TRAFFIC_MODE", "control")
     kill_switch = _bool(values, "PROVIDER_RUNTIME_KILL_SWITCH", True)
     percent = _int(
         values,
@@ -219,6 +210,11 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     voice_enabled = human_voice_enabled or live_ai_voice_enabled
     outbound_enabled = _bool(values, "ENABLE_OUTBOUND_DISPATCH")
     outbound_provider = _token(values, "OUTBOUND_PROVIDER", "disabled")
+    outbound_email_pilot_enabled = _bool(
+        values,
+        "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED",
+    )
+    email_mailbox_sync_enabled = _bool(values, "EMAIL_MAILBOX_SYNC_ENABLED")
     whatsapp_enabled = _bool(values, "WHATSAPP_ENABLED")
     whatsapp_media_enabled = _bool(values, "WHATSAPP_MEDIA_ENABLED")
     whatsapp_media_scanner = _token(
@@ -226,26 +222,22 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         "WHATSAPP_MEDIA_SCANNER",
         "disabled",
     )
-    embedded_signup_enabled = _bool(
-        values,
-        "WHATSAPP_EMBEDDED_SIGNUP_ENABLED",
-    )
+    embedded_signup_enabled = _bool(values, "WHATSAPP_EMBEDDED_SIGNUP_ENABLED")
     compose_profiles = _profiles(values)
-    meta_enabled = _configured_https(
-        values,
-        "WHATSAPP_META_WEBHOOK_PUBLIC_URL",
-    )
+    meta_enabled = _configured_https(values, "WHATSAPP_META_WEBHOOK_PUBLIC_URL")
     baileys_enabled = "whatsapp-baileys" in compose_profiles
-    operations_mode = _token(
-        values,
-        "OPERATIONS_DISPATCH_MODE",
-        "disabled",
-    )
+    operations_mode = _token(values, "OPERATIONS_DISPATCH_MODE", "disabled")
     operations_adapter = _token(
         values,
         "OPERATIONS_DISPATCH_ADAPTER",
         "disabled",
     )
+
+    if operations_mode != "disabled" or operations_adapter != "disabled":
+        raise ActivationError("operations_dispatch_not_implemented")
+
+    if email_mailbox_sync_enabled:
+        raise ActivationError("email_mailbox_sync_not_qualified")
 
     if profile == "provider_canary":
         if not provider_enabled or provider_mode != "canary" or kill_switch:
@@ -257,10 +249,10 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         if (
             voice_enabled
             or outbound_enabled
+            or outbound_email_pilot_enabled
             or whatsapp_enabled
             or whatsapp_media_enabled
             or embedded_signup_enabled
-            or operations_mode != "disabled"
         ):
             raise ActivationError("provider_canary_external_capability_forbidden")
     else:
@@ -298,8 +290,20 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             if live_ai_voice_enabled:
                 _require_value(values, "NEXUS_VOICE_STT_MODEL")
                 _require_value(values, "NEXUS_VOICE_TTS_MODEL")
+
         if outbound_enabled and outbound_provider == "disabled":
             raise ActivationError("outbound_provider_disabled")
+        if outbound_email_pilot_enabled and (
+            not outbound_enabled or outbound_provider not in {"email", "smtp"}
+        ):
+            raise ActivationError("outbound_email_pilot_authority_invalid")
+        if (
+            outbound_enabled
+            and outbound_provider in {"email", "smtp"}
+            and not outbound_email_pilot_enabled
+        ):
+            raise ActivationError("outbound_email_pilot_required")
+
         if whatsapp_enabled:
             if not outbound_enabled or outbound_provider != "native":
                 raise ActivationError("whatsapp_outbound_authority_invalid")
@@ -309,6 +313,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
                 _require_digest_image(values, "WHATSAPP_SIDECAR_IMAGE")
         elif baileys_enabled:
             raise ActivationError("whatsapp_baileys_profile_without_whatsapp")
+
         if embedded_signup_enabled:
             if not whatsapp_enabled or not meta_enabled:
                 raise ActivationError("embedded_signup_requires_meta_transport")
@@ -317,6 +322,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             _require_meta_id(values, "WHATSAPP_META_CONFIGURATION_ID")
             _require_graph_version(values, "WHATSAPP_META_GRAPH_API_VERSION")
             _require_https(values, "WHATSAPP_EMBEDDED_SIGNUP_ALLOWED_ORIGIN")
+
         if whatsapp_media_enabled and not whatsapp_enabled:
             raise ActivationError("whatsapp_media_requires_whatsapp")
         if whatsapp_media_enabled:
@@ -324,16 +330,13 @@ def validate(values: dict[str, str]) -> dict[str, object]:
                 raise ActivationError("whatsapp_media_scanner_not_clamav")
             if _require_value(values, "WHATSAPP_CLAMAV_HOST") != "clamav-controlled":
                 raise ActivationError("whatsapp_clamav_host_not_controlled")
-            if (
-                _int(
-                    values,
-                    "WHATSAPP_CLAMAV_PORT",
-                    3310,
-                    minimum=1,
-                    maximum=65535,
-                )
-                != 3310
-            ):
+            if _int(
+                values,
+                "WHATSAPP_CLAMAV_PORT",
+                3310,
+                minimum=1,
+                maximum=65535,
+            ) != 3310:
                 raise ActivationError("whatsapp_clamav_port_not_controlled")
             _int(
                 values,
@@ -354,8 +357,6 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             _require_digest_image(values, "WHATSAPP_CLAMAV_IMAGE")
         elif whatsapp_media_scanner != "disabled":
             raise ActivationError("whatsapp_media_scanner_without_media")
-        if operations_mode != "disabled" and operations_adapter == "disabled":
-            raise ActivationError("operations_adapter_disabled")
 
     configuration: dict[str, object] = {
         "webchat_ai_enabled": webchat_ai_enabled,
@@ -363,6 +364,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
         "outbound": {
             "enabled": outbound_enabled,
             "provider": outbound_provider,
+            "email_pilot_enabled": outbound_email_pilot_enabled,
         },
         "whatsapp": {
             "enabled": whatsapp_enabled,
@@ -372,7 +374,8 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             "media_enabled": whatsapp_media_enabled,
             "media_scanner": whatsapp_media_scanner,
         },
-        "operations_mode": operations_mode,
+        "email_mailbox_sync_enabled": False,
+        "operations_mode": "disabled",
     }
     activation = _activation_evidence(
         values,
@@ -385,7 +388,7 @@ def validate(values: dict[str, str]) -> dict[str, object]:
     }
 
     return {
-        "schema": "nexus.production-activation-preflight.v4",
+        "schema": "nexus.production-activation-preflight.v5",
         "status": "pass",
         "profile": profile,
         "candidate": activation.get("candidate") or {},
@@ -399,12 +402,14 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             "webchat_ai": webchat_ai_enabled,
             "voice": voice_enabled,
             "outbound": outbound_enabled,
+            "outbound_email_pilot": outbound_email_pilot_enabled,
+            "email_mailbox_sync": False,
             "whatsapp": whatsapp_enabled,
             "whatsapp_meta": meta_enabled,
             "whatsapp_baileys": baileys_enabled,
             "whatsapp_embedded_signup": embedded_signup_enabled,
             "whatsapp_media": whatsapp_media_enabled,
-            "operations": operations_mode != "disabled",
+            "operations": False,
         },
         "whatsapp": {
             "transports": {

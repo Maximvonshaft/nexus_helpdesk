@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SMOKE_PREFIX="${NEXUSDESK_SMOKE_PREFIX:-nxd-round-a-$(date +%Y%m%d%H%M%S)}"
+SMOKE_PREFIX="${NEXUSDESK_SMOKE_PREFIX:-nexus-smoke-$(date +%Y%m%d%H%M%S)}"
 SMOKE_MODE="${NEXUSDESK_SMOKE_MODE:-mock}"
 NEXUSDESK_EXTERNAL_SEND_MOCK_MODE="${NEXUSDESK_EXTERNAL_SEND_MOCK_MODE:-1}"
-API_URL="${NEXUSDESK_API_URL:-http://127.0.0.1:18081}"
+API_URL="${NEXUSDESK_API_URL:-http://127.0.0.1:18095}"
 SKIP_EXIT_CODE="${SKIP_EXIT_CODE:-77}"
 DRY_RUN=0
 
@@ -12,7 +12,7 @@ usage_common() {
   cat <<'USAGE'
 Common options:
   --dry-run              Print planned checks without mutating anything.
-  --api-url URL          NexusDesk API base URL. Defaults to NEXUSDESK_API_URL or http://127.0.0.1:18081.
+  --api-url URL          NexusDesk API base URL. Defaults to NEXUSDESK_API_URL or http://127.0.0.1:18095.
   --prefix PREFIX        Unique test-data prefix. Defaults to NEXUSDESK_SMOKE_PREFIX or timestamp.
   --help                 Show help.
 

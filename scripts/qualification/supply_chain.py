@@ -39,6 +39,9 @@ SUPPLY_CHAIN_INPUTS = (
     "scripts/deploy/safe_update_server.sh",
     "scripts/deploy/rollback_release.sh",
     "scripts/deploy/check_deploy_contract.sh",
+    "scripts/probe_nexus_runtime.sh",
+    "scripts/smoke/runtime_performance_baseline.sh",
+    "scripts/release_metadata_consistency_gate.py",
     "scripts/verify_repository.py",
     "scripts/qualification/deployment_authority.py",
     "scripts/qualification/service_authority.py",
@@ -52,7 +55,15 @@ SUPPLY_CHAIN_INPUTS = (
     "config/architecture/service-authority.v1.json",
     "config/architecture/compatibility-lifecycle.v1.json",
     "backend/tests/test_exact_head_acceptance.py",
+    "README.md",
+    "docs/runbook-production.md",
+    "docs/deployment-runbook.md",
     "docs/ops/EXACT_HEAD_ACCEPTANCE_RUNBOOK.md",
+    "docs/ops/alerting.md",
+    "docs/performance-budgets.md",
+    "docs/runbooks/production-activation.md",
+    "docs/runbooks/release-metadata-consistency-gate.md",
+    "docs/runbooks/outbound-email-production-pilot.md",
 )
 
 COMPOSE_INPUTS = (

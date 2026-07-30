@@ -239,6 +239,75 @@ def reclaim_stale_processing_messages(
     return len(rows)
 
 
+def _runtime_dispatch_block_reason(message_dispatch: Any) -> tuple[str, str] | None:
+    blocked = message_dispatch._external_dispatch_block_reason()
+    if blocked:
+        return blocked
+    if (
+        message_dispatch.settings.outbound_provider in {"email", "smtp"}
+        and not message_dispatch.settings.outbound_email_production_pilot_enabled
+    ):
+        return (
+            "outbound_email_pilot_disabled",
+            "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false blocks SMTP dispatch",
+        )
+    return None
+
+
+def _message_dispatch_block_reason(
+    message_dispatch: Any,
+    message: Any,
+) -> tuple[str, str] | None:
+    channel = (
+        message.channel.value
+        if hasattr(message.channel, "value")
+        else str(message.channel)
+    )
+    if channel != message_dispatch.SourceChannel.email.value:
+        return None
+    if message_dispatch.settings.outbound_provider not in {"email", "smtp"}:
+        return (
+            "outbound_email_provider_not_authorized",
+            "Email dispatch requires OUTBOUND_PROVIDER=email or smtp",
+        )
+    if not message_dispatch.settings.outbound_email_production_pilot_enabled:
+        return (
+            "outbound_email_pilot_disabled",
+            "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED=false blocks SMTP dispatch",
+        )
+    return None
+
+
+def _mark_runtime_blocked_message(
+    db: Any,
+    *,
+    message_dispatch: Any,
+    message: Any,
+    failure_code: str,
+    reason: str,
+) -> None:
+    message_dispatch._mark_dead(
+        message,
+        reason,
+        failure_code=failure_code,
+    )
+    message_dispatch.log_event(
+        db,
+        ticket_id=message.ticket_id,
+        actor_id=message.created_by,
+        event_type=message_dispatch.EventType.outbound_dead,
+        note="External outbound message blocked by runtime capability authority",
+        payload={
+            "message_id": message.id,
+            "failure_code": failure_code,
+            "outbound_provider": message_dispatch.settings.outbound_provider,
+            "outbound_email_production_pilot_enabled": (
+                message_dispatch.settings.outbound_email_production_pilot_enabled
+            ),
+        },
+    )
+
+
 def dispatch_pending_messages(
     db: Any,
     *,
@@ -247,7 +316,7 @@ def dispatch_pending_messages(
 ):
     from . import message_dispatch
 
-    blocked = message_dispatch._external_dispatch_block_reason()
+    blocked = _runtime_dispatch_block_reason(message_dispatch)
     if blocked:
         failure_code, reason = blocked
         LOGGER.warning(
@@ -259,6 +328,9 @@ def dispatch_pending_messages(
                     "outbound_provider": message_dispatch.settings.outbound_provider,
                     "enable_outbound_dispatch": (
                         message_dispatch.settings.enable_outbound_dispatch
+                    ),
+                    "outbound_email_production_pilot_enabled": (
+                        message_dispatch.settings.outbound_email_production_pilot_enabled
                     ),
                 }
             },
@@ -280,6 +352,22 @@ def dispatch_pending_messages(
             message_id=message_id,
             lease_token=lease_token,
         ):
+            continue
+        message_blocked = _message_dispatch_block_reason(
+            message_dispatch,
+            message,
+        )
+        if message_blocked:
+            failure_code, reason = message_blocked
+            _mark_runtime_blocked_message(
+                db,
+                message_dispatch=message_dispatch,
+                message=message,
+                failure_code=failure_code,
+                reason=reason,
+            )
+            processed.append(message)
+            db.commit()
             continue
         try:
             message_dispatch.process_outbound_message(db, message)
