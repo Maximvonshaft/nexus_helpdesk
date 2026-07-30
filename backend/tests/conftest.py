@@ -312,6 +312,16 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
 
             if (
                 module_name == "test_webchat_handoff_control"
+                and model_name == "ConversationControl"
+                and not str(getattr(row, "country_code", "") or "").strip()
+            ):
+                row.country_code = ensure_market(
+                    session,
+                    int(tenant_id),
+                ).country_code
+
+            if (
+                module_name == "test_webchat_handoff_control"
                 and model_name == "Ticket"
                 and not str(getattr(row, "case_type", "") or "").strip()
             ):
