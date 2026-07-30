@@ -13,6 +13,11 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 
+def test_release_metadata_gate_requires_explicit_runtime_container():
+    with pytest.raises(gate.GateFailure, match="container_required"):
+        gate._docker_container_image("")
+
+
 def test_release_metadata_gate_passes_consistent_payloads():
     image = "nexusdesk/helpdesk:main-test-20260521T130459Z"
     result = gate.evaluate_consistency(
