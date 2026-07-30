@@ -356,7 +356,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
         workspace_path = "rcUrl(`/workspace?session=${encodeURIComponent(operatorSessionKey)}`)"
         body_selector = (
-            "page.locator('.operator-message p', { hasText: message }).first()"
+            "page.getByTestId('operator-message-timeline').getByText(message, { exact: true })"
         )
         for marker in (
             identity_extract,
@@ -375,6 +375,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         self.assertNotIn("getByLabel('密码')", self.browser)
         self.assertNotIn("登录运营工作台", self.browser)
         self.assertNotIn("/workspace\\?queue=", self.browser)
+        self.assertNotIn(".operator-message", self.browser)
         self.assertLess(
             self.browser.index(identity_extract),
             self.browser.index(session_key),
