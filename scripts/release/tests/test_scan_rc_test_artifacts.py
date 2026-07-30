@@ -38,14 +38,51 @@ class RcArtifactScannerTests(unittest.TestCase):
                     "app_version": "rc-test-17cd31ad15f3",
                     "image_tag": "nexusdesk/helpdesk:rc-test-" + "a1b2" * 10,
                     "build_time": "20260712T161615Z",
-                    "migration_revision": "20260711_0058",
+                    "migration_revision": "20260729_r15_tenant_scope",
+                    "migration": {
+                        "expected": "20260729_r15_tenant_scope",
+                        "observed": "20260729_r15_tenant_scope",
+                    },
                 },
+                name="readyz.json",
             )
 
             findings, suppressed = MODULE.scan_rc_artifact_files(root, [relative])
 
             self.assertEqual(findings, [])
             self.assertGreater(suppressed, 0)
+
+    def test_canonical_migration_suppression_is_limited_to_exact_rc_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical = "20260729_r15_tenant_scope"
+            candidate = self._write(
+                root,
+                {"candidate": {"migration_revision": canonical}},
+                name="candidate-manifest.json",
+            )
+            unrelated = self._write(
+                root,
+                {"migration_revision": canonical},
+                name="unrelated.json",
+            )
+
+            candidate_findings, suppressed = MODULE.scan_rc_artifact_files(
+                root,
+                [candidate],
+            )
+            unrelated_findings, unrelated_suppressed = MODULE.scan_rc_artifact_files(
+                root,
+                [unrelated],
+            )
+
+            self.assertEqual(candidate_findings, [])
+            self.assertGreater(suppressed, 0)
+            self.assertEqual(unrelated_suppressed, 0)
+            self.assertIn(
+                "artifact:tracking",
+                {finding.rule for finding in unrelated_findings},
+            )
 
     def test_external_or_malformed_values_are_not_suppressed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
