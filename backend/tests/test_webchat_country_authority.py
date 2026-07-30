@@ -115,6 +115,35 @@ def test_server_origin_country_is_stamped_on_conversation_control(db) -> None:
     assert db.query(Ticket).count() == 0
 
 
+def test_ticketless_conversation_accepts_its_unchanged_bound_country(db) -> None:
+    _seed(db)
+    resolve_public_webchat_scope(
+        db,
+        request=_request(),
+        requested_tenant_key="default",
+        requested_channel_key="default",
+        app_env="production",
+    )
+    result = create_or_resume_conversation(db, _payload(), _request())
+
+    scope = resolve_public_webchat_scope(
+        db,
+        request=_request(),
+        requested_tenant_key="country-tenant",
+        requested_channel_key="website",
+        conversation_id=result["conversation_id"],
+        app_env="production",
+    )
+
+    assert scope.country_code == "CH"
+    conversation = (
+        db.query(WebchatConversation)
+        .filter(WebchatConversation.public_id == result["conversation_id"])
+        .one()
+    )
+    assert conversation.ticket_id is None
+
+
 def test_missing_configured_country_fails_closed(db) -> None:
     _seed(db, country_code=None)
     with pytest.raises(HTTPException) as exc:

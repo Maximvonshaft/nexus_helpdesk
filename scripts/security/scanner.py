@@ -30,6 +30,8 @@ _HASH_KEYS = {
     "fingerprint", "digest", "sha", "sha1", "sha256", "sha512", "hash",
     "source_sha256", "config_sha256", "payload_sha256", "runtime_signature",
 }
+_ALEMBIC_REVISION_KEYS = {"alembic_head", "expected_head", "observed_heads"}
+_SAFE_ALEMBIC_REVISION_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _DEPENDENCY_REPORT_SCHEMA = "nexus_security_dependency_assurance_v1"
 _SAFE_METADATA_RE = re.compile(r"^[A-Za-z0-9@._:/+\-]{1,160}$")
 _HEX_64_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -306,6 +308,8 @@ def _walk_json(value: object, *, path: str, findings: list[Finding], key: str = 
                 if len(findings) >= MAX_FINDINGS:
                     return
         if _hash_like_key(key):
+            return
+        if key in _ALEMBIC_REVISION_KEYS and _SAFE_ALEMBIC_REVISION_RE.fullmatch(value):
             return
         for rule, pattern in _PII_PATTERNS:
             match = pattern.search(value)
