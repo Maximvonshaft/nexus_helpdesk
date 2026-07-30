@@ -297,6 +297,12 @@ def validate(values: dict[str, str]) -> dict[str, object]:
             not outbound_enabled or outbound_provider not in {"email", "smtp"}
         ):
             raise ActivationError("outbound_email_pilot_authority_invalid")
+        if (
+            outbound_enabled
+            and outbound_provider in {"email", "smtp"}
+            and not outbound_email_pilot_enabled
+        ):
+            raise ActivationError("outbound_email_pilot_required")
 
         if whatsapp_enabled:
             if not outbound_enabled or outbound_provider != "native":
