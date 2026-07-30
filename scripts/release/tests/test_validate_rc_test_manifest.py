@@ -363,6 +363,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             operator_path,
             body_selector,
             "page.locator('#login-password').fill(adminPassword)",
+            "getByRole('button', { name: '登录', exact: true })",
             "test.setTimeout(90_000)",
             "url.pathname === '/api/webchat/init'",
             "const initResponse = await initResponsePromise",
@@ -370,6 +371,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, self.browser)
         self.assertNotIn("getByLabel('密码')", self.browser)
+        self.assertNotIn("登录运营工作台", self.browser)
         self.assertLess(
             self.browser.index(identity_extract),
             self.browser.index(session_key),
