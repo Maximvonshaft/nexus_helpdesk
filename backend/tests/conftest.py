@@ -23,6 +23,7 @@ from app.services.whatsapp_media_settings import (
 from app.services.whatsapp_runtime_settings import (
     reset_whatsapp_runtime_settings_cache,
 )
+from app.utils.time import utc_now
 from app.webchat_models import WebchatHandoffRequest
 
 
@@ -319,6 +320,16 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                     session,
                     int(tenant_id),
                 ).country_code
+
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "OperatorAgentState"
+            ):
+                now = utc_now()
+                row.status = "online"
+                row.last_heartbeat_at = now
+                row.status_changed_at = now
+                row.updated_at = now
 
             if (
                 module_name == "test_webchat_handoff_control"
