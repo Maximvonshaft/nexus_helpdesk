@@ -414,6 +414,9 @@ class OperatorRecoveryContractTests(unittest.TestCase):
         self.assertIn("artifacts/recovery/*.json", gate[scan:])
         self.assertIn("path: artifacts/recovery/*.json", workflow)
         self.assertNotIn("path: artifacts/recovery/backups", workflow)
+        self.assertIn("COMPARE_EXIT=$?", runner)
+        self.assertIn("'{schema_version,status,reasons,", runner)
+        self.assertIn('exit "$COMPARE_EXIT"', runner)
 
 
 class RecoveryEvidenceTests(unittest.TestCase):

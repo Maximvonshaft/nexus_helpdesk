@@ -224,6 +224,7 @@ python scripts/qualification/recovery/build_recovery_evidence.py snapshot \
   --marker-code "$QUALIFICATION_MARKER" \
   --output "$EVIDENCE_ROOT/restored-snapshot.json"
 
+set +e
 python scripts/qualification/recovery/build_recovery_evidence.py compare \
   --source "$EVIDENCE_ROOT/source-snapshot.json" \
   --restored "$EVIDENCE_ROOT/restored-snapshot.json" \
@@ -236,5 +237,15 @@ python scripts/qualification/recovery/build_recovery_evidence.py compare \
   --restore-completed-at "$(cat restore-completed-at.txt)" \
   --rto-target-seconds "$RTO_TARGET_SECONDS" \
   --rpo-target-seconds "$RPO_TARGET_SECONDS"
+COMPARE_EXIT=$?
+set -e
+
+if [[ "$COMPARE_EXIT" -ne 0 ]]; then
+  if [[ -f "$EVIDENCE_ROOT/recovery-evidence.json" ]]; then
+    jq -c '{schema_version,status,reasons,rto_target_seconds,rto_observed_seconds,rpo_target_seconds,rpo_observed_seconds,source_table_count,restored_table_count,source_total_rows,restored_total_rows,source_foreign_key_count,restored_foreign_key_count}' \
+      "$EVIDENCE_ROOT/recovery-evidence.json" >&2
+  fi
+  exit "$COMPARE_EXIT"
+fi
 
 test "$(jq -r '.status' "$EVIDENCE_ROOT/recovery-evidence.json")" = "pass"

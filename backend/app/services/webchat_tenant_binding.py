@@ -9,6 +9,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from ..models import Ticket
+from ..models_agent_routing import ConversationControl
 from ..models_webchat_binding import WebchatPublicOriginBinding
 from ..settings import get_settings
 from ..webchat_models import WebchatConversation
@@ -169,12 +170,23 @@ def resolve_public_webchat_scope(
         if existing is not None:
             existing_origin = normalize_public_origin(existing.origin) if existing.origin else None
             ticket = db.get(Ticket, existing.ticket_id) if existing.ticket_id is not None else None
-            ticket_country = normalize_country_code(ticket.country_code) if ticket is not None else None
+            control = (
+                db.query(ConversationControl)
+                .filter(ConversationControl.conversation_id == existing.id)
+                .first()
+            )
+            existing_country = normalize_country_code(
+                ticket.country_code
+                if ticket is not None
+                else control.country_code
+                if control is not None
+                else None
+            )
             if (
                 existing.tenant_key != scope.tenant_key
                 or existing.channel_key != scope.channel_key
                 or existing_origin != scope.normalized_origin
-                or ticket_country != scope.country_code
+                or existing_country != scope.country_code
             ):
                 raise _scope_mismatch()
     db.info[_SESSION_SCOPE_KEY] = scope

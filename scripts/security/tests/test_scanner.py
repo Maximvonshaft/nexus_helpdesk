@@ -89,6 +89,21 @@ class SecurityScannerTests(unittest.TestCase):
             (root / "artifact.json").write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(scan_artifact_files(root, ["artifact.json"]), [])
 
+    def test_validated_alembic_revisions_are_not_treated_as_tracking(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = {
+                "alembic_head": "20260729_r15_tenant_scope",
+                "expected_head": "20260729_r15_tenant_scope",
+                "observed_heads": ["20260729_wa5_signup_checkpoint"],
+                "untrusted_reference": "CH020000129135",
+            }
+            (root / "artifact.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            findings = scan_artifact_files(root, ["artifact.json"])
+
+            self.assertEqual([finding.rule for finding in findings], ["artifact:tracking"])
+
     def test_dependency_report_allows_only_bounded_security_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
