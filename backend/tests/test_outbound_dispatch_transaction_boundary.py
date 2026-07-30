@@ -74,6 +74,17 @@ def _message(message_id: int) -> SimpleNamespace:
     )
 
 
+def _authorize_email_dispatch(monkeypatch) -> None:
+    """Keep transaction tests focused on retry/lease behavior, not capability denial."""
+    monkeypatch.setattr(message_dispatch, "_external_dispatch_block_reason", lambda: None)
+    monkeypatch.setattr(message_dispatch.settings, "outbound_provider", "email")
+    monkeypatch.setattr(
+        message_dispatch.settings,
+        "outbound_email_production_pilot_enabled",
+        True,
+    )
+
+
 def test_reclaim_stale_processing_returns_attempt_to_retry_state(monkeypatch):
     row = _message(11)
     db = _FakeDB([row])
@@ -126,7 +137,7 @@ def test_dispatch_pending_messages_recovers_one_failed_attempt_and_continues(mon
     db = _FakeDB([first, second])
     processed_ids: list[int] = []
 
-    monkeypatch.setattr(message_dispatch, "_external_dispatch_block_reason", lambda: None)
+    _authorize_email_dispatch(monkeypatch)
     monkeypatch.setattr(
         message_dispatch,
         "claim_pending_messages",
@@ -170,7 +181,7 @@ def test_dispatch_pending_messages_marks_dead_when_recovered_attempt_exhausts_re
     row.max_retries = 3
     db = _FakeDB([row])
 
-    monkeypatch.setattr(message_dispatch, "_external_dispatch_block_reason", lambda: None)
+    _authorize_email_dispatch(monkeypatch)
     monkeypatch.setattr(
         message_dispatch,
         "claim_pending_messages",
