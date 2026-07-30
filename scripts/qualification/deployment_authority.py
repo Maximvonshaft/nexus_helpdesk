@@ -77,12 +77,15 @@ RETIRED_OPERATIONAL_MARKERS = (
     "worker-handoff-snapshot",
     "handoff-snapshot",
     "deploy/docker-compose.server.yml",
-    "deploy/.env.prod",
     "deploy-app-1",
     "WEBCHAT_VOICE_ENABLED",
     "WHATSAPP_NATIVE_ENABLED",
     "WHATSAPP_DISPATCH_MODE",
     "http://127.0.0.1:18081",
+)
+
+RETIRED_OPERATIONAL_PATTERNS = (
+    r"deploy/\.env\.prod(?:$|[\s'\"\x60])",
 )
 
 
@@ -112,6 +115,11 @@ def _operational_authority_findings(root: Path) -> list[str]:
             if marker in text:
                 findings.append(
                     f"retired_operational_marker:{relative}:{marker}"
+                )
+        for pattern in RETIRED_OPERATIONAL_PATTERNS:
+            if re.search(pattern, text):
+                findings.append(
+                    f"retired_operational_pattern:{relative}:{pattern}"
                 )
 
     for relative in OPERATIONAL_WORKER_PATHS:
