@@ -66,6 +66,7 @@ OPERATIONAL_AUTHORITY_PATHS = (
     "docs/runbooks/production-activation.md",
     "docs/runbooks/release-metadata-consistency-gate.md",
     "docs/runbooks/outbound-email-production-pilot.md",
+    "docs/runbooks/urgent-webchat-text-launch.md",
     "deploy/docker-compose.production-activation.yml",
     "scripts/deploy/validate_production_activation.py",
     "scripts/probe_nexus_runtime.sh",
@@ -178,7 +179,12 @@ def _operational_authority_findings(root: Path) -> list[str]:
         ):
             if marker not in text:
                 findings.append(f"activation_compose_contract_missing:{marker}")
-        if text.count("EMAIL_MAILBOX_SYNC_ENABLED") != 1:
+        mailbox_keys = sum(
+            1
+            for line in text.splitlines()
+            if line.strip().startswith("EMAIL_MAILBOX_SYNC_ENABLED:")
+        )
+        if mailbox_keys != 1:
             findings.append("mailbox_sync_must_be_preflight_only")
 
     activation_validator = root / "scripts/deploy/validate_production_activation.py"
