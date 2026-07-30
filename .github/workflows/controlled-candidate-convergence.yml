@@ -181,13 +181,15 @@ jobs:
           exit-code: "0"
           scanners: vuln
 
-      - name: Generate same-image CycloneDX
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+      - name: Generate same-image CycloneDX with immutable Trivy action
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
-          image: ${{ env.CANDIDATE_IMAGE }}
-          format: cyclonedx-json
-          output-file: artifacts/release-image/image.raw.cdx.json
-          upload-artifact: false
+          image-ref: ${{ env.CANDIDATE_IMAGE }}
+          format: cyclonedx
+          output: artifacts/release-image/image.raw.cdx.json
+          scanners: vuln
+          ignore-unfixed: false
+          exit-code: "0"
 
       - name: Evaluate image assurance and compliance
         id: image_assurance

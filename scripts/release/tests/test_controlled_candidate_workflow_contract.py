@@ -35,6 +35,24 @@ HELPERS = "\n".join(
 
 
 class ControlledCandidateWorkflowContractTests(unittest.TestCase):
+    def test_application_sbom_uses_the_assurance_authority_trivy_contract(self) -> None:
+        step = WORKFLOW[
+            WORKFLOW.index("Generate same-image CycloneDX with immutable Trivy action") :
+            WORKFLOW.index("Evaluate image assurance and compliance")
+        ]
+        self.assertIn(
+            "uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+            step,
+        )
+        for marker in (
+            "image-ref: ${{ env.CANDIDATE_IMAGE }}",
+            "format: cyclonedx",
+            "output: artifacts/release-image/image.raw.cdx.json",
+            "scanners: vuln",
+        ):
+            self.assertIn(marker, step)
+        self.assertNotIn("anchore/sbom-action", WORKFLOW)
+
     def test_runs_only_after_successful_exact_main_acceptance(self) -> None:
         self.assertIn("workflow_run:", WORKFLOW)
         self.assertIn("- Canonical Acceptance", WORKFLOW)
@@ -178,7 +196,6 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         combined = WORKFLOW + "\n" + HELPERS
         for marker in (
             "image-ref: ${{ env.CANDIDATE_IMAGE }}",
-            "image: ${{ env.CANDIDATE_IMAGE }}",
             "release-image-manifest.json",
             "sidecar-image-manifest.json",
             "registry-publish-receipt.json",
