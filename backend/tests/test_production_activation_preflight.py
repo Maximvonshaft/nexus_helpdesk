@@ -44,6 +44,8 @@ def _full_values() -> dict[str, str]:
         "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
         "ENABLE_OUTBOUND_DISPATCH": "false",
         "OUTBOUND_PROVIDER": "disabled",
+        "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
+        "EMAIL_MAILBOX_SYNC_ENABLED": "false",
         "OPERATIONS_DISPATCH_MODE": "disabled",
         "OPERATIONS_DISPATCH_ADAPTER": "disabled",
         "PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/production",
@@ -54,7 +56,7 @@ def _full_values() -> dict[str, str]:
 def test_full_activation_passes_with_exact_controls_and_evidence() -> None:
     result = activation.validate(_full_values())
 
-    assert result["schema"] == "nexus.production-activation-preflight.v4"
+    assert result["schema"] == "nexus.production-activation-preflight.v5"
     assert result["status"] == "pass"
     assert result["profile"] == "full"
     assert result["candidate"] == {
@@ -64,6 +66,8 @@ def test_full_activation_passes_with_exact_controls_and_evidence() -> None:
         "runtime_image_digest": IMAGE_DIGEST,
     }
     assert result["capabilities"]["webchat_ai"] is True
+    assert result["capabilities"]["operations"] is False
+    assert result["capabilities"]["email_mailbox_sync"] is False
     assert result["evidence"] == {
         "production": "https://evidence.example/production",
         "webchat_ai": "https://evidence.example/webchat-ai",
@@ -141,10 +145,14 @@ def test_voice_activation_requires_livekit_credentials_models_and_evidence() -> 
             "LIVEKIT_AGENT_NAME": "nexus-voice-agent",
             "LIVEKIT_API_KEY_FILE": "/run/secrets/livekit_api_key",
             "LIVEKIT_API_SECRET_FILE": "/run/secrets/livekit_api_secret",
-            "LIVEKIT_AGENT_SHARED_SECRET_FILE": "/run/secrets/livekit_agent_shared_secret",
+            "LIVEKIT_AGENT_SHARED_SECRET_FILE": (
+                "/run/secrets/livekit_agent_shared_secret"
+            ),
             "NEXUS_VOICE_STT_MODEL": "stt-model",
             "NEXUS_VOICE_TTS_MODEL": "tts-model",
-            "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL": "https://evidence.example/telephony",
+            "TELEPHONY_PRODUCTION_E2E_EVIDENCE_URL": (
+                "https://evidence.example/telephony"
+            ),
         }
     )
 
@@ -163,9 +171,13 @@ def test_provider_canary_rejects_unbounded_or_parallel_external_effects() -> Non
         "PROVIDER_RUNTIME_TRAFFIC_MODE": "canary",
         "PROVIDER_RUNTIME_KILL_SWITCH": "false",
         "PROVIDER_RUNTIME_CANARY_PERCENT": "5",
-        "PROVIDER_CANARY_E2E_EVIDENCE_URL": "https://evidence.example/provider-canary",
+        "PROVIDER_CANARY_E2E_EVIDENCE_URL": (
+            "https://evidence.example/provider-canary"
+        ),
         "ENABLE_OUTBOUND_DISPATCH": "false",
         "OUTBOUND_PROVIDER": "disabled",
+        "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED": "false",
+        "EMAIL_MAILBOX_SYNC_ENABLED": "false",
         "WEBCHAT_HUMAN_CALL_ENABLED": "false",
         "WEBCHAT_LIVE_AI_VOICE_ENABLED": "false",
         "OPERATIONS_DISPATCH_MODE": "disabled",
@@ -183,3 +195,59 @@ def test_provider_canary_rejects_unbounded_or_parallel_external_effects() -> Non
         match="provider_canary_percent_invalid",
     ):
         activation.validate(values)
+
+
+def test_operations_activation_is_rejected_without_a_real_runtime() -> None:
+    values = _full_values()
+    values.update(
+        {
+            "OPERATIONS_DISPATCH_MODE": "live",
+            "OPERATIONS_DISPATCH_ADAPTER": "speedaf",
+            "OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL": (
+                "https://evidence.example/operations"
+            ),
+        }
+    )
+
+    with pytest.raises(
+        activation.ActivationError,
+        match="operations_dispatch_not_implemented",
+    ):
+        activation.validate(values)
+
+
+def test_mailbox_sync_is_rejected_until_it_has_independent_evidence() -> None:
+    values = _full_values()
+    values["EMAIL_MAILBOX_SYNC_ENABLED"] = "true"
+
+    with pytest.raises(
+        activation.ActivationError,
+        match="email_mailbox_sync_not_qualified",
+    ):
+        activation.validate(values)
+
+
+def test_outbound_email_pilot_requires_email_dispatch_authority() -> None:
+    values = _full_values()
+    values["OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED"] = "true"
+
+    with pytest.raises(
+        activation.ActivationError,
+        match="outbound_email_pilot_authority_invalid",
+    ):
+        activation.validate(values)
+
+    values.update(
+        {
+            "ENABLE_OUTBOUND_DISPATCH": "true",
+            "OUTBOUND_PROVIDER": "email",
+            "OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL": (
+                "https://evidence.example/outbound-email"
+            ),
+        }
+    )
+    result = activation.validate(values)
+    assert result["capabilities"]["outbound_email_pilot"] is True
+    assert result["evidence"]["outbound"] == (
+        "https://evidence.example/outbound-email"
+    )
