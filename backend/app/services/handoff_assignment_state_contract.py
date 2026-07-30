@@ -25,12 +25,13 @@ def _enforce_accepted_handoff_case_state(
     _flush_context,
     _instances,
 ) -> None:
-    """Keep the accepted Handoff, Conversation and Ticket state atomic.
+    """Keep each accepted Ticket-backed Handoff and Case state atomic.
 
     Routing decides who owns the Handoff. This persistence contract does not
     select an agent or grant authority; it validates the resulting Conversation
     ownership and projects that accepted ownership onto the canonical Ticket-as-
-    Case state for every Text, Voice and automatic assignment path.
+    Case state for every Text, Voice and automatic assignment path. A genuinely
+    Ticketless conversation remains outside this projection.
     """
 
     candidates = _accepted_handoff_candidates(session)
@@ -51,15 +52,6 @@ def _enforce_accepted_handoff_case_state(
             )
             if conversation is None:
                 raise RuntimeError("accepted_handoff_conversation_missing")
-            if (
-                conversation.current_handoff_request_id != request_row.id
-                or conversation.handoff_status != "accepted"
-                or conversation.active_agent_id != agent_id
-                or not conversation.ai_suspended
-            ):
-                raise RuntimeError(
-                    "accepted_handoff_conversation_projection_invalid"
-                )
 
             request_ticket_id = request_row.ticket_id
             conversation_ticket_id = conversation.ticket_id
@@ -71,6 +63,16 @@ def _enforce_accepted_handoff_case_state(
                 or int(request_ticket_id) != int(conversation_ticket_id)
             ):
                 raise RuntimeError("accepted_handoff_ticket_relationship_conflict")
+
+            if (
+                conversation.current_handoff_request_id != request_row.id
+                or conversation.handoff_status != "accepted"
+                or conversation.active_agent_id != agent_id
+                or not conversation.ai_suspended
+            ):
+                raise RuntimeError(
+                    "accepted_handoff_conversation_projection_invalid"
+                )
 
             ticket = session.get(Ticket, int(request_ticket_id))
             if ticket is None:
