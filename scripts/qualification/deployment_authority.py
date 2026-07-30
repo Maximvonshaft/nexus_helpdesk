@@ -20,6 +20,13 @@ RETIRED_DEPLOY_PATHS = (
     "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
     "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
     "backend/tests/test_candidate_compose_contract.py",
+    "scripts/deploy/prepare_production_release_env.sh",
+    "backend/tests/test_release_metadata_security_contract.py",
+    "scripts/smoke/worker_daemon_readiness_probe.py",
+    "backend/tests/test_worker_daemon_readiness.py",
+    "docs/deployment/release-metadata.md",
+    "docs/deploy-server-local-postgres.md",
+    "docs/deploy-server-external-postgres.md",
 )
 
 DEPLOYMENT_TEXT_SUFFIXES = {
@@ -32,6 +39,46 @@ DEPLOYMENT_TEXT_SUFFIXES = {
     ".env",
     ".example",
 }
+
+CURRENT_WORKER_SERVICES = (
+    "worker-outbound-controlled",
+    "worker-background-controlled",
+    "worker-webchat-ai-controlled",
+)
+
+OPERATIONAL_AUTHORITY_PATHS = (
+    "README.md",
+    "docs/runbook-production.md",
+    "docs/deployment-runbook.md",
+    "docs/ops/alerting.md",
+    "docs/performance-budgets.md",
+    "docs/runbooks/production-activation.md",
+    "docs/runbooks/release-metadata-consistency-gate.md",
+    "scripts/probe_nexus_runtime.sh",
+    "scripts/smoke/runtime_performance_baseline.sh",
+    "scripts/deploy/rollback_release.sh",
+    "scripts/release_metadata_consistency_gate.py",
+)
+
+OPERATIONAL_WORKER_PATHS = (
+    "docs/runbooks/production-activation.md",
+    "scripts/probe_nexus_runtime.sh",
+    "scripts/smoke/runtime_performance_baseline.sh",
+    "scripts/deploy/rollback_release.sh",
+)
+
+RETIRED_OPERATIONAL_MARKERS = (
+    "worker-handoff-snapshot-controlled",
+    "worker-handoff-snapshot",
+    "handoff-snapshot",
+    "deploy/docker-compose.server.yml",
+    "deploy/.env.prod",
+    "deploy-app-1",
+    "WEBCHAT_VOICE_ENABLED",
+    "WHATSAPP_NATIVE_ENABLED",
+    "WHATSAPP_DISPATCH_MODE",
+    "http://127.0.0.1:18081",
+)
 
 
 def _deployment_files(root: Path) -> list[Path]:
@@ -46,6 +93,66 @@ def _deployment_files(root: Path) -> list[Path]:
             ):
                 paths.append(path)
     return sorted(set(paths))
+
+
+def _operational_authority_findings(root: Path) -> list[str]:
+    findings: list[str] = []
+    for relative in OPERATIONAL_AUTHORITY_PATHS:
+        path = root / relative
+        if not path.is_file():
+            findings.append(f"operational_authority_missing:{relative}")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for marker in RETIRED_OPERATIONAL_MARKERS:
+            if marker in text:
+                findings.append(
+                    f"retired_operational_marker:{relative}:{marker}"
+                )
+
+    for relative in OPERATIONAL_WORKER_PATHS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for service in CURRENT_WORKER_SERVICES:
+            if service not in text:
+                findings.append(
+                    f"operational_worker_missing:{relative}:{service}"
+                )
+
+    probe = root / "scripts/probe_nexus_runtime.sh"
+    if probe.is_file():
+        text = probe.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "X-Metrics-Token",
+            "metrics endpoint accepted an unauthenticated request",
+            "metrics authenticated probe failed",
+        ):
+            if marker not in text:
+                findings.append(f"runtime_probe_contract_missing:{marker}")
+
+    activation = root / "docs/runbooks/production-activation.md"
+    if activation.is_file():
+        text = activation.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "deploy/nexus-prod-compose.sh",
+            "NEXUS_DATABASE_TOPOLOGY",
+            "NEXUS_CONTROLLED_ENV_FILE",
+        ):
+            if marker not in text:
+                findings.append(
+                    f"production_activation_authority_missing:{marker}"
+                )
+
+    release_gate = root / "scripts/release_metadata_consistency_gate.py"
+    if release_gate.is_file():
+        text = release_gate.read_text(encoding="utf-8", errors="replace")
+        if 'parser.add_argument("--container", default="")' not in text:
+            findings.append("release_gate_container_must_not_be_guessed")
+        if "container_required" not in text:
+            findings.append("release_gate_container_requirement_missing")
+
+    return findings
 
 
 def deployment_authority_findings(root: Path) -> list[str]:
@@ -80,6 +187,8 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "/proc/1/cmdline",
             "controlled-worker-ok",
             "scripts/run_worker.py",
+            "worker-handoff-snapshot-controlled",
+            "handoff-snapshot",
         ):
             if forbidden in text:
                 findings.append(f"controlled_compose_forbidden:{forbidden}")
@@ -88,6 +197,7 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "scripts/check_worker_progress.py",
             "NEXUS_WORKER_ID",
             "NEXUS_WORKER_QUEUE",
+            *CURRENT_WORKER_SERVICES,
         ):
             if required not in text:
                 findings.append(f"controlled_compose_required_missing:{required}")
@@ -137,6 +247,7 @@ def deployment_authority_findings(root: Path) -> list[str]:
             "rollback_controlled_image_mismatch",
             "docker-compose.controlled.yml",
             "app-controlled",
+            *CURRENT_WORKER_SERVICES,
         ):
             if marker not in text:
                 findings.append(f"rollback_controlled_contract_missing:{marker}")
@@ -146,9 +257,12 @@ def deployment_authority_findings(root: Path) -> list[str]:
             'IMAGE_TAG="$OLD_IMAGE_TAG" docker compose',
             "docker-compose.server.yml",
             "docker-compose.candidate.yml",
+            "worker-handoff-snapshot-controlled",
         ):
             if forbidden in text:
                 findings.append(f"rollback_legacy_path_present:{forbidden}")
+
+    findings.extend(_operational_authority_findings(root))
     return sorted(set(findings))
 
 
@@ -156,7 +270,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     findings = deployment_authority_findings(root)
     payload = {
-        "schema": "nexus.deployment-authority.v2",
+        "schema": "nexus.deployment-authority.v3",
         "status": "pass" if not findings else "fail",
         "findings": findings,
     }
