@@ -12,6 +12,18 @@
         "\"private_key_exported\": False",
         "\"contains_secrets\": False"
       ]
+    },
+    {
+      "rule_id": "py/weak-sensitive-data-hashing",
+      "path": "backend/app/services/speedaf/track_query.py",
+      "start_line": 429,
+      "owner": "integration_platform",
+      "expires_on": "2027-01-31",
+      "reason": "Speedaf's upstream wire protocol requires this exact MD5 compatibility signature; usedforsecurity=False documents that it is not used for password storage or security hashing.",
+      "required_markers": [
+        "Speedaf wire protocol mandates MD5",
+        "usedforsecurity=False"
+      ]
     }
   ],
   "schema_version": "nexus_codeql_exception_policy_v1"
