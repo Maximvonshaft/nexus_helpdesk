@@ -36,15 +36,25 @@ FINAL_MANIFEST = FINAL_PREFIX + "controlled-candidate-manifest.json"
 RC_MANIFEST = FINAL_PREFIX + "candidate-manifest.json"
 COMPLIANCE_BINDING = FINAL_PREFIX + "release-image-compliance-binding.json"
 PUBLISH_RECEIPT = FINAL_PREFIX + "registry-publish-receipt.json"
+SIDECAR_MANIFEST = FINAL_PREFIX + "sidecar-image-manifest.json"
+SIDECAR_PUBLISH_RECEIPT = (
+    FINAL_PREFIX + "whatsapp-sidecar-registry-publish-receipt.json"
+)
 
 ATTESTATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
+SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+MIGRATION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
 BUILD_TIME_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 GENERATED_AT_RE = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
 )
 EVALUATED_ON_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 APP_VERSION_RE = re.compile(r"^controlled-[0-9a-f]{12}$")
+SIDECAR_APP_VERSION_RE = re.compile(r"^controlled-[0-9a-f]{40}$")
 IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:rc-test-[0-9a-f]{40}$")
+SIDECAR_IMAGE_TAG_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._/-]*:controlled-[0-9a-f]{40}$"
+)
 
 
 def _load_json(root: Path, relative: str) -> dict[str, object] | None:
@@ -111,6 +121,18 @@ def _safe_value(
             return bool(APP_VERSION_RE.fullmatch(value))
         if key_path == ("candidate", "embedded_image_tag"):
             return bool(IMAGE_TAG_RE.fullmatch(value))
+        if key_path == ("candidate", "migration_revision"):
+            return bool(MIGRATION_RE.fullmatch(value))
+        if key_path == ("candidate", "whatsapp_sidecar", "app_version"):
+            candidate = payload.get("candidate")
+            source_sha = (
+                str(candidate.get("source_sha") or "")
+                if isinstance(candidate, dict)
+                else ""
+            )
+            return bool(SIDECAR_APP_VERSION_RE.fullmatch(value)) and value == (
+                f"controlled-{source_sha}"
+            )
         attestation = payload.get("attestation")
         if not isinstance(attestation, dict):
             return False
@@ -124,7 +146,11 @@ def _safe_value(
         return False
 
     if relative == RC_MANIFEST and schema == "nexus.osr.rc-test-candidate.v1":
-        return key_path == ("candidate", "image_tag") and bool(IMAGE_TAG_RE.fullmatch(value))
+        if key_path == ("candidate", "image_tag"):
+            return bool(IMAGE_TAG_RE.fullmatch(value))
+        if key_path == ("candidate", "migration_revision"):
+            return bool(MIGRATION_RE.fullmatch(value))
+        return False
 
     if (
         relative == COMPLIANCE_BINDING
@@ -139,6 +165,36 @@ def _safe_value(
             return bool(APP_VERSION_RE.fullmatch(value))
         if key_path == ("embedded_image_tag",):
             return bool(IMAGE_TAG_RE.fullmatch(value))
+
+    if (
+        relative == SIDECAR_MANIFEST
+        and schema == "nexus.whatsapp-sidecar.image-assurance.v1"
+    ):
+        source_sha = str(payload.get("source_sha") or "").strip()
+        if key_path in (("source_sha",), ("revision",)):
+            return bool(SHA40_RE.fullmatch(value)) and value == source_sha
+        if key_path == ("image_tag",):
+            return bool(SIDECAR_IMAGE_TAG_RE.fullmatch(value)) and value.endswith(source_sha)
+        if key_path == ("build_time",):
+            return bool(GENERATED_AT_RE.fullmatch(value))
+        if key_path == ("app_version",):
+            return bool(SIDECAR_APP_VERSION_RE.fullmatch(value)) and value == (
+                f"controlled-{source_sha}"
+            )
+
+    if (
+        relative == SIDECAR_PUBLISH_RECEIPT
+        and schema == "nexus.whatsapp-sidecar.registry-publish-receipt.v1"
+    ):
+        source_sha = str(payload.get("source_sha") or "").strip()
+        if key_path == ("source_sha",):
+            return bool(SHA40_RE.fullmatch(value)) and value == source_sha
+        if key_path == ("build_time",):
+            return bool(GENERATED_AT_RE.fullmatch(value))
+        if key_path == ("app_version",):
+            return bool(SIDECAR_APP_VERSION_RE.fullmatch(value)) and value == (
+                f"controlled-{source_sha}"
+            )
 
     return False
 

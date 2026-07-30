@@ -14,14 +14,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ControlledCandidateArtifactScannerTests(unittest.TestCase):
-    source = "3bc06eba81db79f7f693e970e39944c07cd8eebe"
+    source = "f2aa9f0346abf6465551de507b0b8a2dfc3be6bc"
     final_prefix = Path("artifacts/final-controlled-candidate")
 
     def _write(self, root: Path, name: str, payload: dict) -> str:
         path = root / self.final_prefix / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        return path.as_posix().removeprefix(root.as_posix() + "/")
+        return path.relative_to(root).as_posix()
 
     def _fixtures(self, root: Path) -> list[str]:
         attestation_id = "123456789"
@@ -32,6 +32,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             "generated_at": "2026-07-14T00:22:58.123456Z",
             "candidate": {
                 "source_sha": self.source,
+                "migration_revision": "20260729_r15_tenant_scope",
                 "build_time": "20260714T001928Z",
                 "app_version": "controlled-3bc06eba81db",
                 "embedded_image_tag": "nexusdesk/helpdesk:rc-test-" + self.source,
@@ -50,6 +51,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             "decision": "RC0_TEST_DEPLOYABLE",
             "candidate": {
                 "source_sha": self.source,
+                "migration_revision": "20260729_r15_tenant_scope",
                 "image_tag": "nexusdesk/helpdesk:rc-test-" + self.source,
             },
         }
@@ -66,11 +68,36 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             "app_version": "controlled-3bc06eba81db",
             "embedded_image_tag": "nexusdesk/helpdesk:rc-test-" + self.source,
         }
+        sidecar = {
+            "schema": "nexus.whatsapp-sidecar.image-assurance.v1",
+            "status": "pass",
+            "source_sha": self.source,
+            "revision": self.source,
+            "image_tag": "nexusdesk/whatsapp-sidecar:controlled-" + self.source,
+            "build_time": "2026-07-14T00:19:28Z",
+            "app_version": "controlled-" + self.source,
+        }
+        sidecar_receipt = {
+            "schema": "nexus.whatsapp-sidecar.registry-publish-receipt.v1",
+            "status": "pass",
+            "source_sha": self.source,
+            "build_time": "2026-07-14T00:19:28Z",
+            "app_version": "controlled-" + self.source,
+        }
+        final["candidate"]["whatsapp_sidecar"] = {
+            "app_version": "controlled-" + self.source,
+        }
         return [
             self._write(root, "controlled-candidate-manifest.json", final),
             self._write(root, "candidate-manifest.json", rc),
             self._write(root, "release-image-compliance-binding.json", binding),
             self._write(root, "registry-publish-receipt.json", receipt),
+            self._write(root, "sidecar-image-manifest.json", sidecar),
+            self._write(
+                root,
+                "whatsapp-sidecar-registry-publish-receipt.json",
+                sidecar_receipt,
+            ),
         ]
 
     def test_suppresses_only_validated_release_metadata_false_positives(self) -> None:
