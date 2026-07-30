@@ -322,7 +322,7 @@ set_stage seed-operator
 compose run --rm --no-deps -T app-rc python - <<'PY'
 import os
 from sqlalchemy import func
-from app.auth_service import hash_password
+from app.auth_service import hash_password, verify_password
 from app.db import SessionLocal
 from app.enums import UserRole
 from app.model_registry import register_all_models
@@ -336,11 +336,20 @@ try:
     if tenant is None or not tenant.is_active:
         raise SystemExit("RC operator Tenant missing")
     username = os.environ["RC_TEST_ADMIN_USERNAME"].strip()
+    password = os.environ["RC_TEST_ADMIN_PASSWORD"]
     user = db.query(User).filter(func.lower(User.username) == username.lower()).first()
     if user is None:
-        user = User(username=username, display_name="RC Test Administrator", email=None, password_hash="x", role=UserRole.admin, is_active=True)
+        user = User(
+            username=username,
+            display_name="RC Test Administrator",
+            email=None,
+            password_hash=hash_password(password),
+            role=UserRole.admin,
+            is_active=True,
+        )
         db.add(user)
-    user.password_hash = hash_password(os.environ["RC_TEST_ADMIN_PASSWORD"])
+    elif not verify_password(password, user.password_hash):
+        user.password_hash = hash_password(password)
     user.role = UserRole.admin
     user.is_active = True
     user.tenant_id = tenant.id

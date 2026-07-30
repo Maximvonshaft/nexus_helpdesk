@@ -218,6 +218,19 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
                 self.compose + self.env_example + self.runner,
             )
 
+    def test_rc_operator_seed_is_password_idempotent(self):
+        self.assertIn("from app.auth_service import hash_password, verify_password", self.runner)
+        self.assertIn('password = os.environ["RC_TEST_ADMIN_PASSWORD"]', self.runner)
+        self.assertIn("password_hash=hash_password(password)", self.runner)
+        self.assertIn(
+            "elif not verify_password(password, user.password_hash):",
+            self.runner,
+        )
+        self.assertNotIn(
+            'user.password_hash = hash_password(os.environ["RC_TEST_ADMIN_PASSWORD"])',
+            self.runner,
+        )
+
     def test_rc_application_uses_shellless_exec_vector(self):
         app_block = self.compose.split("  app-rc:\n", 1)[1].split(
             "\n  worker-outbound-rc:\n",
