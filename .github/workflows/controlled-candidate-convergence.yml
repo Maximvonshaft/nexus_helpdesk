@@ -163,9 +163,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p "$RELEASE_IMAGE_DIR"
-          docker run --rm --entrypoint sh "$CANDIDATE_IMAGE" -c \
-            'set -eu; python -c "import app.main, psycopg, cryptography, argon2"; gunicorn --check-config app.main:app' \
-            > "$RELEASE_IMAGE_DIR/runtime-smoke-summary.txt" 2>&1
+          {
+            docker run --rm --entrypoint /usr/local/bin/python "$CANDIDATE_IMAGE" \
+              -c 'import app.main, psycopg, cryptography, argon2'
+            docker run --rm --entrypoint /usr/local/bin/python "$CANDIDATE_IMAGE" \
+              -m gunicorn --check-config app.main:app
+          } > "$RELEASE_IMAGE_DIR/runtime-smoke-summary.txt" 2>&1
 
       - name: Scan same RC image with immutable Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
