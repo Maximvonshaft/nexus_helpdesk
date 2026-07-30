@@ -210,6 +210,8 @@ docker image inspect "${RC_POSTGRES_IMAGE}" >/dev/null
 docker image inspect "${RC_NGINX_IMAGE}" >/dev/null
 printf '%s\n' "${RC_POSTGRES_IMAGE}" > "${EVIDENCE_DIR}/postgres-image-digest.txt"
 printf '%s\n' "${RC_NGINX_IMAGE}" > "${EVIDENCE_DIR}/nginx-image-digest.txt"
+printf '%s\n' "${SOURCE_SHA}" > "${EVIDENCE_DIR}/source-sha.txt"
+printf '%s\n' "${IMAGE_TAG_VALUE}" > "${EVIDENCE_DIR}/image-tag.txt"
 
 set_stage build
 DOCKER_BUILDKIT=1 docker build --pull=false \

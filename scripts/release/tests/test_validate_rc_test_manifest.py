@@ -228,6 +228,16 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             self.runner,
         )
 
+    def test_runner_records_source_and_application_image_identities(self):
+        self.assertIn(
+            'printf \'%s\\n\' "${SOURCE_SHA}" > "${EVIDENCE_DIR}/source-sha.txt"',
+            self.runner,
+        )
+        self.assertIn(
+            'printf \'%s\\n\' "${IMAGE_TAG_VALUE}" > "${EVIDENCE_DIR}/image-tag.txt"',
+            self.runner,
+        )
+
     def test_runner_removes_internal_state_from_final_evidence_set(self):
         self.assertIn(
             'rm -f "${STATUS_FILE}" "${EVIDENCE_DIR}/base-image-digests.jsonl"',
