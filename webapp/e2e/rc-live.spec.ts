@@ -135,7 +135,10 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   markStage('operator-workspace')
   expect(operatorResponse).not.toBeNull()
   expect(operatorResponse?.ok()).toBeTruthy()
-  await expect(page).toHaveURL(/\/workspace\?queue=(ticket|handoff)%3A\d+$/, { timeout: 25_000 })
+  await expect(page).toHaveURL(
+    rcUrl(`/workspace?session=${encodeURIComponent(operatorSessionKey)}`),
+    { timeout: 25_000 },
+  )
   await expect(page.getByTestId('operator-workspace')).toBeVisible({ timeout: 20_000 })
 
   markStage('operator-case')
