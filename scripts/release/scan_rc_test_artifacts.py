@@ -37,7 +37,16 @@ NETWORK_RE = re.compile(r"^nexus_(?:rc_test|controlled)_[0-9]+_(?:rc|edge)$")
 APP_VERSION_RE = re.compile(r"^(?:rc-test|controlled)-[0-9a-f]{12}$")
 IMAGE_TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,127}:rc-test-[0-9a-f]{40}$")
 BUILD_TIME_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
-MIGRATION_RE = re.compile(r"^[0-9]{8}_[0-9]{4}$")
+MIGRATION_RE = re.compile(r"^[0-9]{8}_[A-Za-z0-9][A-Za-z0-9_.-]{0,70}$")
+
+MIGRATION_KEYS_BY_PATH = {
+    f"{RC_EVIDENCE_PREFIX}candidate-manifest.json": {"migration_revision"},
+    f"{RC_EVIDENCE_PREFIX}readyz.json": {
+        "migration_revision",
+        "expected",
+        "observed",
+    },
+}
 
 LOOPBACK_URL_KEYS = {"origin", "browser_origin", "page_url"}
 NETWORK_KEYS = {"app_networks", "nginx_networks", "internal_network", "loopback_gateway_network"}
@@ -76,7 +85,7 @@ def _is_safe_rc_metadata(*, path: str, key: str, value: str) -> bool:
         return bool(IMAGE_TAG_RE.fullmatch(value))
     if key == "build_time":
         return bool(BUILD_TIME_RE.fullmatch(value))
-    if key == "migration_revision":
+    if key in MIGRATION_KEYS_BY_PATH.get(path, set()):
         return bool(MIGRATION_RE.fullmatch(value))
     return False
 
