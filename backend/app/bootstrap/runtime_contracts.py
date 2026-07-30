@@ -7,9 +7,6 @@ from ..services.golden_journey_portfolio import (
 from ..services.handoff_assignment_contract import (
     install_handoff_assignment_contract,
 )
-from ..services.handoff_assignment_state_contract import (
-    install_handoff_assignment_state_contract,
-)
 from ..services.knowledge_pdf_safety import install_knowledge_pdf_safety
 from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
@@ -34,7 +31,6 @@ def register_runtime_contracts() -> None:
     install_whatsapp_media_events()
     install_golden_journey_portfolio_guard()
     install_handoff_assignment_contract()
-    install_handoff_assignment_state_contract()
     install_tenant_reference_runtime_contract()
     install_knowledge_pdf_safety()
     install_read_model_contracts()
