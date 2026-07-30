@@ -14,6 +14,25 @@ SPEC.loader.exec_module(MODULE)
 
 
 class BuildRcTestManifestTests(unittest.TestCase):
+    def test_missing_base_image_identity_has_specific_failure_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = type(
+                "Args",
+                (),
+                {
+                    "evidence_dir": root,
+                    "source_sha": "a" * 40,
+                    "image_tag": "candidate:test",
+                    "migration_head": "20260711_0058",
+                },
+            )()
+            with self.assertRaisesRegex(
+                ValueError,
+                "missing regular evidence file: readyz.json",
+            ):
+                MODULE.build_manifest(args)
+
     def _write_rollback(self, root: Path, **overrides: object) -> None:
         payload = {
             "schema": "nexus.osr.rc-test-rollback-verification.v1",

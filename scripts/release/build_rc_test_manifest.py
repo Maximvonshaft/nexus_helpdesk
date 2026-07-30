@@ -174,6 +174,16 @@ def _write_failure(root: Path, *, reason_code: str) -> None:
 
 def build_manifest(args: argparse.Namespace) -> None:
     root = args.evidence_dir.resolve(strict=True)
+    for filename in (
+        "readyz.json",
+        "safe-config.json",
+        "image-id.txt",
+        "postgres-image-digest.txt",
+        "nginx-image-digest.txt",
+    ):
+        path = root / filename
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"missing regular evidence file: {filename}")
     ready = json.loads((root / "readyz.json").read_text(encoding="utf-8"))
     safe_config = json.loads((root / "safe-config.json").read_text(encoding="utf-8"))
     image_id = _read(root / "image-id.txt")
