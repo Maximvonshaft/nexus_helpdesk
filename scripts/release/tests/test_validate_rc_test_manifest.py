@@ -354,6 +354,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         identity_extract = "new URL(messageResponse.url()).pathname.match"
         session_key = "const operatorSessionKey = `webchat:${conversationId}`"
         operator_path = "`/webchat?session=${encodeURIComponent(operatorSessionKey)}`"
+        workspace_path = "rcUrl(`/workspace?session=${encodeURIComponent(operatorSessionKey)}`)"
         body_selector = (
             "page.locator('.operator-message p', { hasText: message }).first()"
         )
@@ -361,6 +362,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             identity_extract,
             session_key,
             operator_path,
+            workspace_path,
             body_selector,
             "page.locator('#login-password').fill(adminPassword)",
             "getByRole('button', { name: '登录', exact: true })",
@@ -372,6 +374,7 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             self.assertIn(marker, self.browser)
         self.assertNotIn("getByLabel('密码')", self.browser)
         self.assertNotIn("登录运营工作台", self.browser)
+        self.assertNotIn("/workspace\\?queue=", self.browser)
         self.assertLess(
             self.browser.index(identity_extract),
             self.browser.index(session_key),
@@ -382,6 +385,10 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
         )
         self.assertLess(
             self.browser.index(operator_path),
+            self.browser.index(workspace_path),
+        )
+        self.assertLess(
+            self.browser.index(workspace_path),
             self.browser.index(body_selector),
         )
         self.assertIn(
