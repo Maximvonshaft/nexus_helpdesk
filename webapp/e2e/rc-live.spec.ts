@@ -126,7 +126,7 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   expect(loginResponse?.ok()).toBeTruthy()
   await page.getByLabel('账号').fill(adminUsername)
   await page.locator('#login-password').fill(adminPassword)
-  await page.getByRole('button', { name: '登录运营工作台' }).click()
+  await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page).not.toHaveURL(/\/login$/)
 
   markStage('operator-navigation')
