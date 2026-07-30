@@ -103,6 +103,11 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     queryFn: () => supportApi.resolveSupportConversation(requestedSessionKey || ''),
     enabled: Boolean(session.data && canReadQueue && requestedSessionKey),
     retry: false,
+    refetchInterval: (query) => {
+      const conversation = query.state.data?.conversation
+      return conversation && !conversation.handoff_request_id && !conversation.ticket_id ? 1_000 : false
+    },
+    refetchIntervalInBackground: false,
   })
   const requestedQueueId = useMemo(() => {
     const conversation = requestedConversation.data?.conversation
@@ -134,6 +139,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     && !requestedConversation.isError
     && (
       requestedConversation.isLoading
+      || !requestedQueueId
       || (requestedQueueId && !requestedQueueItem && (queue.isLoading || queue.hasNextPage || queue.isFetchingNextPage))
     )
   )
