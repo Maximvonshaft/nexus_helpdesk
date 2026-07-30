@@ -228,6 +228,12 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             self.runner,
         )
 
+    def test_runner_removes_internal_state_from_final_evidence_set(self):
+        self.assertIn(
+            'rm -f "${STATUS_FILE}" "${EVIDENCE_DIR}/base-image-digests.jsonl"',
+            self.runner,
+        )
+
     def test_rc_operator_seed_is_password_idempotent(self):
         self.assertIn("from app.auth_service import hash_password, verify_password", self.runner)
         self.assertIn('password = os.environ["RC_TEST_ADMIN_PASSWORD"]', self.runner)
