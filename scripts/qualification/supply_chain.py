@@ -63,6 +63,7 @@ SUPPLY_CHAIN_INPUTS = (
     "docs/performance-budgets.md",
     "docs/runbooks/production-activation.md",
     "docs/runbooks/release-metadata-consistency-gate.md",
+    "docs/runbooks/outbound-email-production-pilot.md",
 )
 
 COMPOSE_INPUTS = (
