@@ -52,6 +52,8 @@ services:
       NEXUS_VOICE_TTS_MODEL: ${NEXUS_VOICE_TTS_MODEL:-}
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: ${OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED:-false}
+      EMAIL_MAILBOX_SYNC_ENABLED: ${EMAIL_MAILBOX_SYNC_ENABLED:-false}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
       WHATSAPP_SIDECAR_IMAGE: ${WHATSAPP_SIDECAR_IMAGE:-}
       WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
@@ -127,6 +129,8 @@ services:
       OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL: ${OPERATIONS_PRODUCTION_E2E_EVIDENCE_URL:-}
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: ${OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED:-false}
+      EMAIL_MAILBOX_SYNC_ENABLED: ${EMAIL_MAILBOX_SYNC_ENABLED:-false}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
       WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
       WHATSAPP_EMBEDDED_SIGNUP_ENABLED: ${WHATSAPP_EMBEDDED_SIGNUP_ENABLED:-false}
@@ -157,6 +161,7 @@ services:
     environment:
       ENABLE_OUTBOUND_DISPATCH: ${ENABLE_OUTBOUND_DISPATCH:-false}
       OUTBOUND_PROVIDER: ${OUTBOUND_PROVIDER:-disabled}
+      OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED: ${OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED:-false}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
       WHATSAPP_META_WEBHOOK_PUBLIC_URL: ${WHATSAPP_META_WEBHOOK_PUBLIC_URL:-}
     depends_on:
@@ -167,6 +172,7 @@ services:
 
   worker-background-controlled:
     environment:
+      EMAIL_MAILBOX_SYNC_ENABLED: ${EMAIL_MAILBOX_SYNC_ENABLED:-false}
       WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
       WHATSAPP_MEDIA_ENABLED: ${WHATSAPP_MEDIA_ENABLED:-false}
       WHATSAPP_MEDIA_SCANNER: ${WHATSAPP_MEDIA_SCANNER:-disabled}
@@ -184,6 +190,18 @@ services:
       clamav-controlled:
         condition: service_healthy
         required: false
+
+  worker-webchat-ai-controlled:
+    depends_on:
+      app-controlled:
+        condition: service_healthy
+      production-activation-preflight:
+        condition: service_completed_successfully
+
+  whatsapp-sidecar-controlled:
+    depends_on:
+      production-activation-preflight:
+        condition: service_completed_successfully
 
 volumes:
   clamav-database:
