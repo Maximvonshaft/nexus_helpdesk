@@ -69,9 +69,14 @@ test.describe.configure({ mode: 'serial' })
 test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
 test('RC public WebChat message is visible in the canonical operator workspace', async ({ page }) => {
+  test.setTimeout(90_000)
   const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
 
   markStage('public-navigation')
+  const initResponsePromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url())
+    return candidate.request().method() === 'POST' && url.pathname === '/api/webchat/init'
+  }, { timeout: 25_000 })
   const navigationResponse = await navigate(page, '/webchat/demo/')
   markStage('public-committed')
   expect(navigationResponse).not.toBeNull()
@@ -88,6 +93,8 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
   const input = page.locator('.nd-webchat-input')
   await expect(input).toBeEnabled({ timeout: 20_000 })
+  const initResponse = await initResponsePromise
+  expect(initResponse.ok()).toBeTruthy()
   markStage('public-init')
 
   markStage('public-send')

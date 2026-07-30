@@ -363,6 +363,10 @@ class TopologyAndPublicationContractTests(unittest.TestCase):
             operator_path,
             body_selector,
             "page.locator('#login-password').fill(adminPassword)",
+            "test.setTimeout(90_000)",
+            "url.pathname === '/api/webchat/init'",
+            "const initResponse = await initResponsePromise",
+            "expect(initResponse.ok()).toBeTruthy()",
         ):
             self.assertIn(marker, self.browser)
         self.assertNotIn("getByLabel('密码')", self.browser)
