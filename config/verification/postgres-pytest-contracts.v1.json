@@ -1,0 +1,16 @@
+{
+  "schema": "nexus.postgres-pytest-contracts.v1",
+  "version": "1.0.0",
+  "owner": "database_runtime",
+  "tests": [
+    "backend/tests/test_support_conversations_postgres.py",
+    "backend/tests/test_support_conversation_privacy.py",
+    "backend/tests/test_support_sensitive_access.py",
+    "backend/tests/resilience/test_postgres_worker_recovery.py",
+    "backend/tests/test_unified_operator_queue_postgres.py",
+    "backend/tests/test_nexus_osr_auto_ticket_postgres.py",
+    "backend/tests/test_nexus_osr_operations_dispatch_postgres.py"
+  ],
+  "skip_policy": "forbidden",
+  "zero_collection_policy": "forbidden"
+}

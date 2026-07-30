@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 from ..services.background_job_scope import install_background_job_scope_events
+from ..services.golden_journey_portfolio import (
+    install_golden_journey_portfolio_guard,
+)
+from ..services.handoff_assignment_contract import (
+    install_handoff_assignment_contract,
+)
+from ..services.knowledge_pdf_safety import install_knowledge_pdf_safety
 from ..services.processing_purpose_enforcement import (
     install_processing_purpose_events,
+)
+from ..services.read_model_contracts import install_read_model_contracts
+from ..services.tenant_reference_runtime_contract import (
+    install_tenant_reference_runtime_contract,
 )
 from ..services.whatsapp_media_events import install_whatsapp_media_events
 
@@ -10,7 +21,7 @@ _INSTALLED = False
 
 
 def register_runtime_contracts() -> None:
-    """Install process-wide persistence, privacy and media guards exactly once."""
+    """Install process-wide persistence, privacy, product and routing guards once."""
 
     global _INSTALLED
     if _INSTALLED:
@@ -18,4 +29,9 @@ def register_runtime_contracts() -> None:
     install_background_job_scope_events()
     install_processing_purpose_events()
     install_whatsapp_media_events()
+    install_golden_journey_portfolio_guard()
+    install_handoff_assignment_contract()
+    install_tenant_reference_runtime_contract()
+    install_knowledge_pdf_safety()
+    install_read_model_contracts()
     _INSTALLED = True

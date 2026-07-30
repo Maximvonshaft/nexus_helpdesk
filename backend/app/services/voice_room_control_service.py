@@ -159,7 +159,7 @@ def ensure_recording_command(
     session: WebchatVoiceSession,
     actor: User | None = None,
 ) -> None:
-    if session.recording_status != "requested":
+    if session.recording_status not in {"authorized", "requested"}:
         return
     configuration = (
         db.query(VoiceChannelConfiguration)
@@ -202,6 +202,9 @@ def ensure_recording_command(
         note="voice_recording_policy",
         idempotency_key=f"voice-recording-start:{session.id}",
     )
+    session.recording_status = "start_requested"
+    session.updated_at = utc_now()
+    db.flush()
     _write_event(
         db,
         session=session,

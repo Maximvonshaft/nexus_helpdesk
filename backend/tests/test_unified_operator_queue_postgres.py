@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
 from app.model_registry import register_all_models
-from app.models import Market, Team, Ticket, User
+from app.models import Market, Team, Tenant, Ticket, User
 from app.operator_models import OperatorQueueScopeGrant
 from app.services.operator_work_queue import list_unified_operator_queue
 from app.webchat_models import WebchatConversation
@@ -49,11 +49,22 @@ def pg_session():
 def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bounded(pg_session):
     db, connection = pg_session
     suffix = uuid4().hex[:12]
-    tenant = f"queue-pg-{suffix}"
+    tenant_key = f"queue-pg-{suffix}"
     country = "ZZ"
     channel = "webchat"
+    queue_key = "legacy"
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    tenant = Tenant(
+        tenant_key=tenant_key,
+        display_name=f"Queue PostgreSQL Tenant {suffix}",
+        is_active=True,
+    )
+    db.add(tenant)
+    db.flush()
     market = Market(
+        tenant_id=tenant.id,
+        tenant_assignment_source="postgres_acceptance",
+        tenant_assignment_version="r15",
         code=f"Q{suffix[:8]}",
         name=f"Queue market {suffix}",
         country_code=country,
@@ -61,10 +72,20 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
     )
     db.add(market)
     db.flush()
-    team = Team(name=f"Queue team {suffix}", market_id=market.id, is_active=True)
+    team = Team(
+        tenant_id=tenant.id,
+        tenant_assignment_source="postgres_acceptance",
+        tenant_assignment_version="r15",
+        name=f"Queue team {suffix}",
+        market_id=market.id,
+        is_active=True,
+    )
     db.add(team)
     db.flush()
     agent = User(
+        tenant_id=tenant.id,
+        tenant_assignment_source="postgres_acceptance",
+        tenant_assignment_version="r15",
         username=f"queue-pg-{suffix}",
         display_name="Queue PostgreSQL Agent",
         email=f"queue-pg-{suffix}@example.test",
@@ -78,9 +99,10 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
     db.add(
         OperatorQueueScopeGrant(
             user_id=agent.id,
-            tenant_key=tenant,
+            tenant_key=tenant_key,
             country_code=country,
             channel_key=channel,
+            queue_key=queue_key,
             enabled=True,
             granted_by=None,
         )
@@ -92,6 +114,9 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
         priority = TicketPriority.urgent if index >= 120 else TicketPriority.low
         created_at = now - timedelta(minutes=150 - index)
         ticket = Ticket(
+            tenant_id=tenant.id,
+            tenant_assignment_source="postgres_acceptance",
+            tenant_assignment_version="r15",
             ticket_no=f"QPG-{suffix}-{index}",
             title="Synthetic queue volume item",
             description="Synthetic queue volume item",
@@ -111,7 +136,7 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
             WebchatConversation(
                 public_id=f"qpg-{suffix}-{index}",
                 visitor_token_hash=f"synthetic-{suffix}-{index}",
-                tenant_key=tenant,
+                tenant_key=tenant_key,
                 channel_key=channel,
                 ticket_id=ticket.id,
                 status="open",
@@ -138,9 +163,10 @@ def test_postgres_representative_volume_filter_and_cursor_are_complete_and_bound
             page = list_unified_operator_queue(
                 db,
                 current_user=agent,
-                tenant_key=tenant,
+                tenant_key=tenant_key,
                 country_code=country,
                 channel_key=channel,
+                queue_key=queue_key,
                 source_type="ticket",
                 priority="urgent",
                 sort="oldest",

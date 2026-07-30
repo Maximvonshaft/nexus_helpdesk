@@ -122,6 +122,7 @@ RUN set -eux; \
 FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime-layout
 COPY backend/ /layout/app/backend/
 COPY scripts/ /layout/app/scripts/
+COPY config/product/golden-journeys.v1.json /layout/app/config/product/golden-journeys.v1.json
 COPY THIRD_PARTY_NOTICES.md /layout/app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist
 RUN mkdir -p \

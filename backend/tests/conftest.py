@@ -8,7 +8,10 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.models import Market, Tenant
+from app.models import Market, Tenant, User
+from app.models_agent_routing import ConversationControl
+from app.models_handoff_routing import HandoffRoutingPlan
+from app.operator_models import OperatorQueueScopeGrant
 from app.settings import get_settings
 from app.services import background_job_execution_scope, background_jobs
 from app.services.whatsapp_embedded_signup_settings import (
@@ -20,6 +23,8 @@ from app.services.whatsapp_media_settings import (
 from app.services.whatsapp_runtime_settings import (
     reset_whatsapp_runtime_settings_cache,
 )
+from app.utils.time import utc_now
+from app.webchat_models import WebchatHandoffRequest
 
 
 # SQLite enforces foreign keys during normal test execution. Schema teardown is
@@ -98,9 +103,6 @@ _LEGACY_FIXTURE_TENANTS = {
     "test_whatsapp_native_ai_conversation": "pytest-whatsapp-ai",
 }
 
-# These suites create WebChat rows through the public API using historical
-# arbitrary tenant_key values. Their business assertions are not about Tenant
-# resolution, so bind those rows to the module's deterministic relational Tenant.
 _FORCE_TENANT_KEY_MODULES = {
     "test_channel_workbench_backend_contracts",
     "test_webchat_ai_turn_runtime",
@@ -151,12 +153,7 @@ def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
-    """Stamp only named legacy test suites with deterministic authorities.
-
-    Production still rejects unbound and cross-Tenant resources. This bridge only
-    migrates historical test factories to the relational Tenant, Market, Scenario,
-    and Queue ownership already required by runtime code.
-    """
+    """Migrate named legacy test factories to current relational authorities."""
 
     module_name = request.module.__name__.rsplit(".", 1)[-1]
     tenant_key = _LEGACY_FIXTURE_TENANTS.get(module_name)
@@ -190,6 +187,78 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
         session.info[market_cache_key] = market
         return market
 
+    def add_plan_grants(
+        session: Session,
+        *,
+        plan: HandoffRoutingPlan,
+        tenant_id: int,
+    ) -> None:
+        request_row = session.get(WebchatHandoffRequest, int(plan.request_id))
+        if request_row is None:
+            return
+        control = (
+            session.query(ConversationControl)
+            .filter(
+                ConversationControl.conversation_id
+                == request_row.conversation_id
+            )
+            .first()
+        )
+        if control is None or not control.country_code:
+            return
+        users = (
+            session.query(User)
+            .filter(
+                User.tenant_id == int(tenant_id),
+                User.is_active.is_(True),
+            )
+            .all()
+        )
+        pending = {
+            (
+                int(row.user_id),
+                row.tenant_key,
+                row.country_code,
+                row.channel_key,
+                row.queue_key,
+            )
+            for row in session.new
+            if isinstance(row, OperatorQueueScopeGrant)
+        }
+        for user in users:
+            identity = (
+                int(user.id),
+                control.tenant_key,
+                control.country_code,
+                control.channel_key,
+                plan.owner_queue_key,
+            )
+            exists = (
+                session.query(OperatorQueueScopeGrant.id)
+                .filter(
+                    OperatorQueueScopeGrant.user_id == user.id,
+                    OperatorQueueScopeGrant.tenant_key == control.tenant_key,
+                    OperatorQueueScopeGrant.country_code == control.country_code,
+                    OperatorQueueScopeGrant.channel_key == control.channel_key,
+                    OperatorQueueScopeGrant.queue_key == plan.owner_queue_key,
+                )
+                .first()
+            )
+            if exists is not None or identity in pending:
+                continue
+            session.add(
+                OperatorQueueScopeGrant(
+                    user_id=int(user.id),
+                    tenant_key=control.tenant_key,
+                    country_code=control.country_code,
+                    channel_key=control.channel_key,
+                    queue_key=plan.owner_queue_key,
+                    enabled=True,
+                    granted_by=int(user.id),
+                )
+            )
+            pending.add(identity)
+
     def before_flush(session: Session, _flush_context, _instances) -> None:
         tenant_id = session.info.get(cache_key)
         if tenant_id is None:
@@ -208,7 +277,8 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 tenant_id = int(result.inserted_primary_key[0])
             session.info[cache_key] = int(tenant_id)
 
-        for row in tuple(session.new) + tuple(session.dirty):
+        rows = tuple(session.new) + tuple(session.dirty)
+        for row in rows:
             model_name = row.__class__.__name__
             if model_name in _TENANT_IDENTITY_MODELS:
                 if getattr(row, "tenant_id", None) is None:
@@ -241,10 +311,33 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                 ):
                     row.tenant_key = tenant_key
 
-            # Historical WebCall tests create Ticket and scope rows directly
-            # instead of using production factories. Their fixture vocabulary is
-            # normalized to the same published Scenario and exact Queue contract;
-            # runtime routing and assignment remain fully enforced.
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "ConversationControl"
+                and not str(getattr(row, "country_code", "") or "").strip()
+            ):
+                row.country_code = ensure_market(
+                    session,
+                    int(tenant_id),
+                ).country_code
+
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "OperatorAgentState"
+            ):
+                now = utc_now()
+                row.status = "online"
+                row.last_heartbeat_at = now
+                row.status_changed_at = now
+                row.updated_at = now
+
+            if (
+                module_name == "test_webchat_handoff_control"
+                and model_name == "Ticket"
+                and not str(getattr(row, "case_type", "") or "").strip()
+            ):
+                row.case_type = "tracking_status_inquiry"
+
             if module_name == "test_channel_workbench_backend_contracts":
                 if (
                     model_name == "Ticket"
@@ -258,6 +351,15 @@ def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
                     == "legacy"
                 ):
                     row.queue_key = "customer_support"
+
+        if module_name == "test_webchat_handoff_control":
+            for row in tuple(session.new):
+                if isinstance(row, HandoffRoutingPlan):
+                    add_plan_grants(
+                        session,
+                        plan=row,
+                        tenant_id=int(tenant_id),
+                    )
 
     event.listen(Session, "before_flush", before_flush)
     try:

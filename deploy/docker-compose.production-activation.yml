@@ -20,8 +20,9 @@ services:
       ACTIVATION_EVIDENCE_IMAGE_DIGEST: ${ACTIVATION_EVIDENCE_IMAGE_DIGEST:?set evidence image digest equal to CONTROLLED_IMAGE digest}
       ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST: ${ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST:?set reviewed activation configuration digest}
       ACTIVATION_EVIDENCE_ENVIRONMENT_ID: ${ACTIVATION_EVIDENCE_ENVIRONMENT_ID:?set stable target environment identity}
-      ACTIVATION_EVIDENCE_MANIFEST_FILE: ${ACTIVATION_EVIDENCE_MANIFEST_FILE:-/run/nexus/activation/manifest.json}
-      ACTIVATION_EVIDENCE_SIGNING_KEY_FILE: ${ACTIVATION_EVIDENCE_SIGNING_KEY_FILE:-/run/nexus/activation/signing_key}
+      ACTIVATION_EVIDENCE_MANIFEST_FILE: /run/nexus/activation/manifest.json
+      ACTIVATION_EVIDENCE_PUBLIC_KEY_FILE: /run/nexus/activation/public_key.pem
+      ACTIVATION_EVIDENCE_KEY_ID: ${ACTIVATION_EVIDENCE_KEY_ID:?set reviewed Ed25519 verification key id}
       PRODUCTION_E2E_EVIDENCE_URL: ${PRODUCTION_E2E_EVIDENCE_URL:-}
       PROVIDER_CANARY_E2E_EVIDENCE_URL: ${PROVIDER_CANARY_E2E_EVIDENCE_URL:-}
       WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL: ${WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL:-}
@@ -71,7 +72,8 @@ services:
       OPERATIONS_DISPATCH_MODE: ${OPERATIONS_DISPATCH_MODE:-disabled}
       OPERATIONS_DISPATCH_ADAPTER: ${OPERATIONS_DISPATCH_ADAPTER:-disabled}
     volumes:
-      - ${NEXUS_ACTIVATION_EVIDENCE_HOST_PATH:?set activation evidence directory}:/run/nexus/activation:ro
+      - ${NEXUS_ACTIVATION_EVIDENCE_MANIFEST_HOST_PATH:?set signed activation manifest path}:/run/nexus/activation/manifest.json:ro
+      - ${NEXUS_ACTIVATION_EVIDENCE_PUBLIC_KEY_HOST_PATH:?set Ed25519 public key path}:/run/nexus/activation/public_key.pem:ro
     command:
       - python
       - /app/scripts/deploy/validate_production_activation.py
@@ -113,8 +115,9 @@ services:
       ACTIVATION_EVIDENCE_IMAGE_DIGEST: ${ACTIVATION_EVIDENCE_IMAGE_DIGEST:?set evidence image digest equal to CONTROLLED_IMAGE digest}
       ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST: ${ACTIVATION_EVIDENCE_CONFIGURATION_DIGEST:?set reviewed activation configuration digest}
       ACTIVATION_EVIDENCE_ENVIRONMENT_ID: ${ACTIVATION_EVIDENCE_ENVIRONMENT_ID:?set stable target environment identity}
-      ACTIVATION_EVIDENCE_MANIFEST_FILE: ${ACTIVATION_EVIDENCE_MANIFEST_FILE:-/run/nexus/activation/manifest.json}
-      ACTIVATION_EVIDENCE_SIGNING_KEY_FILE: ${ACTIVATION_EVIDENCE_SIGNING_KEY_FILE:-/run/nexus/activation/signing_key}
+      ACTIVATION_EVIDENCE_MANIFEST_FILE: /run/nexus/activation/manifest.json
+      ACTIVATION_EVIDENCE_PUBLIC_KEY_FILE: /run/nexus/activation/public_key.pem
+      ACTIVATION_EVIDENCE_KEY_ID: ${ACTIVATION_EVIDENCE_KEY_ID:?set reviewed Ed25519 verification key id}
       PRODUCTION_E2E_EVIDENCE_URL: ${PRODUCTION_E2E_EVIDENCE_URL:-}
       PROVIDER_CANARY_E2E_EVIDENCE_URL: ${PROVIDER_CANARY_E2E_EVIDENCE_URL:-}
       WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL: ${WEBCHAT_AI_PRODUCTION_E2E_EVIDENCE_URL:-}
@@ -139,7 +142,8 @@ services:
       WHATSAPP_CLAMAV_TIMEOUT_SECONDS: ${WHATSAPP_CLAMAV_TIMEOUT_SECONDS:-20}
       WHATSAPP_MEDIA_MAX_TOTAL_BYTES: ${WHATSAPP_MEDIA_MAX_TOTAL_BYTES:-104857600}
     volumes:
-      - ${NEXUS_ACTIVATION_EVIDENCE_HOST_PATH:?set activation evidence directory}:/run/nexus/activation:ro
+      - ${NEXUS_ACTIVATION_EVIDENCE_MANIFEST_HOST_PATH:?set signed activation manifest path}:/run/nexus/activation/manifest.json:ro
+      - ${NEXUS_ACTIVATION_EVIDENCE_PUBLIC_KEY_HOST_PATH:?set Ed25519 public key path}:/run/nexus/activation/public_key.pem:ro
     depends_on:
       migrate-controlled:
         condition: service_completed_successfully

@@ -132,10 +132,7 @@ def upgrade() -> None:
         ("ix_handoff_routing_plans_exhausted_at", ["exhausted_at"]),
         ("ix_handoff_routing_plans_created_at", ["created_at"]),
         ("ix_handoff_routing_plans_updated_at", ["updated_at"]),
-        (
-            "ix_handoff_routing_plan_retry",
-            ["status", "next_retry_at"],
-        ),
+        ("ix_handoff_routing_plan_retry", ["status", "next_retry_at"]),
         (
             "ix_handoff_routing_plan_queue_status",
             ["owner_queue_key", "status"],
@@ -211,7 +208,25 @@ def upgrade() -> None:
         )
 
 
+def _assert_legacy_grant_identity_representable() -> None:
+    """Fail before DDL when the old four-column grant identity cannot represent data."""
+
+    duplicate = op.get_bind().execute(
+        sa.text(
+            "SELECT user_id, tenant_key, country_code, channel_key "
+            "FROM operator_queue_scope_grants "
+            "GROUP BY user_id, tenant_key, country_code, channel_key "
+            "HAVING count(*) > 1 LIMIT 1"
+        )
+    ).first()
+    if duplicate is not None:
+        raise RuntimeError(
+            "r6_handoff_routing_downgrade_blocked_multi_queue_grants"
+        )
+
+
 def downgrade() -> None:
+    _assert_legacy_grant_identity_representable()
     op.drop_table("handoff_routing_candidate_attempts")
     op.drop_table("handoff_routing_plans")
     op.drop_index(

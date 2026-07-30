@@ -161,13 +161,13 @@ def test_explicit_reclassification_preserves_history_and_snapshot(db_session):
     new = reclassify_case_scenario(
         db_session,
         ticket=ticket,
-        scenario_key="formal_complaint",
-        reason="Customer submitted a formal complaint after review.",
+        scenario_key="address_contact_correction",
+        reason="Customer requested a governed delivery contact correction after review.",
         actor_id=None,
     )
     db_session.flush()
 
-    assert new.scenario_key == "formal_complaint"
+    assert new.scenario_key == "address_contact_correction"
     assert old.superseded_at is not None
     assert old.superseded_by_id == new.id
     assert current_case_scenario_assignment(

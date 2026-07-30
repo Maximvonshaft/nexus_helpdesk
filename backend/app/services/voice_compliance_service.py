@@ -247,6 +247,8 @@ def apply_session_compliance_state(
     recording_policy: str,
     transcription_policy: str,
 ) -> None:
+    """Project authorization only; Provider execution owns later state changes."""
+
     recording_allowed = capability_authorized(
         db,
         session=session,
@@ -260,7 +262,7 @@ def apply_session_compliance_state(
         policy=transcription_policy,
     )
     session.recording_status = (
-        "requested"
+        "authorized"
         if recording_allowed
         else (
             "disabled"
@@ -273,7 +275,7 @@ def apply_session_compliance_state(
         )
     )
     session.transcript_status = (
-        "active"
+        "authorized"
         if transcript_allowed
         else (
             "disabled"

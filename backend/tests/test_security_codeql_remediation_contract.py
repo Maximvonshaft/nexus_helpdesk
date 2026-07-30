@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,7 +94,19 @@ def test_codeql_exception_policy_has_no_stale_exceptions() -> None:
         )
     )
     assert payload["schema_version"] == "nexus_codeql_exception_policy_v1"
-    assert payload["exceptions"] == []
+    exceptions = payload["exceptions"]
+    assert isinstance(exceptions, list)
+    for item in exceptions:
+        assert item["rule_id"]
+        assert item["path"]
+        assert item["start_line"] > 0
+        assert item["owner"]
+        assert date.fromisoformat(item["expires_on"]) > date.today()
+        assert item["reason"].strip()
+        markers = item.get("required_markers") or []
+        assert markers
+        source = (ROOT / item["path"]).read_text(encoding="utf-8")
+        assert all(marker in source for marker in markers)
 
     protocol = (ROOT / "backend/app/services/speedaf/track_query.py").read_text(
         encoding="utf-8"

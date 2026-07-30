@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api import speedaf_actions
 from app.api.deps import get_current_user
 from app.db import Base, get_db
 from app.enums import ConversationState, SourceChannel, TicketPriority, TicketSource, TicketStatus, UserRole
@@ -87,6 +88,14 @@ def test_waybill_lookup_disabled_by_default(harness):
 
 def test_waybill_lookup_enabled_returns_candidates_without_background_job(harness, monkeypatch):
     monkeypatch.setenv("SPEEDAF_MCP_ENABLED", "true")
+    # The fresh-restriction contract has its own database-bound negative test.
+    # This provider-adapter test uses an isolated dependency-overridden SQLite DB,
+    # so keep it focused on the synchronous lookup and safe persistence behavior.
+    monkeypatch.setattr(
+        speedaf_actions,
+        "ensure_ticket_processing_allowed_fresh",
+        lambda **_kwargs: None,
+    )
     calls = []
 
     def fake_query(self, *, caller_id, country_code=None):
