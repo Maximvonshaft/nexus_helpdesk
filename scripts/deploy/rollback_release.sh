@@ -14,7 +14,6 @@ SERVICES=(
   worker-outbound-controlled
   worker-background-controlled
   worker-webchat-ai-controlled
-  worker-handoff-snapshot-controlled
 )
 STATES=()
 OUTCOME="fail"
