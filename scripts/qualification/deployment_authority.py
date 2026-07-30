@@ -27,6 +27,10 @@ RETIRED_DEPLOY_PATHS = (
     "docs/deployment/release-metadata.md",
     "docs/deploy-server-local-postgres.md",
     "docs/deploy-server-external-postgres.md",
+    "docs/ops/release-governance.md",
+    "docs/worker-healthcheck-policy.md",
+    "docs/deployment/runtime-topology.md",
+    "scripts/probe_webcall_livekit_custom_domain.sh",
 )
 
 DEPLOYMENT_TEXT_SUFFIXES = {
@@ -54,6 +58,7 @@ OPERATIONAL_AUTHORITY_PATHS = (
     "docs/performance-budgets.md",
     "docs/runbooks/production-activation.md",
     "docs/runbooks/release-metadata-consistency-gate.md",
+    "docs/runbooks/outbound-email-production-pilot.md",
     "scripts/probe_nexus_runtime.sh",
     "scripts/smoke/runtime_performance_baseline.sh",
     "scripts/deploy/rollback_release.sh",
