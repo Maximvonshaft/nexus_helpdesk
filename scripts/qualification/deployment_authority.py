@@ -17,16 +17,20 @@ RETIRED_DEPLOY_PATHS = (
     "deploy/.env.candidate.example",
     "deploy/systemd/nexusdesk-worker.service",
     "deploy/systemd/nexusdesk-api.service",
+    "deploy/nginx/nexusdesk.edge.env.example",
+    "deploy/nginx/nexusdesk.edge.conf.template",
     "backend/scripts/run_api_manual.py",
     "backend/scripts/run_worker_manual.py",
     "backend/scripts/run_operations_dispatch_worker.py",
     "scripts/smoke/whatsapp_sidecar_candidate_smoke.sh",
+    "scripts/smoke/smoke_e2e_runtime_health.sh",
     "docs/ops/NEXUS_NATIVE_WHATSAPP_CANDIDATE_SMOKE.md",
     "backend/tests/test_candidate_compose_contract.py",
     "scripts/deploy/prepare_production_release_env.sh",
     "backend/tests/test_release_metadata_security_contract.py",
     "scripts/smoke/worker_daemon_readiness_probe.py",
     "backend/tests/test_worker_daemon_readiness.py",
+    "scripts/upsert_nigeria_direct_answer_kb.sh",
     "docs/deployment/release-metadata.md",
     "docs/deploy-server-local-postgres.md",
     "docs/deploy-server-external-postgres.md",
@@ -62,6 +66,8 @@ OPERATIONAL_AUTHORITY_PATHS = (
     "docs/runbooks/production-activation.md",
     "docs/runbooks/release-metadata-consistency-gate.md",
     "docs/runbooks/outbound-email-production-pilot.md",
+    "deploy/docker-compose.production-activation.yml",
+    "scripts/deploy/validate_production_activation.py",
     "scripts/probe_nexus_runtime.sh",
     "scripts/smoke/runtime_performance_baseline.sh",
     "scripts/deploy/rollback_release.sh",
@@ -159,6 +165,33 @@ def _operational_authority_findings(root: Path) -> list[str]:
                 findings.append(
                     f"production_activation_authority_missing:{marker}"
                 )
+
+    activation_compose = root / "deploy/docker-compose.production-activation.yml"
+    if activation_compose.is_file():
+        text = activation_compose.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "production-activation-preflight:",
+            "OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED",
+            "worker-webchat-ai-controlled:",
+            "whatsapp-sidecar-controlled:",
+            "condition: service_completed_successfully",
+        ):
+            if marker not in text:
+                findings.append(f"activation_compose_contract_missing:{marker}")
+        if text.count("EMAIL_MAILBOX_SYNC_ENABLED") != 1:
+            findings.append("mailbox_sync_must_be_preflight_only")
+
+    activation_validator = root / "scripts/deploy/validate_production_activation.py"
+    if activation_validator.is_file():
+        text = activation_validator.read_text(encoding="utf-8", errors="replace")
+        for marker in (
+            "nexus.production-activation-preflight.v5",
+            "operations_dispatch_not_implemented",
+            "email_mailbox_sync_not_qualified",
+            "outbound_email_pilot_authority_invalid",
+        ):
+            if marker not in text:
+                findings.append(f"activation_validator_contract_missing:{marker}")
 
     release_gate = root / "scripts/release_metadata_consistency_gate.py"
     if release_gate.is_file():
@@ -286,7 +319,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     findings = deployment_authority_findings(root)
     payload = {
-        "schema": "nexus.deployment-authority.v3",
+        "schema": "nexus.deployment-authority.v4",
         "status": "pass" if not findings else "fail",
         "findings": findings,
     }
