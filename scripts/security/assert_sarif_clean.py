@@ -130,6 +130,7 @@ def evaluate(
     paths: Iterable[Path],
     *,
     exceptions: dict[tuple[str, str, int], dict[str, Any]] | None = None,
+    allow_unused_exceptions: bool = False,
 ) -> dict[str, Any]:
     result_count = 0
     raw_result_count = 0
@@ -164,7 +165,11 @@ def evaluate(
                 by_rule[rule_id] += 1
                 by_level[str(result.get("level") or "warning")[:32]] += 1
     unused = sorted(set(exception_map) - used_exceptions)
-    status = "pass" if result_count == 0 and not unused else "fail"
+    status = (
+        "pass"
+        if result_count == 0 and (allow_unused_exceptions or not unused)
+        else "fail"
+    )
     return {
         "schema_version": "nexus_codeql_sarif_gate_v2",
         "status": status,
@@ -173,6 +178,7 @@ def evaluate(
         "result_count": result_count,
         "approved_exception_count": approved_exception_count,
         "unused_exception_count": len(unused),
+        "unused_exceptions_allowed": allow_unused_exceptions,
         "unused_exceptions": [
             {"rule_id": rule, "path": source_path, "start_line": line}
             for rule, source_path, line in unused[:MAX_RULES]
@@ -198,10 +204,19 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--exceptions", type=Path)
+    parser.add_argument(
+        "--allow-unused-exceptions",
+        action="store_true",
+        help="Allow valid exceptions absent from a differential SARIF input.",
+    )
     args = parser.parse_args()
     try:
         exceptions = _load_exceptions(args.exceptions, root=Path.cwd())
-        payload = evaluate(_sarif_files(args.input), exceptions=exceptions)
+        payload = evaluate(
+            _sarif_files(args.input),
+            exceptions=exceptions,
+            allow_unused_exceptions=args.allow_unused_exceptions,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError, SarifValidationError) as exc:
         payload = {
             "schema_version": "nexus_codeql_sarif_gate_v2",
