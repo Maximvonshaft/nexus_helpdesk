@@ -227,6 +227,25 @@ def test_mailbox_sync_is_rejected_until_it_has_independent_evidence() -> None:
         activation.validate(values)
 
 
+def test_email_provider_cannot_dispatch_without_pilot_authority() -> None:
+    values = _full_values()
+    values.update(
+        {
+            "ENABLE_OUTBOUND_DISPATCH": "true",
+            "OUTBOUND_PROVIDER": "email",
+            "OUTBOUND_PRODUCTION_E2E_EVIDENCE_URL": (
+                "https://evidence.example/outbound-email"
+            ),
+        }
+    )
+
+    with pytest.raises(
+        activation.ActivationError,
+        match="outbound_email_pilot_required",
+    ):
+        activation.validate(values)
+
+
 def test_outbound_email_pilot_requires_email_dispatch_authority() -> None:
     values = _full_values()
     values["OUTBOUND_EMAIL_PRODUCTION_PILOT_ENABLED"] = "true"
