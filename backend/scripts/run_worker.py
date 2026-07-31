@@ -26,6 +26,9 @@ from app.services.outbound_dispatch_transaction_boundary import (  # noqa: E402
     dispatch_pending_messages,
 )
 from app.services.queue_health import collect_queue_health  # noqa: E402
+from app.services.stale_text_handoff_reconciliation import (  # noqa: E402
+    reconcile_stale_text_handoffs,
+)
 from app.services.webchat_ai_reconciler import reconcile_webchat_ai_state  # noqa: E402
 from app.services.whatsapp_media_worker import (  # noqa: E402
     dispatch_pending_whatsapp_media,
@@ -42,6 +45,7 @@ QUEUES = {
     "webchat-ai",
 }
 _LAST_WEBCHAT_AI_RECONCILER_RUN_AT = 0.0
+_LAST_STALE_HANDOFF_RECONCILER_RUN_AT = 0.0
 _LAST_QUEUE_DEPTH_SNAPSHOT_AT = 0.0
 _QUEUE_DEPTH_LABELS: set[tuple[str, str]] = set()
 
@@ -62,7 +66,86 @@ def _run_outbound(worker_id: str) -> int:
         return len(outbound)
 
 
+def _maintenance_interval_seconds(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        LOGGER.warning(
+            "worker_maintenance_interval_invalid",
+            extra={
+                "event_payload": {
+                    "environment_variable": name,
+                    "fallback_seconds": default,
+                }
+            },
+        )
+        return default
+    return max(5, min(300, value))
+
+
+def _stale_handoff_reconciler_interval_seconds() -> int:
+    return _maintenance_interval_seconds(
+        "STALE_HANDOFF_RECONCILER_INTERVAL_SECONDS",
+        30,
+    )
+
+
+def _run_stale_handoff_reconciler_watchdog(worker_id: str) -> int:
+    db = SessionLocal()
+    started = time.monotonic()
+    try:
+        result = reconcile_stale_text_handoffs(db)
+        db.commit()
+        released = int(result.get("released", 0) or 0)
+        if released:
+            record_worker_result(
+                worker_id,
+                "stale_text_handoff_reconciler",
+                "processed",
+                released,
+            )
+            LOGGER.info(
+                "stale_text_handoff_reconciler_completed",
+                extra={
+                    "event_payload": {
+                        "worker_id": worker_id,
+                        "inspected": result.get("inspected"),
+                        "released": released,
+                        "elapsed_ms": int(
+                            (time.monotonic() - started) * 1000
+                        ),
+                    }
+                },
+            )
+        return released
+    except Exception:
+        db.rollback()
+        record_worker_result(
+            worker_id,
+            "stale_text_handoff_reconciler",
+            "failed",
+            1,
+        )
+        LOGGER.exception(
+            "stale_text_handoff_reconciler_failed",
+            extra={
+                "event_payload": {
+                    "worker_id": worker_id,
+                    "elapsed_ms": int(
+                        (time.monotonic() - started) * 1000
+                    ),
+                }
+            },
+        )
+        return 0
+    finally:
+        db.close()
+
+
 def _run_background(worker_id: str) -> int:
+    global _LAST_STALE_HANDOFF_RECONCILER_RUN_AT
+    processed = 0
     with db_context() as db:
         jobs = dispatch_pending_background_jobs(db, worker_id=worker_id)
         if jobs:
@@ -83,7 +166,16 @@ def _run_background(worker_id: str) -> int:
                 "processed",
                 len(media_ids),
             )
-        return len(jobs) + len(media_ids)
+        processed += len(jobs) + len(media_ids)
+
+    now = time.monotonic()
+    if (
+        now - _LAST_STALE_HANDOFF_RECONCILER_RUN_AT
+        >= _stale_handoff_reconciler_interval_seconds()
+    ):
+        _LAST_STALE_HANDOFF_RECONCILER_RUN_AT = now
+        processed += _run_stale_handoff_reconciler_watchdog(worker_id)
+    return processed
 
 
 def _webchat_ai_reconciler_interval_seconds() -> int:

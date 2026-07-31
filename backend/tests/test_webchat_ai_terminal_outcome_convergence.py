@@ -112,7 +112,8 @@ def test_no_public_runtime_result_exhausts_into_one_canonical_fallback(monkeypat
         db.commit()
         db.refresh(job)
         db.refresh(turn)
-        assert job.status == JobStatus.dead
+        assert job.status == JobStatus.done
+        assert job.last_error == "terminally_resolved:terminal_fallback_committed"
         assert turn.status == "completed"
         assert turn.reply_source == "agent_runtime:fallback"
         messages = (

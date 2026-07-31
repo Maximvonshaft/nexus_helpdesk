@@ -17,6 +17,7 @@ os.environ.setdefault(
 
 from app.db import Base
 from app.enums import (
+    ConversationState,
     SourceChannel,
     TicketPriority,
     TicketSource,
@@ -26,6 +27,7 @@ from app.enums import (
 from app.model_registry import register_all_models
 from app.models import Team, Tenant, Ticket, User
 from app.models_agent_routing import ConversationControl, OperatorAgentState
+from app.models_handoff_routing import HandoffRoutingCandidateAttempt
 from app.operator_models import OperatorQueueScopeGrant, OperatorTask
 from app.services import agent_routing_service as routing
 from app.services.handoff_assignment_contract import (
@@ -38,12 +40,17 @@ from app.services.handoff_routing_authority import (
     schedule_retry_or_exhaust,
 )
 from app.services.operator_queue import create_operator_task
+from app.services.stale_text_handoff_reconciliation import (
+    OFFLINE_HANDOFF_GRACE_SECONDS,
+    reconcile_stale_text_handoffs,
+)
 from app.services.webchat_handoff_service import accept_handoff_request
 from app.utils.time import utc_now
 from app.webchat_models import (
     WebchatConversation,
     WebchatHandoffDecision,
     WebchatHandoffRequest,
+    WebchatMessage,
 )
 
 register_all_models()
@@ -292,3 +299,182 @@ def test_prior_decline_does_not_permanently_remove_ticket_candidate_from_next_ge
     )
     assert candidate is not None
     assert candidate[0].id == request.id
+
+
+def test_stale_accepted_text_handoff_releases_capacity_and_remains_routable(
+    db_session,
+):
+    request, conversation, plan, task, correct, _wrong = _fixture(db_session)
+    accept_handoff_request(
+        db_session,
+        request_id=request.id,
+        current_user=correct,
+        note="Synthetic accepted work that will be abandoned",
+    )
+    state = (
+        db_session.query(OperatorAgentState)
+        .filter(OperatorAgentState.user_id == correct.id)
+        .one()
+    )
+    request.accepted_at = utc_now() - timedelta(
+        seconds=OFFLINE_HANDOFF_GRACE_SECONDS + 1
+    )
+    request.updated_at = request.accepted_at
+    state.last_heartbeat_at = utc_now() - timedelta(minutes=10)
+    db_session.flush()
+
+    result = reconcile_stale_text_handoffs(
+        db_session,
+        assigned_agent_id=correct.id,
+    )
+    db_session.flush()
+    db_session.refresh(request)
+    db_session.refresh(conversation)
+    db_session.refresh(plan)
+    db_session.refresh(task)
+    ticket = db_session.get(Ticket, conversation.ticket_id)
+    assert ticket is not None
+
+    assert result["released"] == 1
+    assert result["released_request_ids"] == [request.id]
+    assert request.status == "requested"
+    assert request.assigned_agent_id is None
+    assert request.accepted_by_user_id is None
+    assert request.accepted_at is None
+    assert request.decision_note == "assigned_agent_heartbeat_stale"
+    assert conversation.handoff_status == "requested"
+    assert conversation.active_agent_id is None
+    assert conversation.ai_suspended is True
+    assert task.status == "pending"
+    assert task.assignee_id is None
+    assert ticket.assignee_id is None
+    assert ticket.status == TicketStatus.pending_assignment
+    assert ticket.conversation_state == ConversationState.human_review_required
+    assert ticket.required_action == request.reason_code
+    assert plan.status == "active"
+    assert plan.current_generation == 2
+    assert plan.assigned_agent_id is None
+    prior_attempt = (
+        db_session.query(HandoffRoutingCandidateAttempt)
+        .filter(
+            HandoffRoutingCandidateAttempt.plan_id == plan.id,
+            HandoffRoutingCandidateAttempt.generation == 1,
+            HandoffRoutingCandidateAttempt.agent_id == correct.id,
+        )
+        .one()
+    )
+    assert prior_attempt.outcome == "unavailable"
+    assert prior_attempt.reason_code == "assigned_agent_heartbeat_stale"
+
+    released_at = request.released_at
+    assert released_at is not None
+    state.last_heartbeat_at = utc_now()
+    db_session.flush()
+    candidate = routing._eligible_text_request_for_agent(
+        db_session,
+        user=correct,
+    )
+    assert candidate is not None
+    assert candidate[0].id == request.id
+
+    accept_handoff_request(
+        db_session,
+        request_id=request.id,
+        current_user=correct,
+        note="Accepted in the new routing generation",
+    )
+    db_session.refresh(request)
+    assert request.accepted_at is not None
+    assert request.accepted_at >= released_at
+    assert request.accepted_by_user_id == correct.id
+
+
+def test_reconciliation_query_skips_replied_rows_before_scan_limit(db_session):
+    request, _conversation, _plan, _task, correct, _wrong = _fixture(db_session)
+    state = (
+        db_session.query(OperatorAgentState)
+        .filter(OperatorAgentState.user_id == correct.id)
+        .one()
+    )
+    now = utc_now()
+    state.last_heartbeat_at = now
+
+    tenant = db_session.get(Tenant, correct.tenant_id)
+    team = db_session.get(Team, correct.team_id)
+    assert tenant is not None
+    assert team is not None
+    blocker_agents: list[User] = []
+    for agent_index in range(5):
+        blocker = _agent(
+            db_session,
+            tenant=tenant,
+            team=team,
+            username=f"r15-handoff-blocker-{agent_index}",
+        )
+        blocker_state = (
+            db_session.query(OperatorAgentState)
+            .filter(OperatorAgentState.user_id == blocker.id)
+            .one()
+        )
+        blocker_state.max_concurrent_conversations = 20
+        blocker_state.last_heartbeat_at = now
+        blocker_agents.append(blocker)
+    db_session.flush()
+
+    for index in range(100):
+        blocker_agent = blocker_agents[index // 20]
+        accepted_at = now - timedelta(hours=2) + timedelta(seconds=index)
+        blocker_conversation = WebchatConversation(
+            public_id=f"r15-active-blocker-{index}",
+            visitor_token_hash=f"blocker-hash-{index}",
+            tenant_key="r15-handoff",
+            channel_key="website",
+            status="open",
+        )
+        db_session.add(blocker_conversation)
+        db_session.flush()
+        blocker_request = WebchatHandoffRequest(
+            conversation_id=blocker_conversation.id,
+            source="ai_auto",
+            trigger_type="active_replied_blocker",
+            status="accepted",
+            reason_code="active_human_support",
+            assigned_agent_id=blocker_agent.id,
+            accepted_by_user_id=blocker_agent.id,
+            requested_at=accepted_at,
+            accepted_at=accepted_at,
+            created_at=accepted_at,
+            updated_at=accepted_at,
+        )
+        db_session.add(blocker_request)
+        db_session.flush()
+        db_session.add(
+            WebchatMessage(
+                conversation_id=blocker_conversation.id,
+                direction="agent",
+                body="The operator has already replied.",
+                body_text="The operator has already replied.",
+                message_type="text",
+                delivery_status="sent",
+                author_user_id=blocker_agent.id,
+                created_at=accepted_at + timedelta(seconds=1),
+            )
+        )
+
+    accept_handoff_request(
+        db_session,
+        request_id=request.id,
+        current_user=correct,
+        note="Target request after the first one hundred active rows",
+    )
+    request.accepted_at = now - timedelta(hours=1)
+    request.updated_at = request.accepted_at
+    db_session.flush()
+
+    result = reconcile_stale_text_handoffs(db_session, limit=100)
+    db_session.refresh(request)
+
+    assert result["released"] == 1
+    assert result["released_request_ids"] == [request.id]
+    assert result["inspected"] == 1
+    assert request.status == "requested"

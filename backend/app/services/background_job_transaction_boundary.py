@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
-from typing import Any, Iterable
+from contextlib import contextmanager
+from typing import Any, Iterable, Iterator
 
 from sqlalchemy import text, update
 
@@ -20,6 +22,11 @@ def _is_sqlalchemy_session(db: Any) -> bool:
 def _claim_token(worker_id: str | None) -> str:
     prefix = (worker_id or "job-worker").strip() or "job-worker"
     return f"{prefix[:80]}:{uuid.uuid4().hex}"
+
+
+def _job_engine(db: Any):
+    bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
+    return getattr(bind, "engine", bind) if bind is not None else None
 
 
 def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
@@ -49,6 +56,97 @@ def _refresh_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
     return True
 
 
+def _heartbeat_job_lease(engine: Any, *, job_id: int, lease_token: str) -> bool:
+    from . import background_jobs
+
+    with engine.begin() as connection:
+        result = connection.execute(
+            update(background_jobs.BackgroundJob)
+            .where(
+                background_jobs.BackgroundJob.id == job_id,
+                background_jobs.BackgroundJob.status
+                == background_jobs.JobStatus.processing,
+                background_jobs.BackgroundJob.locked_by == lease_token,
+            )
+            .values(
+                locked_at=background_jobs.utc_now(),
+                updated_at=background_jobs.utc_now(),
+            )
+        )
+    return result.rowcount == 1
+
+
+def _lease_heartbeat_interval_seconds() -> float:
+    from . import background_jobs
+
+    lock_seconds = max(3.0, float(background_jobs.settings.job_lock_seconds or 300))
+    return max(1.0, min(30.0, lock_seconds / 3.0))
+
+
+@contextmanager
+def _job_lease_heartbeat(
+    db: Any,
+    *,
+    job_id: int,
+    lease_token: str,
+) -> Iterator[None]:
+    """Keep a claimed job authoritative while Provider or Tool I/O is in flight.
+
+    Provider execution intentionally commits the application Session before
+    external I/O. A separate short transaction therefore renews only the job
+    lease, preventing a second Worker from reclaiming a healthy long-running
+    attempt. No business data is written by the heartbeat thread.
+    """
+
+    if not _is_sqlalchemy_session(db):
+        yield
+        return
+    engine = _job_engine(db)
+    if engine is None:
+        yield
+        return
+
+    stop = threading.Event()
+    interval = _lease_heartbeat_interval_seconds()
+
+    def run() -> None:
+        while not stop.wait(interval):
+            try:
+                if not _heartbeat_job_lease(
+                    engine,
+                    job_id=job_id,
+                    lease_token=lease_token,
+                ):
+                    LOGGER.warning(
+                        "background_job_lease_heartbeat_rejected",
+                        extra={"event_payload": {"job_id": job_id}},
+                    )
+                    return
+            except Exception as exc:  # heartbeat failure must not hide job result
+                LOGGER.warning(
+                    "background_job_lease_heartbeat_failed",
+                    extra={
+                        "event_payload": {
+                            "job_id": job_id,
+                            "error_type": type(exc).__name__,
+                        }
+                    },
+                )
+                return
+
+    thread = threading.Thread(
+        target=run,
+        name=f"job-lease-heartbeat-{job_id}",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=min(2.0, interval))
+
+
 def commit_webchat_agent_provider_boundary(db: Any) -> None:
     """Persist bridge state and release database locks before Provider I/O."""
 
@@ -62,10 +160,9 @@ def _owns_job_lease(db: Any, *, job_id: int, lease_token: str) -> bool:
         return True
     from . import background_jobs
 
-    bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
-    if bind is None:
+    engine = _job_engine(db)
+    if engine is None:
         return False
-    engine = getattr(bind, "engine", bind)
     with engine.connect() as connection:
         row = connection.execute(
             text(
@@ -208,8 +305,13 @@ def _process_claimed_jobs_with_attempt_boundary(
                 processed.append(rejected)
             continue
         try:
-            background_jobs.process_background_job(db, job)
-            finalize_dead_webchat_ai_job(db, job)
+            with _job_lease_heartbeat(
+                db,
+                job_id=job_id,
+                lease_token=lease_token,
+            ):
+                background_jobs.process_background_job(db, job)
+                finalize_dead_webchat_ai_job(db, job)
             if not _owns_job_lease(
                 db,
                 job_id=job_id,
