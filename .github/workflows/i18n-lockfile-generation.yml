@@ -4,22 +4,31 @@ on:
   push:
     branches:
       - tooling/i18n-lockfile-generation
+  pull_request:
+    branches:
+      - main
+    paths:
+      - webapp/package.json
+      - webapp/package-lock.json
+      - .github/workflows/i18n-lockfile-generation.yml
 
 permissions:
   contents: read
 
 jobs:
   generate-lockfile:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout tooling branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version: '22'
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
@@ -38,7 +47,7 @@ jobs:
           npm view react-i18next@17.0.11 version dependencies peerDependencies engines --json > react-i18next-contract.json
 
       - name: Upload generated lockfile evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: i18n-lockfile-${{ github.sha }}
           retention-days: 14
