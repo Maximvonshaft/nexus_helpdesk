@@ -7,7 +7,7 @@ import { Box } from '@mui/material'
 
 const navigation = { label: '案例处理' }
 
-export function Demo({ customerText, userLabel }) {
+export function Demo({ customerText, userLabel, messageCount }) {
   const status = '已关闭'
   const closed = status === '已关闭'
   return (
@@ -15,6 +15,7 @@ export function Demo({ customerText, userLabel }) {
       页面不存在
       <span>{navigation.label}</span>
       <span>{customerText}</span>
+      <span>{messageCount} 条新消息</span>
       <span>{closed ? '返回案例处理' : '返回登录'}</span>
     </Box>
   )
@@ -36,6 +37,7 @@ test('transforms static presentation copy and preserves runtime customer content
   assert.match(output, /__nexusTranslateTemplate\(/)
   assert.match(output, /customerText/)
   assert.match(output, /status === '已关闭'/)
+  assert.match(output, /" " \+ __nexusTranslateStatic\([^\n]+"条新消息"\)/)
   assert.deepEqual(
     new Set(entries.map((entry) => entry.source)),
     new Set([
@@ -44,6 +46,7 @@ test('transforms static presentation copy and preserves runtime customer content
       '主导航',
       '当前账号：{{0}}',
       '页面不存在',
+      '条新消息',
       '返回案例处理',
       '返回登录',
     ]),
