@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -131,6 +132,21 @@ def test_context_compiler_declares_exact_top_level_agent_turn_contract() -> None
     assert "next_action='request_handoff'" in instruction
     assert "handoff_required=true" in instruction
     assert "empty tool_calls list" in instruction
+
+
+def test_webchat_context_and_runtime_share_the_same_session_key() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "services"
+        / "webchat_ai_service.py"
+    ).read_text(encoding="utf-8")
+    policy_index = source.index("session_policy = _session_policy(")
+    context_index = source.index("runtime_context = build_agent_context(")
+    runtime_index = source.index("result = _run_runtime_reply_sync(")
+    assert policy_index < context_index < runtime_index
+    shared_session_argument = 'session_id=session_policy["session_key"]'
+    assert source.count(shared_session_argument) == 2
 
 
 class _CapturingAdapter(ProviderAdapter):

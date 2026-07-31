@@ -108,6 +108,11 @@ def process_webchat_ai_reply_job(
         visitor_message.body,
         history_rows=history_rows,
     )
+    session_policy = _session_policy(
+        conversation,
+        total_messages=_message_count(db, conversation=conversation),
+        history_count=len(history_rows),
+    )
     access = resolve_webchat_agent_access()
     customer = _customer_for_conversation(
         db,
@@ -124,6 +129,7 @@ def process_webchat_ai_reply_job(
         ticket=ticket,
         conversation=conversation,
         customer=customer,
+        session_id=session_policy["session_key"],
     )
     execution_context = dict(
         runtime_context.get("agent_execution_context") or {}
@@ -154,11 +160,6 @@ def process_webchat_ai_reply_job(
     )
     runtime_context["agent_allowed_tools"] = list(access.allowed_tools)
     runtime_context["agent_execution_context"] = execution_context
-    session_policy = _session_policy(
-        conversation,
-        total_messages=_message_count(db, conversation=conversation),
-        history_count=len(history_rows),
-    )
     result = _run_runtime_reply_sync(
         tenant_key=conversation.tenant_key,
         channel_key=conversation.channel_key,
