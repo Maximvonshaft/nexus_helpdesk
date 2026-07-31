@@ -398,12 +398,31 @@ def test_reconciliation_query_skips_replied_rows_before_scan_limit(db_session):
     )
     now = utc_now()
     state.last_heartbeat_at = now
-    # This test isolates candidate-query pagination from the independent capacity
-    # contract. The 100 valid active assignments are intentionally retained while
-    # the target request remains acceptable by the same synthetic operator.
-    state.max_concurrent_conversations = 200
+
+    tenant = db_session.get(Tenant, correct.tenant_id)
+    team = db_session.get(Team, correct.team_id)
+    assert tenant is not None
+    assert team is not None
+    blocker_agents: list[User] = []
+    for agent_index in range(5):
+        blocker = _agent(
+            db_session,
+            tenant=tenant,
+            team=team,
+            username=f"r15-handoff-blocker-{agent_index}",
+        )
+        blocker_state = (
+            db_session.query(OperatorAgentState)
+            .filter(OperatorAgentState.user_id == blocker.id)
+            .one()
+        )
+        blocker_state.max_concurrent_conversations = 20
+        blocker_state.last_heartbeat_at = now
+        blocker_agents.append(blocker)
+    db_session.flush()
 
     for index in range(100):
+        blocker_agent = blocker_agents[index // 20]
         accepted_at = now - timedelta(hours=2) + timedelta(seconds=index)
         blocker_conversation = WebchatConversation(
             public_id=f"r15-active-blocker-{index}",
@@ -420,8 +439,8 @@ def test_reconciliation_query_skips_replied_rows_before_scan_limit(db_session):
             trigger_type="active_replied_blocker",
             status="accepted",
             reason_code="active_human_support",
-            assigned_agent_id=correct.id,
-            accepted_by_user_id=correct.id,
+            assigned_agent_id=blocker_agent.id,
+            accepted_by_user_id=blocker_agent.id,
             requested_at=accepted_at,
             accepted_at=accepted_at,
             created_at=accepted_at,
@@ -437,7 +456,7 @@ def test_reconciliation_query_skips_replied_rows_before_scan_limit(db_session):
                 body_text="The operator has already replied.",
                 message_type="text",
                 delivery_status="sent",
-                author_user_id=correct.id,
+                author_user_id=blocker_agent.id,
                 created_at=accepted_at + timedelta(seconds=1),
             )
         )
