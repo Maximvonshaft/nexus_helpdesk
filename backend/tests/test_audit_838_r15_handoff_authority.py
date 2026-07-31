@@ -398,6 +398,10 @@ def test_reconciliation_query_skips_replied_rows_before_scan_limit(db_session):
     )
     now = utc_now()
     state.last_heartbeat_at = now
+    # This test isolates candidate-query pagination from the independent capacity
+    # contract. The 100 valid active assignments are intentionally retained while
+    # the target request remains acceptable by the same synthetic operator.
+    state.max_concurrent_conversations = 200
 
     for index in range(100):
         accepted_at = now - timedelta(hours=2) + timedelta(seconds=index)
