@@ -104,6 +104,27 @@ def _evaluated_on_is_bound(value: str) -> bool:
     return True
 
 
+def _manifest_attestation_value_is_safe(
+    *,
+    payload: dict[str, object],
+    key_path: tuple[str, ...],
+    value: str,
+) -> bool:
+    for section in ("attestation", "whatsapp_sidecar_attestation"):
+        attestation = payload.get(section)
+        if not isinstance(attestation, dict):
+            continue
+        attestation_id = str(attestation.get("id") or "").strip()
+        if key_path == (section, "id"):
+            return bool(ATTESTATION_ID_RE.fullmatch(value))
+        if key_path == (section, "url"):
+            return bool(ATTESTATION_ID_RE.fullmatch(attestation_id)) and _attestation_url_is_bound(
+                value,
+                attestation_id,
+            )
+    return False
+
+
 def _safe_value(
     *,
     relative: str,
@@ -133,17 +154,11 @@ def _safe_value(
             return bool(SIDECAR_APP_VERSION_RE.fullmatch(value)) and value == (
                 f"controlled-{source_sha}"
             )
-        attestation = payload.get("attestation")
-        if not isinstance(attestation, dict):
-            return False
-        attestation_id = str(attestation.get("id") or "").strip()
-        if key_path == ("attestation", "id"):
-            return bool(ATTESTATION_ID_RE.fullmatch(value))
-        if key_path == ("attestation", "url"):
-            return bool(ATTESTATION_ID_RE.fullmatch(attestation_id)) and _attestation_url_is_bound(
-                value, attestation_id
-            )
-        return False
+        return _manifest_attestation_value_is_safe(
+            payload=payload,
+            key_path=key_path,
+            value=value,
+        )
 
     if relative == RC_MANIFEST and schema == "nexus.osr.rc-test-candidate.v1":
         if key_path == ("candidate", "image_tag"):
@@ -303,6 +318,13 @@ def main() -> int:
         ),
     )
     if findings:
+        for finding in findings[:20]:
+            print(
+                "CONTROLLED_CANDIDATE_ARTIFACT_SCAN_FINDING "
+                f"path={finding.path} rule={finding.rule} "
+                f"fingerprint={finding.fingerprint}",
+                file=sys.stderr,
+            )
         return 1
     print(
         "CONTROLLED_CANDIDATE_ARTIFACT_SCAN_VALID=true "
