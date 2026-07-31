@@ -115,6 +115,16 @@ def _ready_collectors(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         readiness,
+        "collect_privileged_identity_readiness",
+        lambda db: {
+            "status": "ready",
+            "reason_codes": [],
+            "active_privileged_identities": 1,
+            "compliant_privileged_identities": 1,
+        },
+    )
+    monkeypatch.setattr(
+        readiness,
         "collect_queue_health",
         lambda db: {"status": "ready", "reason_codes": []},
     )
@@ -139,6 +149,7 @@ def test_collector_never_grants_activation_authority(monkeypatch):
     assert result["status"] == "ready"
     assert result["reason_codes"] == []
     assert "activation_evidence" not in result["collectors"]
+    assert result["collectors"]["privileged_identity"]["status"] == "ready"
     assert result["production_authorized"] is False
     assert result["provider_enablement_authorized"] is False
     assert result["webchat_ai_enablement_authorized"] is False
@@ -180,6 +191,14 @@ def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
     )
     monkeypatch.setattr(
         readiness,
+        "collect_privileged_identity_readiness",
+        lambda db: {
+            "status": "not_ready",
+            "reason_codes": ["privileged_mfa_not_confirmed"],
+        },
+    )
+    monkeypatch.setattr(
+        readiness,
         "collect_queue_health",
         lambda db: {
             "status": "not_ready",
@@ -202,6 +221,7 @@ def test_collector_failures_are_namespaced_and_deduplicated(monkeypatch):
             "identity:source_sha_invalid",
             "migration:migration_head_mismatch",
             "configuration:controlled_outbound_enabled",
+            "privileged_identity:privileged_mfa_not_confirmed",
             "queue:outbound_stale_processing",
             "storage:not_ready",
         }
