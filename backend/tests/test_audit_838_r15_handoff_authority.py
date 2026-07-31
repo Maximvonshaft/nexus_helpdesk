@@ -38,6 +38,10 @@ from app.services.handoff_routing_authority import (
     schedule_retry_or_exhaust,
 )
 from app.services.operator_queue import create_operator_task
+from app.services.stale_text_handoff_reconciliation import (
+    OFFLINE_HANDOFF_GRACE_SECONDS,
+    reconcile_stale_text_handoffs,
+)
 from app.services.webchat_handoff_service import accept_handoff_request
 from app.utils.time import utc_now
 from app.webchat_models import (
@@ -286,6 +290,62 @@ def test_prior_decline_does_not_permanently_remove_ticket_candidate_from_next_ge
     assert activate_due_generation(db_session, plan=plan) is True
     assert plan.current_generation == 2
 
+    candidate = routing._eligible_text_request_for_agent(
+        db_session,
+        user=correct,
+    )
+    assert candidate is not None
+    assert candidate[0].id == request.id
+
+
+def test_stale_accepted_text_handoff_releases_capacity_and_remains_routable(
+    db_session,
+):
+    request, conversation, plan, task, correct, _wrong = _fixture(db_session)
+    accept_handoff_request(
+        db_session,
+        request_id=request.id,
+        current_user=correct,
+        note="Synthetic accepted work that will be abandoned",
+    )
+    state = (
+        db_session.query(OperatorAgentState)
+        .filter(OperatorAgentState.user_id == correct.id)
+        .one()
+    )
+    request.accepted_at = utc_now() - timedelta(
+        seconds=OFFLINE_HANDOFF_GRACE_SECONDS + 1
+    )
+    request.updated_at = request.accepted_at
+    state.last_heartbeat_at = utc_now() - timedelta(minutes=10)
+    db_session.flush()
+
+    result = reconcile_stale_text_handoffs(
+        db_session,
+        assigned_agent_id=correct.id,
+    )
+    db_session.flush()
+    db_session.refresh(request)
+    db_session.refresh(conversation)
+    db_session.refresh(plan)
+    db_session.refresh(task)
+
+    assert result["released"] == 1
+    assert result["released_request_ids"] == [request.id]
+    assert request.status == "requested"
+    assert request.assigned_agent_id is None
+    assert request.decision_note == "assigned_agent_heartbeat_stale"
+    assert conversation.handoff_status == "requested"
+    assert conversation.active_agent_id is None
+    assert conversation.ai_suspended is True
+    assert task.status == "pending"
+    assert task.assignee_id is None
+    assert plan.status == "active"
+    assert plan.current_generation == 2
+    assert plan.assigned_agent_id is None
+
+    state.last_heartbeat_at = utc_now()
+    db_session.flush()
     candidate = routing._eligible_text_request_for_agent(
         db_session,
         user=correct,
