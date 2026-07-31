@@ -121,7 +121,35 @@ function templateTranslationCall(factory, key, pattern, values) {
 }
 
 function normalizeJsxText(value) {
-  return value.replace(/\s+/g, ' ').trim()
+  const inline = !/[\r\n]/.test(value)
+  const collapsed = value.replace(/\s+/g, ' ')
+  return {
+    message: collapsed.trim(),
+    // JSX collapses ordinary inline whitespace but still needs one separator at
+    // expression boundaries. Keep that layout concern outside the catalog so a
+    // translator never has to preserve invisible leading/trailing characters.
+    prefix: inline && /^\s/.test(value) ? ' ' : '',
+    suffix: inline && /\s$/.test(value) ? ' ' : '',
+  }
+}
+
+function withBoundaryWhitespace(factory, expression, prefix, suffix) {
+  let result = expression
+  if (prefix) {
+    result = factory.createBinaryExpression(
+      factory.createStringLiteral(prefix),
+      factory.createToken(ts.SyntaxKind.PlusToken),
+      result,
+    )
+  }
+  if (suffix) {
+    result = factory.createBinaryExpression(
+      result,
+      factory.createToken(ts.SyntaxKind.PlusToken),
+      factory.createStringLiteral(suffix),
+    )
+  }
+  return result
 }
 
 function occurrenceKey(file, line) {
@@ -174,13 +202,18 @@ export function transformPresentationSource(code, id, collect = () => {}) {
       }
 
       if (ts.isJsxText(node) && CJK_RE.test(node.text)) {
-        const message = normalizeJsxText(node.text)
+        const { message, prefix, suffix } = normalizeJsxText(node.text)
         if (!message) return node
         changed = true
         const key = record(message, node, 'jsx_text')
         return factory.createJsxExpression(
           undefined,
-          staticTranslationCall(factory, key, message),
+          withBoundaryWhitespace(
+            factory,
+            staticTranslationCall(factory, key, message),
+            prefix,
+            suffix,
+          ),
         )
       }
 
