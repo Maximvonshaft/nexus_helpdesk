@@ -1,0 +1,50 @@
+name: I18N Lockfile Generation
+
+on:
+  push:
+    branches:
+      - tooling/i18n-lockfile-generation
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout tooling branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Generate deterministic lockfile
+        working-directory: webapp
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Verify exact lockfile installation
+        working-directory: webapp
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Capture package contracts
+        working-directory: webapp
+        run: |
+          npm view i18next@26.3.6 version dependencies peerDependencies engines --json > i18next-contract.json
+          npm view react-i18next@17.0.11 version dependencies peerDependencies engines --json > react-i18next-contract.json
+
+      - name: Upload generated lockfile evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: i18n-lockfile-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            webapp/package.json
+            webapp/package-lock.json
+            webapp/i18next-contract.json
+            webapp/react-i18next-contract.json
