@@ -77,9 +77,10 @@ test.describe.configure({ mode: 'serial' })
 test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
 test('RC public WebChat supports consecutive messages and operator visibility', async ({ page }) => {
-  test.setTimeout(110_000)
+  test.setTimeout(90_000)
   const firstMessage = `RC browser synthetic message 1 ${sourceSha.slice(0, 12)}`
   const secondMessage = `RC browser synthetic message 2 ${sourceSha.slice(0, 12)}`
+  const message = firstMessage
 
   markStage('public-navigation')
   const initResponsePromise = page.waitForResponse((candidate) => {
@@ -162,7 +163,7 @@ test('RC public WebChat supports consecutive messages and operator visibility', 
 
   markStage('operator-case')
   await expect(
-    page.getByTestId('operator-message-timeline').getByText(firstMessage, { exact: true }),
+    page.getByTestId('operator-message-timeline').getByText(message, { exact: true }),
   ).toBeVisible({ timeout: 25_000 })
   await expect(
     page.getByTestId('operator-message-timeline').getByText(secondMessage, { exact: true }),
