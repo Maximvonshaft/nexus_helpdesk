@@ -1,10 +1,17 @@
 export type UiLocale = 'zh-CN' | 'en' | 'de'
+export type UiMessageCatalog = Readonly<Record<string, string>>
 
 const STORAGE_KEY = 'nexus-operator-ui-locale'
 
 // PR1 deliberately enables only the existing locale. English and German become
 // selectable only after their catalogs and full browser acceptance are complete.
 export const enabledUiLocales = ['zh-CN'] as const satisfies readonly UiLocale[]
+
+const catalogs: Readonly<Record<UiLocale, UiMessageCatalog>> = {
+  'zh-CN': {},
+  en: {},
+  de: {},
+}
 
 function browserStorage() {
   return typeof window !== 'undefined' ? window.localStorage : null
@@ -76,20 +83,22 @@ export function setUiLocale(locale: UiLocale) {
 }
 
 /**
- * Compile-time presentation literals call this function. PR1 intentionally
- * returns the original Chinese source so the application is behaviorally and
- * visually equivalent while producing a complete localization inventory.
- * Runtime customer content never passes through this boundary.
+ * Compile-time presentation literals call this function with an occurrence-
+ * scoped key and the existing Chinese source. An absent catalog entry always
+ * fails safely to the source, so technical or business-payload occurrences can
+ * remain untranslated even when identical visible copy is localized elsewhere.
  */
-export function translateStatic(source: string): string {
-  return source
+export function translateStatic(key: string, source: string): string {
+  const translated = catalogs[currentLocale][key]
+  return typeof translated === 'string' && translated ? translated : source
 }
 
 export function translateTemplate(
+  key: string,
   source: string,
   values: readonly unknown[],
 ): string {
-  return translateStatic(source).replace(/\{\{(\d+)\}\}/g, (token, indexValue) => {
+  return translateStatic(key, source).replace(/\{\{(\d+)\}\}/g, (token, indexValue) => {
     const index = Number.parseInt(indexValue, 10)
     return Number.isInteger(index) && index < values.length
       ? String(values[index] ?? '')
