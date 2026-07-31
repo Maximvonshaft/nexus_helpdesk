@@ -22,11 +22,11 @@ export function Demo({ customerText, userLabel }) {
 `
 
 test('transforms static presentation copy and preserves runtime customer content', () => {
-  const messages = []
+  const entries = []
   const output = transformPresentationSource(
     source,
     '/repo/webapp/src/Demo.tsx',
-    (message) => messages.push(message),
+    (entry) => entries.push(entry),
   )
 
   assert.ok(output)
@@ -37,7 +37,7 @@ test('transforms static presentation copy and preserves runtime customer content
   assert.match(output, /customerText/)
   assert.match(output, /status === '已关闭'/)
   assert.deepEqual(
-    new Set(messages),
+    new Set(entries.map((entry) => entry.source)),
     new Set([
       '案例处理',
       '已关闭',
@@ -47,6 +47,19 @@ test('transforms static presentation copy and preserves runtime customer content
       '返回案例处理',
       '返回登录',
     ]),
+  )
+  assert.equal(new Set(entries.map((entry) => entry.key)).size, entries.length)
+  assert.ok(entries.every((entry) => entry.file === 'src/Demo.tsx'))
+})
+
+test('message keys remain stable for the same source occurrence', () => {
+  const first = []
+  const second = []
+  transformPresentationSource(source, '/repo/webapp/src/Demo.tsx', (entry) => first.push(entry))
+  transformPresentationSource(source, '/repo/webapp/src/Demo.tsx', (entry) => second.push(entry))
+  assert.deepEqual(
+    first.map((entry) => entry.key),
+    second.map((entry) => entry.key),
   )
 })
 
