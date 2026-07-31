@@ -77,6 +77,7 @@ app.add_middleware(
 
 DEFAULT_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=()"
 VOICE_PERMISSIONS_POLICY = "camera=(), microphone=(self), geolocation=()"
+STRICT_TRANSPORT_SECURITY = "max-age=31536000"
 CSP_SCRIPT_SRC = "'self' https://static.cloudflareinsights.com"
 CSP_BASE_CONNECT_SRC = (
     "'self' https://cloudflareinsights.com https://static.cloudflareinsights.com"
@@ -212,6 +213,10 @@ def _permissions_policy_for_request(path: str) -> str:
     )
 
 
+def _strict_transport_security_enabled() -> bool:
+    return str(settings.app_env or "").strip().lower() in {"production", "prod"}
+
+
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
@@ -256,6 +261,11 @@ async def request_context_middleware(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if _strict_transport_security_enabled():
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            STRICT_TRANSPORT_SECURITY,
+        )
     response.headers["Permissions-Policy"] = _permissions_policy_for_request(
         request.url.path
     )
