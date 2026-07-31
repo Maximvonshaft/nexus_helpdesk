@@ -22,22 +22,40 @@ export function Demo({ customerText, userLabel, messageCount }) {
 }
 `
 
+const multilineSource = `
+export function VoiceOffer({ seconds, count }) {
+  return (
+    <>
+      <span>
+        接听机会将在 {seconds} 秒后轮转给下一位坐席。
+      </span>
+      <span>
+        当前还有 {count} 个来电等待处理。
+      </span>
+    </>
+  )
+}
+`
+
 test('transforms static presentation copy and preserves runtime customer content', () => {
   const entries = []
-  const output = transformPresentationSource(
+  const transformed = transformPresentationSource(
     source,
     '/repo/webapp/src/Demo.tsx',
     (entry) => entries.push(entry),
   )
 
-  assert.ok(output)
-  assert.match(output, /translateStatic as __nexusTranslateStatic/)
-  assert.match(output, /translateTemplate as __nexusTranslateTemplate/)
-  assert.match(output, /__nexusTranslateStatic\(/)
-  assert.match(output, /__nexusTranslateTemplate\(/)
-  assert.match(output, /customerText/)
-  assert.match(output, /status === '已关闭'/)
-  assert.match(output, /" " \+ __nexusTranslateStatic\(/)
+  assert.ok(transformed)
+  const { code, map } = transformed
+  assert.match(code, /translateStatic as __nexusTranslateStatic/)
+  assert.match(code, /translateTemplate as __nexusTranslateTemplate/)
+  assert.match(code, /__nexusTranslateStatic\(/)
+  assert.match(code, /__nexusTranslateTemplate\(/)
+  assert.match(code, /customerText/)
+  assert.match(code, /status === ['"]已关闭['"]/)
+  assert.match(code, /['"] ['"] \+ __nexusTranslateStatic\(/)
+  assert.equal(map.version, 3)
+  assert.ok(map.sourcesContent?.includes(source))
   assert.deepEqual(
     new Set(entries.map((entry) => entry.source)),
     new Set([
@@ -53,6 +71,16 @@ test('transforms static presentation copy and preserves runtime customer content
   )
   assert.equal(new Set(entries.map((entry) => entry.key)).size, entries.length)
   assert.ok(entries.every((entry) => entry.file === 'src/Demo.tsx'))
+})
+
+test('preserves JSX separator spaces around multiline expressions', () => {
+  const transformed = transformPresentationSource(
+    multilineSource,
+    '/repo/webapp/src/VoiceOffer.tsx',
+  )
+  assert.ok(transformed)
+  assert.match(transformed.code, /__nexusTranslateStatic\([^\n]+\) \+ ['"] ['"]/)
+  assert.match(transformed.code, /['"] ['"] \+ __nexusTranslateStatic\(/)
 })
 
 test('message keys remain stable for the same source occurrence', () => {
