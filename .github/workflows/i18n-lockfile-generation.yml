@@ -4,16 +4,9 @@ on:
   push:
     branches:
       - tooling/i18n-lockfile-generation
-  pull_request:
-    branches:
-      - main
-    paths:
-      - webapp/package.json
-      - webapp/package-lock.json
-      - .github/workflows/i18n-lockfile-generation.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate-lockfile:
@@ -23,7 +16,8 @@ jobs:
       - name: Checkout tooling branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          persist-credentials: false
+          ref: tooling/i18n-lockfile-generation
+          persist-credentials: true
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -45,6 +39,18 @@ jobs:
         run: |
           npm view i18next@26.3.6 version dependencies peerDependencies engines --json > i18next-contract.json
           npm view react-i18next@17.0.11 version dependencies peerDependencies engines --json > react-i18next-contract.json
+
+      - name: Commit verified dependency files to tooling branch
+        run: |
+          if git diff --quiet -- webapp/package.json webapp/package-lock.json; then
+            echo 'Verified dependency files are already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add webapp/package.json webapp/package-lock.json
+          git commit -m 'tooling(i18n): persist verified localization lockfile'
+          git push origin HEAD:tooling/i18n-lockfile-generation
 
       - name: Upload generated lockfile evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
