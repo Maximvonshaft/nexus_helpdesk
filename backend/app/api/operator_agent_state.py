@@ -34,6 +34,9 @@ from ..services.permissions import (
     ensure_capability,
     resolve_capabilities,
 )
+from ..services.stale_text_handoff_reconciliation import (
+    reconcile_stale_text_handoffs,
+)
 from ..unit_of_work import managed_session
 from ..webchat_models import WebchatConversation, WebchatHandoffRequest
 from .deps import get_current_user
@@ -204,6 +207,7 @@ def get_agent_state(
 ):
     _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
+        reconcile_stale_text_handoffs(db, assigned_agent_id=current_user.id)
         return read_agent_state(db, user_id=current_user.id)
 
 
@@ -215,6 +219,7 @@ def update_agent_state(
 ):
     capabilities = _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
+        reconcile_stale_text_handoffs(db, assigned_agent_id=current_user.id)
         current_state = read_agent_state(db, user_id=current_user.id)
         governed_capacity_fields = {
             "max_concurrent_conversations": payload.max_concurrent_conversations,
@@ -254,6 +259,7 @@ def heartbeat_agent_state(
 ):
     _ensure_agent_state_capability(current_user, db)
     with managed_session(db):
+        reconcile_stale_text_handoffs(db, assigned_agent_id=current_user.id)
         return heartbeat_agent(db, user=current_user)
 
 
@@ -266,6 +272,7 @@ def get_managed_agent_state(
     ensure_capability(current_user, CAP_USER_MANAGE, db)
     with managed_session(db):
         target = _managed_operator(db, actor=current_user, user_id=user_id)
+        reconcile_stale_text_handoffs(db, assigned_agent_id=target.id)
         return {
             **read_agent_state(db, user_id=target.id),
             "username": target.username,
@@ -284,6 +291,7 @@ def update_managed_agent_capacity(
     ensure_capability(current_user, CAP_USER_MANAGE, db)
     with managed_session(db):
         target = _managed_operator(db, actor=current_user, user_id=user_id)
+        reconcile_stale_text_handoffs(db, assigned_agent_id=target.id)
         return set_operator_agent_capacity(
             db,
             actor=current_user,
@@ -305,40 +313,42 @@ def get_operator_availability(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_agent_capability(current_user, db)
-    tenant, country, channel, _grant = authorize_operator_scope(
-        db,
-        current_user=current_user,
-        tenant_key=tenant_key,
-        country_code=country_code,
-        channel_key=channel_key,
-    )
-    request_row = (
-        db.get(WebchatHandoffRequest, handoff_request_id)
-        if handoff_request_id is not None
-        else None
-    )
-    if request_row is not None:
-        control = (
-            db.query(ConversationControl)
-            .filter(ConversationControl.conversation_id == request_row.conversation_id)
-            .first()
+    with managed_session(db):
+        reconcile_stale_text_handoffs(db)
+        tenant, country, channel, _grant = authorize_operator_scope(
+            db,
+            current_user=current_user,
+            tenant_key=tenant_key,
+            country_code=country_code,
+            channel_key=channel_key,
         )
-        if control is None or (
-            control.tenant_key,
-            control.country_code,
-            control.channel_key,
-        ) != (tenant, country, channel):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="handoff_not_found_in_scope",
+        request_row = (
+            db.get(WebchatHandoffRequest, handoff_request_id)
+            if handoff_request_id is not None
+            else None
+        )
+        if request_row is not None:
+            control = (
+                db.query(ConversationControl)
+                .filter(ConversationControl.conversation_id == request_row.conversation_id)
+                .first()
             )
-    return availability_summary(
-        db,
-        tenant_key=tenant,
-        country_code=country,
-        channel_key=channel,
-        request_row=request_row,
-    )
+            if control is None or (
+                control.tenant_key,
+                control.country_code,
+                control.channel_key,
+            ) != (tenant, country, channel):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="handoff_not_found_in_scope",
+                )
+        return availability_summary(
+            db,
+            tenant_key=tenant,
+            country_code=country,
+            channel_key=channel,
+            request_row=request_row,
+        )
 
 
 @router.post("/handoffs/{request_id}/accept")
@@ -349,6 +359,7 @@ def accept_operator_handoff(
 ):
     _ensure_agent_capability(current_user, db)
     with managed_session(db):
+        reconcile_stale_text_handoffs(db, assigned_agent_id=current_user.id)
         request_row, conversation = _handoff_request_in_actor_tenant(
             db,
             actor=current_user,
