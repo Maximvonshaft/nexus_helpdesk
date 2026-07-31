@@ -34,8 +34,8 @@ def release_readiness(
 ):
     ensure_can_manage_runtime(current_user, db)
     try:
-        selected_profile = profile if profile is not None else _configured_profile()
-        collected = collect_release_readiness(db, profile=selected_profile)
+        profile = profile if profile is not None else _configured_profile()
+        collected = collect_release_readiness(db, profile=profile)
         return finalize_release_readiness(collected)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="release_profile_invalid") from exc
