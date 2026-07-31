@@ -132,6 +132,7 @@ def test_context_compiler_declares_exact_top_level_agent_turn_contract() -> None
     assert "next_action='request_handoff'" in instruction
     assert "handoff_required=true" in instruction
     assert "empty tool_calls list" in instruction
+    assert "evidence_used and safety_notes must always be JSON arrays" in instruction
 
 
 def test_webchat_context_and_runtime_share_the_same_session_key() -> None:
