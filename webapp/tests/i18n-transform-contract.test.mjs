@@ -40,6 +40,7 @@ test('transforms static presentation copy and preserves runtime customer content
     new Set(messages),
     new Set([
       '案例处理',
+      '已关闭',
       '主导航',
       '当前账号：{{0}}',
       '页面不存在',
