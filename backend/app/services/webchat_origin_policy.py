@@ -14,6 +14,26 @@ def normalized_allowed_origins(settings: Any) -> set[str]:
     return allowed
 
 
+def _browser_same_origin_fetch(request: Request) -> bool:
+    """Recognize a browser-owned same-origin fetch when Origin is omitted.
+
+    Browsers may omit ``Origin`` on same-origin GET requests. Nexus also emits
+    ``Referrer-Policy: no-referrer``, so the corresponding WebChat polling request
+    legitimately has neither Origin nor Referer. Fetch Metadata headers are
+    forbidden request headers in browser JavaScript and preserve fail-closed
+    cross-site behavior without enabling arbitrary no-origin clients.
+    """
+
+    site = str(request.headers.get("sec-fetch-site") or "").strip().lower()
+    mode = str(request.headers.get("sec-fetch-mode") or "").strip().lower()
+    destination = str(request.headers.get("sec-fetch-dest") or "").strip().lower()
+    return (
+        site == "same-origin"
+        and mode in {"cors", "same-origin"}
+        and destination in {"", "empty"}
+    )
+
+
 def validate_public_origin(request: Request, settings: Any) -> str | None:
     allowed = normalized_allowed_origins(settings)
     origin = request.headers.get("origin")
@@ -29,6 +49,9 @@ def validate_public_origin(request: Request, settings: Any) -> str | None:
             referer_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
             if referer_origin in allowed:
                 return referer_origin
+
+    if _browser_same_origin_fetch(request):
+        return None
 
     if settings.webchat_allow_no_origin or settings.app_env in {"development", "test", "local"}:
         return None
