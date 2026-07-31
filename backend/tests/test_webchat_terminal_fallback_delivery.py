@@ -121,8 +121,8 @@ def test_exhausted_webchat_ai_job_commits_one_safe_ticketless_terminal_outcome(
 
         db.refresh(job)
         db.refresh(turn)
-        assert job.status == JobStatus.dead
-        assert job.last_error == "webchat_ai_attempts_exhausted"
+        assert job.status == JobStatus.done
+        assert job.last_error == "terminally_resolved:terminal_fallback_committed"
         assert turn.status == "completed"
         assert turn.reply_source == "agent_runtime:fallback"
         assert turn.fallback_reason == "background_job_exhausted"
@@ -194,8 +194,11 @@ def test_committed_handoff_suppresses_dead_job_terminal_fallback(monkeypatch):
         finalize_dead_webchat_ai_job(db, job)
         db.commit()
         db.refresh(turn)
+        db.refresh(job)
         assert turn.status == "superseded"
         assert turn.status_reason == "handoff_started_before_terminal_fallback"
+        assert job.status == JobStatus.done
+        assert job.last_error == "terminally_resolved:human_handoff_owns_outcome"
         assert (
             db.query(WebchatMessage)
             .filter(
