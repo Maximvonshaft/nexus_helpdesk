@@ -120,16 +120,33 @@ function templateTranslationCall(factory, key, pattern, values) {
   )
 }
 
+// Match React's JSX literal cleaning semantics. Indentation-only lines disappear,
+// while meaningful spaces next to expressions survive even across newlines.
+function cleanJsxText(value) {
+  const lines = value.replace(/\r\n?/g, '\n').split('\n')
+  let lastNonEmptyLine = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/[^\t ]/.test(lines[index])) lastNonEmptyLine = index
+  }
+
+  let result = ''
+  for (let index = 0; index < lines.length; index += 1) {
+    let line = lines[index].replace(/\t/g, ' ')
+    if (index !== 0) line = line.replace(/^ +/, '')
+    if (index !== lines.length - 1) line = line.replace(/ +$/, '')
+    if (!line) continue
+    result += line
+    if (index !== lastNonEmptyLine) result += ' '
+  }
+  return result
+}
+
 function normalizeJsxText(value) {
-  const inline = !/[\r\n]/.test(value)
-  const collapsed = value.replace(/\s+/g, ' ')
+  const effective = cleanJsxText(value)
   return {
-    message: collapsed.trim(),
-    // JSX collapses ordinary inline whitespace but still needs one separator at
-    // expression boundaries. Keep that layout concern outside the catalog so a
-    // translator never has to preserve invisible leading/trailing characters.
-    prefix: inline && /^\s/.test(value) ? ' ' : '',
-    suffix: inline && /\s$/.test(value) ? ' ' : '',
+    message: effective.trim(),
+    prefix: effective.startsWith(' ') ? ' ' : '',
+    suffix: effective.endsWith(' ') ? ' ' : '',
   }
 }
 
@@ -156,129 +173,153 @@ function occurrenceKey(file, line) {
   return `${file}:${line}`
 }
 
-export function transformPresentationSource(code, id, collect = () => {}) {
-  const scriptKind = id.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  const sourceFile = ts.createSourceFile(
-    id,
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    scriptKind,
+function runtimeImport(factory) {
+  return factory.createImportDeclaration(
+    undefined,
+    factory.createImportClause(
+      false,
+      undefined,
+      factory.createNamedImports([
+        factory.createImportSpecifier(
+          false,
+          factory.createIdentifier('translateStatic'),
+          factory.createIdentifier(TRANSLATE_IDENTIFIER),
+        ),
+        factory.createImportSpecifier(
+          false,
+          factory.createIdentifier('translateTemplate'),
+          factory.createIdentifier(TEMPLATE_IDENTIFIER),
+        ),
+      ]),
+    ),
+    factory.createStringLiteral(RUNTIME_IMPORT),
   )
-  const file = sourceIdentity(sourceFile.fileName)
+}
+
+function flattenDiagnostics(diagnostics) {
+  return diagnostics
+    .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+}
+
+export function transformPresentationSource(code, id, collect = () => {}) {
+  const file = sourceIdentity(id)
   const ordinals = new Map()
   let changed = false
 
   const transformer = (context) => {
     const { factory } = context
 
-    const record = (source, node, kind) => {
+    const record = (source, node, kind, sourceFile) => {
       const ordinalIdentity = `${kind}\u0000${source}`
       const ordinal = ordinals.get(ordinalIdentity) || 0
       ordinals.set(ordinalIdentity, ordinal + 1)
       const key = messageKey(file, kind, source, ordinal)
-      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
       collect({ key, source, kind, file, line })
       return key
     }
 
-    const visit = (node) => {
-      if (
-        ts.isJsxAttribute(node)
-        && node.initializer
-        && ts.isStringLiteral(node.initializer)
-        && CJK_RE.test(node.initializer.text)
-      ) {
-        changed = true
-        const key = record(node.initializer.text, node, 'jsx_attribute')
-        return factory.updateJsxAttribute(
-          node,
-          node.name,
-          factory.createJsxExpression(
-            undefined,
-            staticTranslationCall(factory, key, node.initializer.text),
-          ),
-        )
-      }
-
-      if (ts.isJsxText(node) && CJK_RE.test(node.text)) {
-        const { message, prefix, suffix } = normalizeJsxText(node.text)
-        if (!message) return node
-        changed = true
-        const key = record(message, node, 'jsx_text')
-        return factory.createJsxExpression(
-          undefined,
-          withBoundaryWhitespace(
-            factory,
-            staticTranslationCall(factory, key, message),
-            prefix,
-            suffix,
-          ),
-        )
-      }
-
-      if (
-        (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
-        && !isExcludedString(node, sourceFile)
-      ) {
-        changed = true
-        const key = record(node.text, node, 'static_literal')
-        return staticTranslationCall(factory, key, node.text)
-      }
-
-      if (ts.isTemplateExpression(node)) {
-        const { pattern, values } = templatePattern(node)
-        const normalizedPath = sourceFile.fileName.replaceAll('\\', '/')
-        if (CJK_RE.test(pattern) && !normalizedPath.includes('/src/i18n/')) {
+    const visitFor = (sourceFile) => {
+      const visit = (node) => {
+        if (
+          ts.isJsxAttribute(node)
+          && node.initializer
+          && ts.isStringLiteral(node.initializer)
+          && CJK_RE.test(node.initializer.text)
+        ) {
           changed = true
-          const key = record(pattern, node, 'template')
-          return templateTranslationCall(
-            factory,
-            key,
-            pattern,
-            values.map((value) => ts.visitNode(value, visit)),
+          const key = record(node.initializer.text, node, 'jsx_attribute', sourceFile)
+          return factory.updateJsxAttribute(
+            node,
+            node.name,
+            factory.createJsxExpression(
+              undefined,
+              staticTranslationCall(factory, key, node.initializer.text),
+            ),
           )
         }
-      }
 
-      return ts.visitEachChild(node, visit, context)
+        if (ts.isJsxText(node) && CJK_RE.test(node.text)) {
+          const { message, prefix, suffix } = normalizeJsxText(node.text)
+          if (!message) return node
+          changed = true
+          const key = record(message, node, 'jsx_text', sourceFile)
+          return factory.createJsxExpression(
+            undefined,
+            withBoundaryWhitespace(
+              factory,
+              staticTranslationCall(factory, key, message),
+              prefix,
+              suffix,
+            ),
+          )
+        }
+
+        if (
+          (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
+          && !isExcludedString(node, sourceFile)
+        ) {
+          changed = true
+          const key = record(node.text, node, 'static_literal', sourceFile)
+          return staticTranslationCall(factory, key, node.text)
+        }
+
+        if (ts.isTemplateExpression(node)) {
+          const { pattern, values } = templatePattern(node)
+          if (CJK_RE.test(pattern) && !sourceFile.fileName.replaceAll('\\', '/').includes('/src/i18n/')) {
+            changed = true
+            const key = record(pattern, node, 'template', sourceFile)
+            return templateTranslationCall(
+              factory,
+              key,
+              pattern,
+              values.map((value) => ts.visitNode(value, visit)),
+            )
+          }
+        }
+
+        return ts.visitEachChild(node, visit, context)
+      }
+      return visit
     }
 
-    return (root) => ts.visitNode(root, visit)
+    return (sourceFile) => {
+      const visited = ts.visitNode(sourceFile, visitFor(sourceFile))
+      if (!changed) return visited
+      return factory.updateSourceFile(
+        visited,
+        [runtimeImport(factory), ...visited.statements],
+      )
+    }
   }
 
-  const result = ts.transform(sourceFile, [transformer])
-  let transformed = result.transformed[0]
-  result.dispose()
+  const result = ts.transpileModule(code, {
+    fileName: id,
+    compilerOptions: {
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      jsx: ts.JsxEmit.Preserve,
+      sourceMap: true,
+      inlineSources: true,
+      inlineSourceMap: false,
+      newLine: ts.NewLineKind.LineFeed,
+      removeComments: false,
+    },
+    transformers: { before: [transformer] },
+    reportDiagnostics: true,
+  })
+  const errors = flattenDiagnostics(result.diagnostics || [])
+  if (errors.length > 0) {
+    throw new Error(`i18n_transform_failed:${file}:${errors.join('|')}`)
+  }
   if (!changed) return null
+  if (!result.sourceMapText) throw new Error(`i18n_source_map_missing:${file}`)
 
-  const runtimeImport = ts.factory.createImportDeclaration(
-    undefined,
-    ts.factory.createImportClause(
-      false,
-      undefined,
-      ts.factory.createNamedImports([
-        ts.factory.createImportSpecifier(
-          false,
-          ts.factory.createIdentifier('translateStatic'),
-          ts.factory.createIdentifier(TRANSLATE_IDENTIFIER),
-        ),
-        ts.factory.createImportSpecifier(
-          false,
-          ts.factory.createIdentifier('translateTemplate'),
-          ts.factory.createIdentifier(TEMPLATE_IDENTIFIER),
-        ),
-      ]),
-    ),
-    ts.factory.createStringLiteral(RUNTIME_IMPORT),
-  )
-  transformed = ts.factory.updateSourceFile(
-    transformed,
-    [runtimeImport, ...transformed.statements],
-  )
-
-  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed })
-  return printer.printFile(transformed)
+  return {
+    code: result.outputText.replace(/\n?\/\/# sourceMappingURL=.*$/u, ''),
+    map: JSON.parse(result.sourceMapText),
+  }
 }
 
 export function nexusI18nTransformPlugin() {
@@ -293,8 +334,9 @@ export function nexusI18nTransformPlugin() {
       const normalizedId = cleanId.replaceAll('\\', '/')
       if (!/\.(ts|tsx)$/.test(cleanId)) return null
       if (!normalizedId.includes('/src/') || normalizedId.includes('/src/i18n/')) return null
+      if (!CJK_RE.test(code)) return null
 
-      const output = transformPresentationSource(
+      return transformPresentationSource(
         code,
         cleanId,
         (entry) => {
@@ -311,7 +353,6 @@ export function nexusI18nTransformPlugin() {
           inventory.set(entry.key, row)
         },
       )
-      return output ? { code: output, map: null } : null
     },
 
     generateBundle() {
