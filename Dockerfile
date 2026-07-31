@@ -123,9 +123,11 @@ FROM docker.io/library/python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a
 COPY backend/ /layout/app/backend/
 COPY scripts/ /layout/app/scripts/
 COPY config/product/golden-journeys.v1.json /layout/app/config/product/golden-journeys.v1.json
+COPY config/operations/ /layout/app/config/operations/
 COPY THIRD_PARTY_NOTICES.md /layout/app/THIRD_PARTY_NOTICES.md
 COPY --from=webapp-builder /build/frontend_dist /layout/app/frontend_dist
-RUN mkdir -p \
+RUN test -s /layout/app/config/operations/outcome-metric-targets.v1.json \
+    && mkdir -p \
         /layout/app/frontend_dist/static/webchat \
         /layout/app/backend/uploads \
         /layout/var/run/nexus-prometheus \
@@ -171,6 +173,6 @@ USER 65532:65532
 
 # Execute the real final image, as its fixed non-root identity, during build. This
 # proves the copied CPython/native closure rather than only the discarded builder.
-RUN ["/usr/local/bin/python", "-c", "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, ssl, uvicorn; assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.0.20')"]
+RUN ["/usr/local/bin/python", "-c", "import alembic, av, cryptography, gunicorn, livekit, livekit.agents, psycopg, sqlalchemy, ssl, uvicorn; from pathlib import Path; assert ssl.OPENSSL_VERSION.startswith('OpenSSL 3.0.20'); assert Path('/app/config/operations/outcome-metric-targets.v1.json').is_file()"]
 
 CMD ["/usr/local/bin/python", "-m", "gunicorn", "app.main:app", "--config", "/app/backend/gunicorn.conf.py", "-k", "uvicorn.workers.UvicornWorker", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "60"]
