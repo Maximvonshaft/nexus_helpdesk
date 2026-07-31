@@ -129,6 +129,9 @@ def test_context_compiler_declares_exact_top_level_agent_turn_contract() -> None
     instruction = compiled.prompt[: compiled.prompt.index("{")]
     assert "top-level JSON object with no wrapper" in instruction
     assert "customer_reply, intent, confidence, risk_level, next_action" in instruction
+    assert "initial human-handoff request" in instruction
+    assert "call handoff.request.create" in instruction
+    assert "Only after a successful handoff.request.create Tool observation" in instruction
     assert "next_action='request_handoff'" in instruction
     assert "handoff_required=true" in instruction
     assert "empty tool_calls list" in instruction
