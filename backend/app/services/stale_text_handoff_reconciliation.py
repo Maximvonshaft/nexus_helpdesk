@@ -16,11 +16,7 @@ from ..webchat_models import (
     WebchatHandoffRequest,
     WebchatMessage,
 )
-from .agent_routing_primitives import (
-    HEARTBEAT_TTL_SECONDS,
-    VOICE_OPEN_SESSION_STATUSES,
-    _event,
-)
+from . import agent_routing_service as routing
 from .audit_service import log_admin_audit
 from .handoff_routing_authority import record_candidate_attempt
 
@@ -53,7 +49,9 @@ def _has_open_voice_session(db: Session, *, conversation_id: int) -> bool:
         db.query(WebchatVoiceSession.id)
         .filter(
             WebchatVoiceSession.conversation_id == conversation_id,
-            WebchatVoiceSession.status.in_(sorted(VOICE_OPEN_SESSION_STATUSES)),
+            WebchatVoiceSession.status.in_(
+                sorted(routing._core.VOICE_OPEN_SESSION_STATUSES)
+            ),
         )
         .first()
     )
@@ -77,7 +75,8 @@ def _agent_is_stale(
     return bool(
         heartbeat is None
         or current is None
-        or heartbeat < current - timedelta(seconds=HEARTBEAT_TTL_SECONDS)
+        or heartbeat
+        < current - timedelta(seconds=routing._core.HEARTBEAT_TTL_SECONDS)
     )
 
 
@@ -167,7 +166,7 @@ def _release_one(
         previous_agent_id=previous_agent_id,
         reason_code=reason_code,
     )
-    _event(
+    routing._core._event(
         db,
         conversation=conversation,
         event_type="handoff.requeued",
