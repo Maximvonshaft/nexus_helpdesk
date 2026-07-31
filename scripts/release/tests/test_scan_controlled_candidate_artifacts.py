@@ -135,7 +135,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             final_path = root / paths[0]
             payload = json.loads(final_path.read_text(encoding="utf-8"))
             payload["attestation"]["url"] = (
-                "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/987654321"
+                "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/12025550123"
             )
             final_path.write_text(json.dumps(payload), encoding="utf-8")
             findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
@@ -148,7 +148,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             final_path = root / paths[0]
             payload = json.loads(final_path.read_text(encoding="utf-8"))
             payload["whatsapp_sidecar_attestation"]["url"] = (
-                "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/123456789"
+                "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/12025550124"
             )
             final_path.write_text(json.dumps(payload), encoding="utf-8")
             findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
