@@ -33,15 +33,15 @@ import type { AppRouteKey } from './navigation'
 import { OperatorLayoutProvider } from './OperatorLayoutProvider'
 import { useOperatorLayoutMode } from './useOperatorLayoutMode'
 
-function scopeLabel(scope: AuthorizedWorkspaceScope, duplicatePosition?: number) {
-  const base = `${scope.country_code} · ${channelPresentation(scope.channel_key).label}`
-  return duplicatePosition ? `${base} · 范围 ${duplicatePosition}` : base
+function scopeLabel(scope: AuthorizedWorkspaceScope) {
+  return `${scope.country_code} · ${channelPresentation(scope.channel_key).label} · 队列：${scope.queue_key}`
 }
 
 function sameScope(left: AuthorizedWorkspaceScope, right: AuthorizedWorkspaceScope) {
   return left.tenant_key === right.tenant_key
     && left.country_code === right.country_code
     && left.channel_key === right.channel_key
+    && left.queue_key === right.queue_key
 }
 
 function initials(value: string) {
@@ -68,18 +68,13 @@ function WorkScopeControl({
   if (!onScopeChange) return null
 
   const selectedIndex = scopes.findIndex((scope) => sameScope(scope, selectedScope))
-  const labelCounts = new Map<string, number>()
-  for (const scope of scopes) {
-    const label = `${scope.country_code}\u0000${scope.channel_key}`
-    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1)
-  }
   const handleScopeChange = (event: SelectChangeEvent<string>) => {
     const next = scopes[Number.parseInt(event.target.value, 10)]
     if (next) onScopeChange(next)
   }
 
   return (
-    <FormControl sx={{ minWidth: compact ? 0 : 170, width: compact ? '100%' : 'auto' }}>
+    <FormControl sx={{ minWidth: compact ? 0 : 230, width: compact ? '100%' : 'auto' }}>
       <InputLabel id={compact ? 'nd-mobile-work-scope-label' : 'nd-work-scope-label'}>工作范围</InputLabel>
       <Select
         labelId={compact ? 'nd-mobile-work-scope-label' : 'nd-work-scope-label'}
@@ -88,15 +83,14 @@ function WorkScopeControl({
         onChange={handleScopeChange}
         inputProps={{ 'aria-label': '工作范围' }}
       >
-        {scopes.map((scope, index) => {
-          const duplicateKey = `${scope.country_code}\u0000${scope.channel_key}`
-          const duplicate = (labelCounts.get(duplicateKey) ?? 0) > 1
-          return (
-            <MenuItem key={`${scope.tenant_hash}-${scope.country_code}-${scope.channel_key}`} value={String(index)}>
-              {scopeLabel(scope, duplicate ? index + 1 : undefined)}
-            </MenuItem>
-          )
-        })}
+        {scopes.map((scope, index) => (
+          <MenuItem
+            key={`${scope.tenant_hash}-${scope.country_code}-${scope.channel_key}-${scope.queue_key}`}
+            value={String(index)}
+          >
+            {scopeLabel(scope)}
+          </MenuItem>
+        ))}
       </Select>
     </FormControl>
   )
