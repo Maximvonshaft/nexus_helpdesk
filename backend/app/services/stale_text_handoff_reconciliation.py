@@ -18,7 +18,10 @@ from ..webchat_models import (
 )
 from . import agent_routing_service as routing
 from .audit_service import log_admin_audit
-from .handoff_routing_authority import record_candidate_attempt
+from .handoff_routing_authority import (
+    activate_due_generation,
+    record_candidate_attempt,
+)
 
 # An untouched accepted text handoff is not allowed to occupy capacity forever.
 # The short threshold is used only when the assigned operator is demonstrably
@@ -104,11 +107,17 @@ def _reopen_routing_plan(
     )
     if plan is None or plan.status != "assigned":
         return
-    plan.status = "active"
+
+    # Requeue is a new routing generation, not a return to the old candidate set.
+    # Advancing immediately prevents a one-agent queue from becoming permanently
+    # unroutable while still retaining the abandoned assignment as evidence.
+    now = utc_now()
+    plan.status = "retry_scheduled"
     plan.assigned_agent_id = None
     plan.outcome_code = reason_code
-    plan.next_retry_at = None
-    plan.updated_at = utc_now()
+    plan.next_retry_at = now
+    plan.updated_at = now
+    activate_due_generation(db, plan=plan)
     db.flush()
 
 
