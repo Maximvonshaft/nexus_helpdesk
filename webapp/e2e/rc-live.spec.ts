@@ -111,10 +111,10 @@ test('RC public WebChat supports consecutive messages and operator visibility', 
   await input.fill(firstMessage)
   const firstMessageRequest = waitForPublicMessagePost(page)
   await send.click()
-  const firstMessageResponse = await firstMessageRequest
-  expect(firstMessageResponse.ok()).toBeTruthy()
+  const messageResponse = await firstMessageRequest
+  expect(messageResponse.ok()).toBeTruthy()
 
-  const conversationMatch = new URL(firstMessageResponse.url()).pathname.match(
+  const conversationMatch = new URL(messageResponse.url()).pathname.match(
     /^\/api\/webchat\/conversations\/(wc_[A-Za-z0-9_-]+)\/messages$/,
   )
   expect(conversationMatch).not.toBeNull()
