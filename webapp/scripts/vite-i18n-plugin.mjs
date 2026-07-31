@@ -1,4 +1,4 @@
-import path from 'node:path'
+import { createHash } from 'node:crypto'
 import ts from 'typescript'
 
 const CJK_RE = /[\u3400-\u9fff]/u
@@ -79,19 +79,41 @@ function templatePattern(node) {
   return { pattern, values }
 }
 
-function staticTranslationCall(factory, text) {
+function sourceIdentity(fileName) {
+  const normalized = fileName.replaceAll('\\', '/')
+  const marker = '/src/'
+  const index = normalized.lastIndexOf(marker)
+  return index >= 0 ? `src/${normalized.slice(index + marker.length)}` : normalized
+}
+
+function messageKey(file, kind, source, ordinal) {
+  const filePrefix = file
+    .replace(/^src\//, '')
+    .replace(/\.(?:ts|tsx)$/, '')
+    .replace(/[^a-zA-Z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .toLowerCase()
+  const digest = createHash('sha256')
+    .update(`${file}\u0000${kind}\u0000${source}\u0000${ordinal}`)
+    .digest('hex')
+    .slice(0, 12)
+  return `${filePrefix || 'operator-ui'}.${digest}`
+}
+
+function staticTranslationCall(factory, key, text) {
   return factory.createCallExpression(
     factory.createIdentifier(TRANSLATE_IDENTIFIER),
     undefined,
-    [factory.createStringLiteral(text)],
+    [factory.createStringLiteral(key), factory.createStringLiteral(text)],
   )
 }
 
-function templateTranslationCall(factory, pattern, values) {
+function templateTranslationCall(factory, key, pattern, values) {
   return factory.createCallExpression(
     factory.createIdentifier(TEMPLATE_IDENTIFIER),
     undefined,
     [
+      factory.createStringLiteral(key),
       factory.createStringLiteral(pattern),
       factory.createArrayLiteralExpression(values, false),
     ],
@@ -115,14 +137,21 @@ export function transformPresentationSource(code, id, collect = () => {}) {
     true,
     scriptKind,
   )
+  const file = sourceIdentity(sourceFile.fileName)
+  const ordinals = new Map()
   let changed = false
 
   const transformer = (context) => {
     const { factory } = context
 
-    const record = (message, node) => {
+    const record = (source, node, kind) => {
+      const ordinalIdentity = `${kind}\u0000${source}`
+      const ordinal = ordinals.get(ordinalIdentity) || 0
+      ordinals.set(ordinalIdentity, ordinal + 1)
+      const key = messageKey(file, kind, source, ordinal)
       const line = sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1
-      collect(message, sourceFile.fileName, line)
+      collect({ key, source, kind, file, line })
+      return key
     }
 
     const visit = (node) => {
@@ -133,13 +162,13 @@ export function transformPresentationSource(code, id, collect = () => {}) {
         && CJK_RE.test(node.initializer.text)
       ) {
         changed = true
-        record(node.initializer.text, node)
+        const key = record(node.initializer.text, node, 'jsx_attribute')
         return factory.updateJsxAttribute(
           node,
           node.name,
           factory.createJsxExpression(
             undefined,
-            staticTranslationCall(factory, node.initializer.text),
+            staticTranslationCall(factory, key, node.initializer.text),
           ),
         )
       }
@@ -148,10 +177,10 @@ export function transformPresentationSource(code, id, collect = () => {}) {
         const message = normalizeJsxText(node.text)
         if (!message) return node
         changed = true
-        record(message, node)
+        const key = record(message, node, 'jsx_text')
         return factory.createJsxExpression(
           undefined,
-          staticTranslationCall(factory, message),
+          staticTranslationCall(factory, key, message),
         )
       }
 
@@ -160,8 +189,8 @@ export function transformPresentationSource(code, id, collect = () => {}) {
         && !isExcludedString(node, sourceFile)
       ) {
         changed = true
-        record(node.text, node)
-        return staticTranslationCall(factory, node.text)
+        const key = record(node.text, node, 'static_literal')
+        return staticTranslationCall(factory, key, node.text)
       }
 
       if (ts.isTemplateExpression(node)) {
@@ -169,9 +198,10 @@ export function transformPresentationSource(code, id, collect = () => {}) {
         const normalizedPath = sourceFile.fileName.replaceAll('\\', '/')
         if (CJK_RE.test(pattern) && !normalizedPath.includes('/src/i18n/')) {
           changed = true
-          record(pattern, node)
+          const key = record(pattern, node, 'template')
           return templateTranslationCall(
             factory,
+            key,
             pattern,
             values.map((value) => ts.visitNode(value, visit)),
           )
@@ -234,25 +264,31 @@ export function nexusI18nTransformPlugin() {
       const output = transformPresentationSource(
         code,
         cleanId,
-        (message, file, line) => {
-          const relativeFile = path.relative(process.cwd(), file).replaceAll('\\', '/')
-          const occurrences = inventory.get(message) || new Map()
-          occurrences.set(occurrenceKey(relativeFile, line), {
-            file: relativeFile,
-            line,
+        (entry) => {
+          const row = inventory.get(entry.key) || {
+            key: entry.key,
+            source: entry.source,
+            kind: entry.kind,
+            occurrences: new Map(),
+          }
+          row.occurrences.set(occurrenceKey(entry.file, entry.line), {
+            file: entry.file,
+            line: entry.line,
           })
-          inventory.set(message, occurrences)
+          inventory.set(entry.key, row)
         },
       )
       return output ? { code: output, map: null } : null
     },
 
     generateBundle() {
-      const messages = [...inventory.entries()]
-        .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-        .map(([source, occurrences]) => ({
-          source,
-          occurrences: [...occurrences.values()].sort((left, right) => (
+      const messages = [...inventory.values()]
+        .sort((left, right) => left.key.localeCompare(right.key))
+        .map((row) => ({
+          key: row.key,
+          source: row.source,
+          kind: row.kind,
+          occurrences: [...row.occurrences.values()].sort((left, right) => (
             left.file.localeCompare(right.file) || left.line - right.line
           )),
         }))
@@ -260,7 +296,7 @@ export function nexusI18nTransformPlugin() {
       this.emitFile({
         type: 'asset',
         fileName: 'i18n-inventory.json',
-        source: `${JSON.stringify({ schema_version: 1, messages }, null, 2)}\n`,
+        source: `${JSON.stringify({ schema_version: 2, messages }, null, 2)}\n`,
       })
     },
   }
