@@ -18,7 +18,7 @@ from app.services.customer_visible_message_service import _effective_channel
 
 @pytest.mark.parametrize(
     "channel_key",
-    ["", "default", "webchat", SourceChannel.web_chat.value],
+    ["", "default", "website", "webchat", SourceChannel.web_chat.value],
 )
 def test_ticketless_internal_webchat_channel_aliases_remain_supported(
     channel_key: str,
