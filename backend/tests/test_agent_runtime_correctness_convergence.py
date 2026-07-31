@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -116,6 +117,44 @@ def test_context_compiler_never_returns_tail_truncated_json() -> None:
     parsed = json.loads(compiled.prompt[compiled.prompt.index("{") :])
     assert parsed["customer_message"]
     assert parsed["tool_observations"]
+
+
+def test_context_compiler_declares_exact_top_level_agent_turn_contract() -> None:
+    compiled = compile_agent_context(
+        _provider_request(),
+        max_prompt_chars=3500,
+        num_ctx=4096,
+        max_output_chars=1200,
+    )
+    instruction = compiled.prompt[: compiled.prompt.index("{")]
+    assert "top-level JSON object with no wrapper" in instruction
+    assert "customer_reply, intent, confidence, risk_level, next_action" in instruction
+    assert "initial human-handoff request" in instruction
+    assert "call handoff.request.create" in instruction
+    assert "'tool_name':'handoff.request.create'" in instruction
+    assert "never use name, args or an underscored Tool name" in instruction
+    assert "Only after a successful handoff.request.create Tool observation" in instruction
+    assert "next_action='request_handoff'" in instruction
+    assert "handoff_required=true" in instruction
+    assert "empty tool_calls list" in instruction
+    assert "evidence_used and safety_notes must always be JSON arrays" in instruction
+    assert "confidence a number from 0 to 1" in instruction
+    assert "never use null for those fields" in instruction
+
+
+def test_webchat_context_and_runtime_share_the_same_session_key() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "services"
+        / "webchat_ai_service.py"
+    ).read_text(encoding="utf-8")
+    policy_index = source.index("session_policy = _session_policy(")
+    context_index = source.index("runtime_context = build_agent_context(")
+    runtime_index = source.index("result = _run_runtime_reply_sync(")
+    assert policy_index < context_index < runtime_index
+    shared_session_argument = 'session_id=session_policy["session_key"]'
+    assert source.count(shared_session_argument) == 2
 
 
 class _CapturingAdapter(ProviderAdapter):

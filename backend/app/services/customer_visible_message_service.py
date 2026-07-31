@@ -376,6 +376,7 @@ def _effective_channel(
     if conversation_channel in {
         "",
         "default",
+        "website",
         "webchat",
         SourceChannel.web_chat.value,
     }:
