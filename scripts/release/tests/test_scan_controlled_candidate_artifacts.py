@@ -25,6 +25,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
 
     def _fixtures(self, root: Path) -> list[str]:
         attestation_id = "123456789"
+        sidecar_attestation_id = "987654321"
         final = {
             "schema": "nexus.osr.controlled-candidate-manifest.v1",
             "status": "pass",
@@ -42,6 +43,14 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
                 "url": (
                     "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/"
                     + attestation_id
+                ),
+                "registry_provenance_pushed": True,
+            },
+            "whatsapp_sidecar_attestation": {
+                "id": sidecar_attestation_id,
+                "url": (
+                    "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/"
+                    + sidecar_attestation_id
                 ),
                 "registry_provenance_pushed": True,
             },
@@ -106,7 +115,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             paths = self._fixtures(root)
             findings, suppressed = MODULE.scan_controlled_candidate_files(root, paths)
             self.assertEqual(findings, [])
-            self.assertGreaterEqual(suppressed, 8)
+            self.assertGreaterEqual(suppressed, 10)
 
     def test_secret_finding_is_never_suppressed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -127,6 +136,19 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             payload = json.loads(final_path.read_text(encoding="utf-8"))
             payload["attestation"]["url"] = (
                 "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/987654321"
+            )
+            final_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_unbound_sidecar_attestation_url_is_not_suppressed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            final_path = root / paths[0]
+            payload = json.loads(final_path.read_text(encoding="utf-8"))
+            payload["whatsapp_sidecar_attestation"]["url"] = (
+                "https://github.com/Maximvonshaft/nexus_helpdesk/attestations/123456789"
             )
             final_path.write_text(json.dumps(payload), encoding="utf-8")
             findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
