@@ -11,6 +11,7 @@ from ..db import database_pool_snapshot
 from ..livekit_agent_config import load_livekit_agent_worker_config
 from ..settings import get_settings
 from ..webchat_voice_config import load_webchat_voice_runtime_config
+from .privileged_identity_readiness import collect_privileged_identity_readiness
 from .queue_health import collect_queue_health
 from .release_metadata import runtime_identity_status
 from .storage_readiness import check_storage_readiness
@@ -323,6 +324,7 @@ def evaluate_release_readiness(
     migration = _migration_snapshot(db)
     configuration = _configuration_snapshot(normalized_profile)
     telephony = _telephony_snapshot(db)
+    privileged_identity = collect_privileged_identity_readiness(db)
     queue = collect_queue_health(db)
     storage = check_storage_readiness().as_dict()
     database_pool = database_pool_snapshot()
@@ -333,6 +335,7 @@ def evaluate_release_readiness(
         ("migration", migration),
         ("configuration", configuration),
         ("telephony", telephony),
+        ("privileged_identity", privileged_identity),
         ("queue", queue),
         ("storage", storage),
     ):
@@ -356,6 +359,7 @@ def evaluate_release_readiness(
             "migration": migration,
             "configuration": configuration,
             "telephony": telephony,
+            "privileged_identity": privileged_identity,
             "queue": queue,
             "storage": storage,
             "database_pool": database_pool,
