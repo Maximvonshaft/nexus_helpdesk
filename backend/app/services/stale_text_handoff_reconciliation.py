@@ -88,12 +88,12 @@ def _reopen_routing_plan(
     previous_agent_id: int,
     reason_code: str,
 ) -> None:
-    plan = (
-        db.query(HandoffRoutingPlan)
-        .filter(HandoffRoutingPlan.request_id == request_row.id)
-        .with_for_update()
-        .one_or_none()
+    plan_query = db.query(HandoffRoutingPlan).filter(
+        HandoffRoutingPlan.request_id == request_row.id
     )
+    if db.bind and db.bind.dialect.name.startswith("postgresql"):
+        plan_query = plan_query.with_for_update()
+    plan = plan_query.one_or_none()
     record_candidate_attempt(
         db,
         plan=plan,
@@ -184,8 +184,11 @@ def _release_one(
         target_type="webchat_handoff_request",
         target_id=request_row.id,
         old_value={"assigned_agent_id": previous_agent_id, "status": "accepted"},
-        new_value={"assigned_agent_id": None, "status": "requested"},
-        metadata={"reason_code": reason_code},
+        new_value={
+            "assigned_agent_id": None,
+            "status": "requested",
+            "reason_code": reason_code,
+        },
     )
     db.flush()
 
@@ -210,20 +213,23 @@ def reconcile_stale_text_handoffs(
             WebchatHandoffRequest.assigned_agent_id.isnot(None),
             WebchatConversation.status == "open",
         )
-        .order_by(WebchatHandoffRequest.accepted_at.asc(), WebchatHandoffRequest.id.asc())
-        .limit(max(1, min(int(limit or 100), 500)))
     )
     if assigned_agent_id is not None:
         query = query.filter(
             WebchatHandoffRequest.assigned_agent_id == int(assigned_agent_id)
         )
+    query = query.order_by(
+        WebchatHandoffRequest.accepted_at.asc(),
+        WebchatHandoffRequest.id.asc(),
+    )
     if db.bind and db.bind.dialect.name.startswith("postgresql"):
         query = query.with_for_update(skip_locked=True)
+    rows = query.limit(max(1, min(int(limit or 100), 500))).all()
 
     inspected = 0
     released = 0
     released_ids: list[int] = []
-    for request_row, conversation in query.all():
+    for request_row, conversation in rows:
         inspected += 1
         if _has_open_voice_session(db, conversation_id=conversation.id):
             continue
