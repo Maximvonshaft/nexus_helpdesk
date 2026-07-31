@@ -1,6 +1,5 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 
 const CJK_RE = /[\u3400-\u9fff]/u
 const KEY_RE = /^[a-z0-9.]+\.[a-f0-9]{12}$/
@@ -12,8 +11,7 @@ const ALLOWED_KINDS = new Set([
 ])
 
 const inventoryPath = resolve(process.cwd(), '../frontend_dist/i18n-inventory.json')
-const evidenceDir = process.env.NEXUS_FRONTEND_EVIDENCE_DIR
-  || (process.env.GITHUB_ACTIONS === 'true' ? '/tmp/nexus-development' : join(tmpdir(), 'nexus-development'))
+const summaryPath = join(dirname(inventoryPath), 'i18n-inventory-summary.json')
 
 const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'))
 if (inventory?.schema_version !== 2 || !Array.isArray(inventory.messages)) {
@@ -52,10 +50,6 @@ for (const message of inventory.messages) {
   }
 }
 
-mkdirSync(evidenceDir, { recursive: true })
-const evidenceInventoryPath = join(evidenceDir, 'i18n-inventory.json')
-const summaryPath = join(evidenceDir, 'i18n-inventory-summary.json')
-copyFileSync(inventoryPath, evidenceInventoryPath)
 const summary = {
   ok: true,
   schema_version: inventory.schema_version,
@@ -66,7 +60,10 @@ const summary = {
       inventory.messages.filter((message) => message.kind === kind).length,
     ]),
   ),
-  inventory: evidenceInventoryPath,
+  inventory: inventoryPath,
 }
-writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
+writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, {
+  encoding: 'utf8',
+  mode: 0o600,
+})
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`)
