@@ -91,7 +91,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
 
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
   await expect(page.getByLabel('Nexus OSR')).toBeVisible()
-  await expect(page.getByLabel('当前工作范围')).toHaveText('CH · WebChat')
+  await expect(page.getByLabel('当前工作范围')).toHaveText('CH · WebChat · 队列：legacy')
   await expect(page.locator('.operator-app-header')).toHaveCount(0)
   await expect(page.locator('.operator-scope')).toHaveCount(0)
   await expect(page.getByTestId('operator-workspace')).toBeVisible()
@@ -99,7 +99,7 @@ test('normal operators enter the canonical shell through a server-authorized sco
   await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
 })
 
-test('switching among multiple authorized scopes remounts the workspace with the selected grant', async ({ page }) => {
+test('same-channel scopes remain distinguishable and switch by queue authority', async ({ page }) => {
   await seedSession(page)
   const seen: string[] = []
   await page.route('**/api/**', async (route) => {
@@ -113,14 +113,14 @@ test('switching among multiple authorized scopes remounts the workspace with the
             tenant_hash: 'aaaaaaaaaaaa',
             country_code: 'CH',
             channel_key: 'webchat',
-            queue_key: 'customer_support',
+            queue_key: 'default',
           },
           {
-            tenant_key: 'tenant-me',
-            tenant_hash: 'bbbbbbbbbbbb',
-            country_code: 'ME',
-            channel_key: 'whatsapp',
-            queue_key: 'delivery_support',
+            tenant_key: 'tenant-ch',
+            tenant_hash: 'aaaaaaaaaaaa',
+            country_code: 'CH',
+            channel_key: 'webchat',
+            queue_key: 'legacy',
           },
         ],
         requires_explicit_admin_scope: false,
@@ -140,14 +140,14 @@ test('switching among multiple authorized scopes remounts the workspace with the
   await page.goto('/workspace')
   const selector = page.getByRole('combobox', { name: '工作范围' })
   await expect(selector).toBeVisible()
-  await expect(selector).toHaveText('CH · WebChat')
-  await expect.poll(() => seen.includes('tenant-ch:CH:webchat:customer_support')).toBe(true)
+  await expect(selector).toHaveText('CH · WebChat · 队列：default')
+  await expect.poll(() => seen.includes('tenant-ch:CH:webchat:default')).toBe(true)
 
   await selector.click()
-  await page.getByRole('option', { name: 'ME · WhatsApp' }).click()
+  await page.getByRole('option', { name: 'CH · WebChat · 队列：legacy' }).click()
 
-  await expect(selector).toHaveText('ME · WhatsApp')
-  await expect.poll(() => seen.includes('tenant-me:ME:whatsapp:delivery_support')).toBe(true)
+  await expect(selector).toHaveText('CH · WebChat · 队列：legacy')
+  await expect.poll(() => seen.includes('tenant-ch:CH:webchat:legacy')).toBe(true)
   await expect.poll(() => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) || '{}'), SCOPE_KEY)).toEqual(forgedStaleScope)
   expect(seen).not.toContain('forged-stale-tenant:ZZ:unknown:')
 })
