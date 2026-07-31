@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
+import { nexusI18nTransformPlugin } from './scripts/vite-i18n-plugin.mjs'
 
 const productionSourcemap = String(process.env.VITE_PRODUCTION_SOURCEMAP || '').toLowerCase() === 'true'
 
@@ -16,7 +17,7 @@ function npmPackageId(id: string): string | undefined {
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [nexusI18nTransformPlugin(), react()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
