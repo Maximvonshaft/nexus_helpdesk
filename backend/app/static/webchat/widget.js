@@ -52,10 +52,12 @@
     legacyPollTimer: null,
     legacyWs: null,
     legacyWsReconnectTimer: null,
+    legacySessionPromise: null,
     legacyRecoveryPromise: null,
     receiveFailureCount: 0,
     lastReceiveSuccessAt: null,
     voiceOpen: false,
+    voiceRuntimeEnabled: false,
     liveVoice: null,
     rendered: {}
   };
@@ -132,7 +134,7 @@
   var voiceBtn = document.createElement('button');
   voiceBtn.className = 'nd-webchat-voice';
   voiceBtn.type = 'button';
-  voiceBtn.setAttribute('data-visible', liveVoiceMode === 'livekit-room' ? 'true' : 'false');
+  voiceBtn.setAttribute('data-visible', 'false');
   voiceBtn.setAttribute('aria-label', liveVoiceLabel);
   voiceBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24c1.08.36 2.24.56 3.44.56a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.53 21 3 13.47 3 4.16a1 1 0 0 1 1-1H7.5a1 1 0 0 1 1 1c0 1.2.2 2.36.56 3.44a1 1 0 0 1-.24 1Z"/></svg><span>VOIP<br/>Call</span>';
   var close = document.createElement('button');
@@ -213,6 +215,7 @@
 
   if (welcome) appendMessage('agent', welcome);
   restoreLegacySession();
+  loadVoiceRuntimeConfig();
   exposePublicApi();
   bindPageTriggers();
   if (autoOpen) setTimeout(function () { openPanel(true); }, 150);
@@ -450,8 +453,34 @@
     unread.textContent = String(Math.min(state.unread, 9));
   }
 
+  function loadVoiceRuntimeConfig() {
+    state.voiceRuntimeEnabled = false;
+    voiceBtn.setAttribute('data-visible', 'false');
+    if (liveVoiceMode !== 'livekit-room') return Promise.resolve(false);
+    return api('/api/webchat/voice/runtime-config', {}, 5000).then(function (config) {
+      var enabled = Boolean(
+        config
+        && config.enabled === true
+        && (config.human_call_enabled === true || config.live_ai_voice_enabled === true)
+        && config.provider === 'livekit'
+        && config.media_plane === 'livekit'
+      );
+      state.voiceRuntimeEnabled = enabled;
+      voiceBtn.setAttribute('data-visible', enabled ? 'true' : 'false');
+      if (!enabled) {
+        state.voiceOpen = false;
+        voicePanel.setAttribute('data-open', 'false');
+      }
+      return enabled;
+    }).catch(function () {
+      state.voiceRuntimeEnabled = false;
+      voiceBtn.setAttribute('data-visible', 'false');
+      return false;
+    });
+  }
+
   function toggleVoicePanel(force) {
-    if (liveVoiceMode !== 'livekit-room') return;
+    if (!state.voiceRuntimeEnabled) return;
     openPanel(true);
     state.voiceOpen = typeof force === 'boolean' ? force : !state.voiceOpen;
     voicePanel.setAttribute('data-open', state.voiceOpen ? 'true' : 'false');
@@ -511,7 +540,7 @@
   }
 
   function startLiveVoice() {
-    if (liveVoiceMode !== 'livekit-room') return;
+    if (!state.voiceRuntimeEnabled) return;
     toggleVoicePanel(true);
     voiceStatus('Preparing a secure LiveKit room...');
     ensureLegacySession().then(function () {
@@ -681,11 +710,38 @@
     try { window.sessionStorage.removeItem(storageKey + ':legacy'); } catch (err) {}
   }
 
+  function createLegacySession() {
+    if (state.legacySessionPromise) return state.legacySessionPromise;
+    setStatus('Connecting to support…', 'degraded');
+    state.legacySessionPromise = api('/api/webchat/init', {
+      method: 'POST',
+      body: JSON.stringify({
+        tenant_key: tenantKey,
+        channel_key: channelKey,
+        conversation_id: null,
+        origin: window.location.origin,
+        page_url: window.location.href
+      })
+    }, 12000).then(function (data) {
+      state.legacyConversationId = data.conversation_id;
+      state.legacyVisitorToken = data.visitor_token;
+      persistLegacySession();
+      markReceiveHealthy();
+      startLegacyWs();
+    }).catch(function (err) {
+      markReceiveDegraded('Unable to connect to support. Retrying…');
+      throw err;
+    }).finally(function () {
+      state.legacySessionPromise = null;
+    });
+    return state.legacySessionPromise;
+  }
+
   function recoverLegacySession() {
     if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
     clearLegacySession();
     markReceiveDegraded('Reconnecting to support…');
-    state.legacyRecoveryPromise = ensureLegacySession().then(function () {
+    state.legacyRecoveryPromise = createLegacySession().then(function () {
       if (!state.legacyConversationId || !state.legacyVisitorToken) throw new Error('webchat_session_recovery_failed');
       markReceiveHealthy();
     }).finally(function () {
@@ -714,29 +770,7 @@
       startLegacyWs();
       return Promise.resolve();
     }
-    setStatus('Connecting to support…', 'degraded');
-    return api('/api/webchat/init', {
-      method: 'POST',
-      headers: state.legacyVisitorToken ? { 'X-Webchat-Visitor-Token': state.legacyVisitorToken } : {},
-      body: JSON.stringify({
-        tenant_key: tenantKey,
-        channel_key: channelKey,
-        conversation_id: state.legacyConversationId,
-        origin: window.location.origin,
-        page_url: window.location.href
-      })
-    }, 12000).then(function (data) {
-      state.legacyConversationId = data.conversation_id;
-      state.legacyVisitorToken = data.visitor_token;
-      persistLegacySession();
-      markReceiveHealthy();
-      startLegacyWs();
-      return pollLegacy(true);
-    }).catch(function (err) {
-      if (isLegacySessionAuthError(err)) return recoverLegacySession();
-      markReceiveDegraded('Unable to connect to support. Retrying…');
-      throw err;
-    });
+    return createLegacySession();
   }
 
   function renderServerMessage(msg) {
@@ -774,7 +808,9 @@
     }).catch(function (err) {
       if (isLegacySessionAuthError(err)) {
         markReceiveDegraded('Session expired. Reconnecting…');
-        return recoverLegacySession();
+        return recoverLegacySession().then(function () {
+          scheduleLegacyPoll();
+        });
       }
       markReceiveDegraded('Connection interrupted. Retrying…');
     });
@@ -877,7 +913,7 @@
       markReceiveHealthy();
       startLegacyWs();
       scheduleLegacyPoll();
-      return pollLegacy(true);
+      pollLegacy(true).catch(function () {});
     }).catch(function () {
       hideTyping();
       updateMessage(bubble, body, 'visitor', 'failed');
