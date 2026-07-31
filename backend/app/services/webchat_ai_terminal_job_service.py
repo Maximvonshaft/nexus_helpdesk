@@ -27,8 +27,29 @@ def _lock_one(query: Any, db: Session):
     return query.first()
 
 
+def _mark_terminal_job_resolved(job: Any, *, resolution: str) -> None:
+    """Close the queue lifecycle after a durable customer-safe terminal outcome.
+
+    ``dead`` is an intermediate execution state, not a permanent operational
+    blocker. The AI turn retains the actual failure/timeout semantics for SLO and
+    incident analysis; the queue job becomes ``done`` only after this authority
+    proves that a public reply exists or that a newer/human-owned outcome safely
+    supersedes it.
+    """
+
+    from ..enums import JobStatus
+    from ..utils.time import utc_now
+
+    job.status = JobStatus.done
+    job.locked_at = None
+    job.locked_by = None
+    job.next_run_at = None
+    job.last_error = f"terminally_resolved:{resolution}"[:500]
+    job.updated_at = utc_now()
+
+
 def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
-    """Commit one customer terminal outcome when the canonical AI job is dead."""
+    """Commit exactly one customer-safe outcome and resolve a dead AI job."""
 
     from ..enums import (
         ConversationState,
@@ -125,7 +146,7 @@ def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
                 },
             },
         )
-        job.last_error = "webchat_ai_attempts_exhausted"
+        _mark_terminal_job_resolved(job, resolution="existing_customer_outcome")
         return
 
     if not turn.is_public_reply_allowed or is_ai_suspended_for_handoff(conversation):
@@ -136,7 +157,7 @@ def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
                 turn=turn,
                 reason="handoff_started_before_terminal_fallback",
             )
-        job.last_error = "webchat_ai_terminal_fallback_suppressed_by_handoff"
+        _mark_terminal_job_resolved(job, resolution="human_handoff_owns_outcome")
         return
 
     latest_id = latest_visitor_message_id(db, conversation_id=conversation.id)
@@ -153,7 +174,7 @@ def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
                 turn=turn,
                 reason="newer_message_before_terminal_fallback",
             )
-        job.last_error = "webchat_ai_terminal_fallback_suppressed_as_stale"
+        _mark_terminal_job_resolved(job, resolution="newer_customer_message")
         return
 
     later_agent_message = (
@@ -174,7 +195,7 @@ def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
                 turn=turn,
                 reason="customer_visible_reply_already_committed",
             )
-        job.last_error = "webchat_ai_terminal_fallback_suppressed_existing_reply"
+        _mark_terminal_job_resolved(job, resolution="later_agent_reply")
         return
 
     previous_messages = [
@@ -298,7 +319,7 @@ def finalize_dead_webchat_ai_job(db: Session, job: Any) -> None:
             "runtime_trace": safe_trace,
         },
     )
-    job.last_error = "webchat_ai_attempts_exhausted"
+    _mark_terminal_job_resolved(job, resolution="terminal_fallback_committed")
 
 
 __all__ = ["finalize_dead_webchat_ai_job"]
