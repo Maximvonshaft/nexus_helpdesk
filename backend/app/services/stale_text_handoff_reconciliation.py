@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from ..enums import ConversationState, TicketStatus
 from ..models import Ticket
 from ..models_agent_routing import OperatorAgentState
 from ..models_handoff_routing import HandoffRoutingPlan
@@ -144,8 +146,13 @@ def _release_one(
     if previous_agent_id <= 0:
         return
     now = utc_now()
+    previous_accepted_at = request_row.accepted_at
     request_row.status = "requested"
     request_row.assigned_agent_id = None
+    request_row.accepted_by_user_id = None
+    # A requeue creates a new acceptance generation. Clearing the old clock makes
+    # both canonical acceptance paths establish a fresh response window.
+    request_row.accepted_at = None
     request_row.released_at = now
     request_row.expires_at = None
     request_row.decision_note = reason_code
@@ -177,8 +184,16 @@ def _release_one(
 
     if conversation.ticket_id is not None:
         ticket = db.get(Ticket, conversation.ticket_id)
-        if ticket is not None and ticket.assignee_id == previous_agent_id:
-            ticket.assignee_id = None
+        if ticket is not None:
+            if ticket.assignee_id == previous_agent_id:
+                ticket.assignee_id = None
+            ticket.status = TicketStatus.pending_assignment
+            ticket.conversation_state = ConversationState.human_review_required
+            ticket.required_action = (
+                request_row.recommended_agent_action
+                or request_row.reason_code
+                or "WebChat handoff waiting for human support"
+            )
             ticket.updated_at = now
 
     _reopen_routing_plan(
@@ -194,6 +209,9 @@ def _release_one(
         payload={
             "handoff_request_id": request_row.id,
             "previous_agent_id": previous_agent_id,
+            "previous_accepted_at": (
+                previous_accepted_at.isoformat() if previous_accepted_at else None
+            ),
             "reason_code": reason_code,
         },
     )
@@ -203,10 +221,17 @@ def _release_one(
         action="webchat_handoff.requeued",
         target_type="webchat_handoff_request",
         target_id=request_row.id,
-        old_value={"assigned_agent_id": previous_agent_id, "status": "accepted"},
+        old_value={
+            "assigned_agent_id": previous_agent_id,
+            "status": "accepted",
+            "accepted_at": (
+                previous_accepted_at.isoformat() if previous_accepted_at else None
+            ),
+        },
         new_value={
             "assigned_agent_id": None,
             "status": "requested",
+            "accepted_at": None,
             "reason_code": reason_code,
         },
     )
@@ -222,16 +247,65 @@ def reconcile_stale_text_handoffs(
     """Requeue abandoned accepted text Handoffs without closing customer work."""
 
     now = utc_now()
+    acceptance_clock = func.coalesce(
+        WebchatHandoffRequest.accepted_at,
+        WebchatHandoffRequest.updated_at,
+    )
+    offline_cutoff = now - timedelta(seconds=OFFLINE_HANDOFF_GRACE_SECONDS)
+    untouched_cutoff = now - timedelta(seconds=UNTOUCHED_HANDOFF_TIMEOUT_SECONDS)
+    agent_stale = or_(
+        OperatorAgentState.user_id.is_(None),
+        OperatorAgentState.status != "online",
+        OperatorAgentState.last_heartbeat_at.is_(None),
+        OperatorAgentState.last_heartbeat_at
+        < now - timedelta(seconds=routing._core.HEARTBEAT_TTL_SECONDS),
+    )
+    post_acceptance_agent_reply = (
+        db.query(WebchatMessage.id)
+        .filter(
+            WebchatMessage.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatMessage.direction == "agent",
+            WebchatMessage.author_user_id
+            == WebchatHandoffRequest.assigned_agent_id,
+            WebchatMessage.created_at >= acceptance_clock,
+        )
+        .exists()
+    )
+    open_voice_session = (
+        db.query(WebchatVoiceSession.id)
+        .filter(
+            WebchatVoiceSession.conversation_id
+            == WebchatHandoffRequest.conversation_id,
+            WebchatVoiceSession.status.in_(
+                sorted(routing._core.VOICE_OPEN_SESSION_STATUSES)
+            ),
+        )
+        .exists()
+    )
     query = (
         db.query(WebchatHandoffRequest, WebchatConversation)
         .join(
             WebchatConversation,
             WebchatConversation.id == WebchatHandoffRequest.conversation_id,
         )
+        .outerjoin(
+            OperatorAgentState,
+            OperatorAgentState.user_id
+            == WebchatHandoffRequest.assigned_agent_id,
+        )
         .filter(
             WebchatHandoffRequest.status == "accepted",
             WebchatHandoffRequest.assigned_agent_id.isnot(None),
             WebchatConversation.status == "open",
+            ~open_voice_session,
+            or_(
+                and_(acceptance_clock <= offline_cutoff, agent_stale),
+                and_(
+                    acceptance_clock <= untouched_cutoff,
+                    ~post_acceptance_agent_reply,
+                ),
+            ),
         )
     )
     if assigned_agent_id is not None:
@@ -239,7 +313,7 @@ def reconcile_stale_text_handoffs(
             WebchatHandoffRequest.assigned_agent_id == int(assigned_agent_id)
         )
     query = query.order_by(
-        WebchatHandoffRequest.accepted_at.asc(),
+        acceptance_clock.asc(),
         WebchatHandoffRequest.id.asc(),
     )
     if db.bind and db.bind.dialect.name.startswith("postgresql"):
@@ -251,6 +325,7 @@ def reconcile_stale_text_handoffs(
     released_ids: list[int] = []
     for request_row, conversation in rows:
         inspected += 1
+        # Defend against state changes between candidate selection and mutation.
         if _has_open_voice_session(db, conversation_id=conversation.id):
             continue
         accepted_at = ensure_utc(request_row.accepted_at or request_row.updated_at)
@@ -258,7 +333,7 @@ def reconcile_stale_text_handoffs(
         if accepted_at is None or current is None:
             continue
         age_seconds = (current - accepted_at).total_seconds()
-        agent_stale = _agent_is_stale(
+        agent_is_stale = _agent_is_stale(
             db,
             agent_id=int(request_row.assigned_agent_id),
             now=now,
@@ -268,7 +343,7 @@ def reconcile_stale_text_handoffs(
             request_row=request_row,
         )
         reason_code = None
-        if agent_stale and age_seconds >= OFFLINE_HANDOFF_GRACE_SECONDS:
+        if agent_is_stale and age_seconds >= OFFLINE_HANDOFF_GRACE_SECONDS:
             reason_code = "assigned_agent_heartbeat_stale"
         elif not replied and age_seconds >= UNTOUCHED_HANDOFF_TIMEOUT_SECONDS:
             reason_code = "accepted_handoff_untouched_timeout"
