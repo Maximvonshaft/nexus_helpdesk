@@ -65,12 +65,21 @@ async function navigate(page: Page, path: string): Promise<Response | null> {
   }
 }
 
+function waitForPublicMessagePost(page: Page): Promise<Response> {
+  return page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url())
+    return candidate.request().method() === 'POST'
+      && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
+  }, { timeout: 25_000 })
+}
+
 test.describe.configure({ mode: 'serial' })
 test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
-test('RC public WebChat message is visible in the canonical operator workspace', async ({ page }) => {
-  test.setTimeout(90_000)
-  const message = `RC browser synthetic message ${sourceSha.slice(0, 12)}`
+test('RC public WebChat supports consecutive messages and operator visibility', async ({ page }) => {
+  test.setTimeout(110_000)
+  const firstMessage = `RC browser synthetic message 1 ${sourceSha.slice(0, 12)}`
+  const secondMessage = `RC browser synthetic message 2 ${sourceSha.slice(0, 12)}`
 
   markStage('public-navigation')
   const initResponsePromise = page.waitForResponse((candidate) => {
@@ -92,23 +101,20 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   ).toBe(true)
   await expect(page.locator('.nd-webchat-panel[data-open="true"]')).toBeVisible({ timeout: 20_000 })
   const input = page.locator('.nd-webchat-input')
+  const send = page.locator('.nd-webchat-send')
   await expect(input).toBeEnabled({ timeout: 20_000 })
   const initResponse = await initResponsePromise
   expect(initResponse.ok()).toBeTruthy()
   markStage('public-init')
 
-  markStage('public-send')
-  await input.fill(message)
-  const messageRequest = page.waitForResponse((candidate) => {
-    const url = new URL(candidate.url())
-    return candidate.request().method() === 'POST'
-      && /\/api\/webchat\/conversations\/wc_[^/]+\/messages$/.test(url.pathname)
-  })
-  await page.locator('.nd-webchat-send').click()
-  const messageResponse = await messageRequest
-  expect(messageResponse.ok()).toBeTruthy()
+  markStage('public-send-first')
+  await input.fill(firstMessage)
+  const firstMessageRequest = waitForPublicMessagePost(page)
+  await send.click()
+  const firstMessageResponse = await firstMessageRequest
+  expect(firstMessageResponse.ok()).toBeTruthy()
 
-  const conversationMatch = new URL(messageResponse.url()).pathname.match(
+  const conversationMatch = new URL(firstMessageResponse.url()).pathname.match(
     /^\/api\/webchat\/conversations\/(wc_[A-Za-z0-9_-]+)\/messages$/,
   )
   expect(conversationMatch).not.toBeNull()
@@ -116,8 +122,21 @@ test('RC public WebChat message is visible in the canonical operator workspace',
   expect(conversationId).toMatch(/^wc_[A-Za-z0-9_-]+$/)
   const operatorSessionKey = `webchat:${conversationId}`
 
-  markStage('public-persisted')
-  await expect(page.locator('.nd-webchat-msg.visitor', { hasText: message })).toBeVisible()
+  markStage('public-first-persisted')
+  await expect(page.locator('.nd-webchat-msg.visitor', { hasText: firstMessage })).toBeVisible()
+  await expect(send).toBeEnabled({ timeout: 15_000 })
+
+  markStage('public-send-second')
+  await input.fill(secondMessage)
+  const secondMessageRequest = waitForPublicMessagePost(page)
+  await send.click()
+  const secondMessageResponse = await secondMessageRequest
+  expect(secondMessageResponse.ok()).toBeTruthy()
+  expect(new URL(secondMessageResponse.url()).pathname).toContain(`/${conversationId}/messages`)
+
+  markStage('public-second-persisted')
+  await expect(page.locator('.nd-webchat-msg.visitor', { hasText: secondMessage })).toBeVisible()
+  await expect(send).toBeEnabled({ timeout: 15_000 })
 
   markStage('login-navigation')
   const loginResponse = await navigate(page, '/login')
@@ -143,7 +162,10 @@ test('RC public WebChat message is visible in the canonical operator workspace',
 
   markStage('operator-case')
   await expect(
-    page.getByTestId('operator-message-timeline').getByText(message, { exact: true }),
+    page.getByTestId('operator-message-timeline').getByText(firstMessage, { exact: true }),
+  ).toBeVisible({ timeout: 25_000 })
+  await expect(
+    page.getByTestId('operator-message-timeline').getByText(secondMessage, { exact: true }),
   ).toBeVisible({ timeout: 25_000 })
 
   markStage('completed')
