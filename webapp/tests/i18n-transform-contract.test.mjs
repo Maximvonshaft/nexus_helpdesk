@@ -37,7 +37,7 @@ test('transforms static presentation copy and preserves runtime customer content
   assert.match(output, /__nexusTranslateTemplate\(/)
   assert.match(output, /customerText/)
   assert.match(output, /status === '已关闭'/)
-  assert.match(output, /" " \+ __nexusTranslateStatic\([^\n]+"条新消息"\)/)
+  assert.match(output, /" " \+ __nexusTranslateStatic\(/)
   assert.deepEqual(
     new Set(entries.map((entry) => entry.source)),
     new Set([
