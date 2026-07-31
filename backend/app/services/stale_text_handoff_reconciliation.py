@@ -29,6 +29,18 @@ from .handoff_routing_authority import (
 OFFLINE_HANDOFF_GRACE_SECONDS = 5 * 60
 UNTOUCHED_HANDOFF_TIMEOUT_SECONDS = 30 * 60
 
+_ATTEMPT_OUTCOME_BY_REASON = {
+    "assigned_agent_heartbeat_stale": "unavailable",
+    "accepted_handoff_untouched_timeout": "expired",
+}
+
+
+def _candidate_attempt_outcome(reason_code: str) -> str:
+    try:
+        return _ATTEMPT_OUTCOME_BY_REASON[reason_code]
+    except KeyError as exc:
+        raise ValueError("stale_handoff_reason_code_invalid") from exc
+
 
 def _is_post_acceptance_agent_message_present(
     db: Session,
@@ -102,7 +114,7 @@ def _reopen_routing_plan(
         request_id=request_row.id,
         agent_id=previous_agent_id,
         channel_kind="text",
-        outcome="released",
+        outcome=_candidate_attempt_outcome(reason_code),
         reason_code=reason_code,
     )
     if plan is None or plan.status != "assigned":

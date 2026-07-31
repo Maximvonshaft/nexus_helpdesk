@@ -26,6 +26,7 @@ from app.enums import (
 from app.model_registry import register_all_models
 from app.models import Team, Tenant, Ticket, User
 from app.models_agent_routing import ConversationControl, OperatorAgentState
+from app.models_handoff_routing import HandoffRoutingCandidateAttempt
 from app.operator_models import OperatorQueueScopeGrant, OperatorTask
 from app.services import agent_routing_service as routing
 from app.services.handoff_assignment_contract import (
@@ -343,6 +344,17 @@ def test_stale_accepted_text_handoff_releases_capacity_and_remains_routable(
     assert plan.status == "active"
     assert plan.current_generation == 2
     assert plan.assigned_agent_id is None
+    prior_attempt = (
+        db_session.query(HandoffRoutingCandidateAttempt)
+        .filter(
+            HandoffRoutingCandidateAttempt.plan_id == plan.id,
+            HandoffRoutingCandidateAttempt.generation == 1,
+            HandoffRoutingCandidateAttempt.agent_id == correct.id,
+        )
+        .one()
+    )
+    assert prior_attempt.outcome == "unavailable"
+    assert prior_attempt.reason_code == "assigned_agent_heartbeat_stale"
 
     state.last_heartbeat_at = utc_now()
     db_session.flush()
