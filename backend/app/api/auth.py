@@ -20,6 +20,8 @@ from ..identity_schemas import (
     MfaStatusRead,
     PasswordChangeRequest,
     PasswordChangeResponse,
+    UIPreferenceRead,
+    UIPreferenceUpdateRequest,
 )
 from ..models import User
 from ..schemas import LoginRequest
@@ -45,6 +47,7 @@ from ..services.mfa_service import (
 )
 from ..services.password_policy import PasswordPolicyError, validate_admin_password_policy
 from ..services.permissions import capability_fingerprint, resolve_capabilities
+from ..services.user_ui_preferences import read_user_ui_locale, set_user_ui_locale
 from ..unit_of_work import managed_session
 from ..utils.client_ip import get_client_ip
 from .deps import get_authenticated_user, get_current_user
@@ -66,6 +69,7 @@ def _session_user_for(user: User, db: Session) -> AuthSessionUserRead:
         password_changed_at=policy['password_changed_at'],
         last_login_at=policy['last_login_at'],
         mfa_enabled=policy['mfa_enabled'],
+        ui_locale=read_user_ui_locale(db, user.id),
     )
 
 
@@ -193,6 +197,32 @@ def verify_mfa_login(
 @router.get('/me', response_model=AuthSessionUserRead)
 def me(current_user: User = Depends(get_authenticated_user), db: Session = Depends(get_db)):
     return _session_user_for(current_user, db)
+
+
+@router.patch('/preferences', response_model=UIPreferenceRead)
+def update_ui_preferences(
+    payload: UIPreferenceUpdateRequest,
+    current_user: User = Depends(get_authenticated_user),
+    db: Session = Depends(get_db),
+):
+    with managed_session(db):
+        previous, current = set_user_ui_locale(
+            db,
+            user_id=current_user.id,
+            ui_locale=payload.ui_locale,
+        )
+        if previous != current:
+            log_admin_audit(
+                db,
+                actor_id=current_user.id,
+                action='auth.ui_locale_changed',
+                target_type='user_ui_preference',
+                target_id=current_user.id,
+                old_value={'ui_locale': previous},
+                new_value={'ui_locale': current},
+            )
+        db.flush()
+    return UIPreferenceRead(ui_locale=current)
 
 
 @router.post('/change-password', response_model=PasswordChangeResponse)
