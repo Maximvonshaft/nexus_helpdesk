@@ -307,11 +307,23 @@ jobs:
           retention-days: 30
 
   backend-full:
-    name: backend-full
+    name: backend-full (${{ matrix.shard.name }})
     if: needs.validation-mode.outputs.run_full == 'true'
     needs: [validation-mode, candidate-identity]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: 1-of-4
+            index: 0
+          - name: 2-of-4
+            index: 1
+          - name: 3-of-4
+            index: 2
+          - name: 4-of-4
+            index: 3
     steps:
       - name: Checkout frozen Head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -327,22 +339,40 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Run complete backend regression
         shell: bash
+        env:
+          BACKEND_SHARD_INDEX: ${{ matrix.shard.index }}
         run: |
           set -Eeuo pipefail
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
           python -m compileall -q backend/app backend/scripts scripts/qualification scripts/deploy scripts/release
           mkdir -p /tmp/nexus-backend
-          python -m pytest -q backend/tests 2>&1 | tee /tmp/nexus-backend/pytest.log
-          python -m pytest -q \
-            scripts/qualification/tests/test_whatsapp_live_uat.py \
-            scripts/deploy/tests/test_validate_production_activation.py \
-            scripts/release/tests/test_controlled_candidate_workflow_contract.py \
-            2>&1 | tee /tmp/nexus-backend/whatsapp-delivery-contracts.log
+          mapfile -t all_test_files < <(
+            find backend/tests -maxdepth 1 -type f -name 'test_*.py' -print | sort
+          )
+          shard_test_files=()
+          for index in "${!all_test_files[@]}"; do
+            if (( index % 4 == BACKEND_SHARD_INDEX )); then
+              shard_test_files+=("${all_test_files[$index]}")
+            fi
+          done
+          test "${#shard_test_files[@]}" -gt 0
+          printf '%s\n' "${shard_test_files[@]}" \
+            > "/tmp/nexus-backend/shard-${BACKEND_SHARD_INDEX}-files.txt"
+          python -m pytest -vv --maxfail=1 --durations=25 \
+            "${shard_test_files[@]}" \
+            2>&1 | tee "/tmp/nexus-backend/pytest-shard-${BACKEND_SHARD_INDEX}.log"
+          if [[ "$BACKEND_SHARD_INDEX" = "0" ]]; then
+            python -m pytest -vv --maxfail=1 \
+              scripts/qualification/tests/test_whatsapp_live_uat.py \
+              scripts/deploy/tests/test_validate_production_activation.py \
+              scripts/release/tests/test_controlled_candidate_workflow_contract.py \
+              2>&1 | tee /tmp/nexus-backend/whatsapp-delivery-contracts.log
+          fi
       - name: Upload backend evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: backend-evidence-${{ needs.candidate-identity.outputs.source_sha }}
+          name: backend-evidence-${{ needs.candidate-identity.outputs.source_sha }}-${{ matrix.shard.name }}
           path: /tmp/nexus-backend
           if-no-files-found: warn
           retention-days: 30
