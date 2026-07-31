@@ -5,6 +5,10 @@ import json
 import pytest
 
 from app.services.provider_runtime.adapters import private_ai_runtime as private_runtime
+from app.services.provider_runtime.output_contracts import (
+    AGENT_TURN_OUTPUT_CONTRACT,
+    OutputContracts,
+)
 from app.services.provider_runtime.schemas import ProviderRequest
 
 
@@ -130,6 +134,61 @@ def test_normalize_agent_turn_accepts_direct_and_wrapped_json() -> None:
         max_output_chars=4000,
     )
     assert wrapped["next_action"] == "call_tool"
+
+
+def test_normalize_agent_turn_canonicalizes_known_tool_call_aliases() -> None:
+    normalized = private_runtime._normalize_agent_turn(
+        {
+            "customer_reply": None,
+            "intent": "request_human_handoff",
+            "next_action": "call_tool",
+            "handoff_required": True,
+            "handoff_reason": "Customer requested a human agent.",
+            "tool_calls": [
+                {
+                    "name": "handoff.request.create",
+                    "args": {"reason": "Customer requested a human agent."},
+                }
+            ],
+        },
+        max_output_chars=4000,
+    )
+
+    parsed = OutputContracts.validate_and_parse(
+        AGENT_TURN_OUTPUT_CONTRACT,
+        json.dumps(normalized),
+    )
+
+    assert parsed["tool_calls"] == [
+        {
+            "tool_name": "handoff.request.create",
+            "arguments": {"reason": "Customer requested a human agent."},
+        }
+    ]
+
+
+def test_normalize_agent_turn_rejects_conflicting_tool_call_aliases() -> None:
+    normalized = private_runtime._normalize_agent_turn(
+        {
+            "customer_reply": None,
+            "intent": "request_human_handoff",
+            "next_action": "call_tool",
+            "tool_calls": [
+                {
+                    "tool_name": "handoff.request.create",
+                    "name": "speedaf.order.query",
+                    "arguments": {"reason": "Customer requested a human agent."},
+                }
+            ],
+        },
+        max_output_chars=4000,
+    )
+
+    with pytest.raises(ValueError):
+        OutputContracts.validate_and_parse(
+            AGENT_TURN_OUTPUT_CONTRACT,
+            json.dumps(normalized),
+        )
 
 
 def test_parse_json_text_rejects_missing_json() -> None:

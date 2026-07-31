@@ -639,6 +639,8 @@ def _normalize_structured_output(
         candidate = _parse_json_text(message["content"])
     if not isinstance(candidate, dict):
         raise ValueError("structured_output_not_object")
+    if contract_name == AGENT_TURN_OUTPUT_CONTRACT:
+        candidate = _normalize_agent_tool_call_aliases(candidate)
     if (
         contract_name == AGENT_TURN_OUTPUT_CONTRACT
         and isinstance(candidate.get("customer_reply"), str)
@@ -647,6 +649,61 @@ def _normalize_structured_output(
             :max_output_chars
         ]
     return candidate
+
+
+def _normalize_agent_tool_call_aliases(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Canonicalize known private-runtime aliases before strict validation.
+
+    The canonical contract remains authoritative. Equal aliases are removed,
+    while conflicting aliases are intentionally retained so Pydantic's
+    ``extra=forbid`` policy rejects the payload instead of guessing intent.
+    """
+
+    tool_calls = payload.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return payload
+
+    normalized_payload = dict(payload)
+    normalized_calls: list[Any] = []
+    for raw_call in tool_calls:
+        if not isinstance(raw_call, dict):
+            normalized_calls.append(raw_call)
+            continue
+        call = dict(raw_call)
+        _normalize_equal_aliases(call, "tool_name", ("name",))
+        _normalize_equal_aliases(
+            call,
+            "arguments",
+            ("args", "tool_args"),
+        )
+        normalized_calls.append(call)
+    normalized_payload["tool_calls"] = normalized_calls
+    return normalized_payload
+
+
+def _normalize_equal_aliases(
+    value: dict[str, Any],
+    canonical_key: str,
+    aliases: tuple[str, ...],
+) -> None:
+    present_aliases = [alias for alias in aliases if alias in value]
+    if not present_aliases:
+        return
+
+    if canonical_key in value:
+        for alias in present_aliases:
+            if value[alias] == value[canonical_key]:
+                value.pop(alias)
+        return
+
+    first_value = value[present_aliases[0]]
+    if not all(value[alias] == first_value for alias in present_aliases[1:]):
+        return
+    value[canonical_key] = first_value
+    for alias in present_aliases:
+        value.pop(alias)
 
 
 def _normalize_agent_turn(
