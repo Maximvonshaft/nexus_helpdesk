@@ -1,16 +1,19 @@
+import { createInstance } from 'i18next'
+import type { Resource } from 'i18next'
+import englishCatalog from './catalogs/en.json'
+import germanCatalog from './catalogs/de.json'
+
 export type UiLocale = 'zh-CN' | 'en' | 'de'
 export type UiMessageCatalog = Readonly<Record<string, string>>
 
 const STORAGE_KEY = 'nexus-operator-ui-locale'
 
-// PR1 deliberately enables only the existing locale. English and German become
-// selectable only after their catalogs and full browser acceptance are complete.
-export const enabledUiLocales = ['zh-CN'] as const satisfies readonly UiLocale[]
+export const enabledUiLocales = ['zh-CN', 'en', 'de'] as const satisfies readonly UiLocale[]
 
 const catalogs: Readonly<Record<UiLocale, UiMessageCatalog>> = {
   'zh-CN': {},
-  en: {},
-  de: {},
+  en: englishCatalog,
+  de: germanCatalog,
 }
 
 function browserStorage() {
@@ -26,7 +29,7 @@ export function normalizeUiLocale(value: unknown): UiLocale | null {
 }
 
 function enabledLocale(value: UiLocale | null): UiLocale | null {
-  return value && enabledUiLocales.includes(value as (typeof enabledUiLocales)[number])
+  return value && enabledUiLocales.includes(value)
     ? value
     : null
 }
@@ -52,6 +55,31 @@ function initialLocale(): UiLocale {
 
 let currentLocale: UiLocale = initialLocale()
 
+const resources: Resource = Object.fromEntries(
+  enabledUiLocales.map((locale) => [locale, { translation: catalogs[locale] }]),
+)
+
+export const i18n = createInstance()
+void i18n.init({
+  resources,
+  lng: currentLocale,
+  supportedLngs: [...enabledUiLocales],
+  fallbackLng: false,
+  initImmediate: false,
+  keySeparator: false,
+  nsSeparator: false,
+  returnEmptyString: false,
+  returnNull: false,
+  interpolation: {
+    escapeValue: false,
+    // Nexus templates deliberately use {{0}}, {{1}}, ... and perform bounded
+    // positional substitution after catalog lookup. Distinct delimiters prevent
+    // i18next from consuming those source-owned placeholders.
+    prefix: '⟪',
+    suffix: '⟫',
+  },
+})
+
 export function getUiLocale(): UiLocale {
   return currentLocale
 }
@@ -65,21 +93,45 @@ export function getIntlLocale(locale = currentLocale) {
 export function initializeUiLocale() {
   if (typeof document === 'undefined') return
   document.documentElement.lang = currentLocale
+  document.documentElement.dir = 'ltr'
   document.documentElement.dataset.uiLocale = currentLocale
 }
 
-export function setUiLocale(locale: UiLocale) {
-  const normalized = enabledLocale(normalizeUiLocale(locale))
+export function persistUiLocale(value: unknown): { locale: UiLocale; changed: boolean } {
+  const normalized = enabledLocale(normalizeUiLocale(value))
   if (!normalized) throw new Error('ui_locale_not_enabled')
+  const changed = normalized !== currentLocale
   try {
     browserStorage()?.setItem(STORAGE_KEY, normalized)
   } catch {
-    // Storage can be unavailable in hardened or private browser contexts. The
-    // current document still switches consistently through a controlled reload.
+    // Hardened/private browser contexts can deny storage. The active document
+    // still receives the selected locale and the server remains authoritative
+    // for the next authenticated session.
   }
   currentLocale = normalized
+  void i18n.changeLanguage(normalized)
   initializeUiLocale()
-  if (typeof window !== 'undefined') window.location.reload()
+  return { locale: normalized, changed }
+}
+
+export function setUiLocale(value: unknown, options?: { reload?: boolean }) {
+  const result = persistUiLocale(value)
+  if (result.changed && options?.reload !== false && typeof window !== 'undefined') {
+    window.location.reload()
+  }
+  return result
+}
+
+/**
+ * Reconcile the server-owned user preference after authentication. Returning a
+ * boolean lets the caller perform one controlled navigation/reload without
+ * introducing a second locale state authority.
+ */
+export function synchronizeAuthenticatedUiLocale(value: unknown): boolean {
+  const normalized = enabledLocale(normalizeUiLocale(value))
+  if (!normalized || normalized === currentLocale) return false
+  persistUiLocale(normalized)
+  return true
 }
 
 /**
@@ -89,7 +141,7 @@ export function setUiLocale(locale: UiLocale) {
  * remain untranslated even when identical visible copy is localized elsewhere.
  */
 export function translateStatic(key: string, source: string): string {
-  const translated = catalogs[currentLocale][key]
+  const translated = i18n.t(key, { defaultValue: source })
   return typeof translated === 'string' && translated ? translated : source
 }
 
