@@ -833,10 +833,8 @@
     }).catch(function (err) {
       if (!isLegacySessionCurrent(session)) return;
       if (isLegacySessionAuthError(err)) {
-        markReceiveDegraded('Session expired. Reconnecting…');
-        return recoverLegacySession(session).then(function (recovered) {
-          if (recovered) scheduleLegacyPoll();
-        });
+        markReceiveDegraded('Realtime connection needs revalidation. Send a message to reconnect.');
+        return;
       }
       markReceiveDegraded('Connection interrupted. Retrying…');
     });
@@ -889,7 +887,6 @@
         }
         if (data.type === 'error') {
           markReceiveDegraded('Realtime connection interrupted. Reconnecting…');
-          if (data.code === 'request_failed' && data.retryable !== true) recoverLegacySession(session).catch(function () {});
           try { socket.close(1000, 'server_error'); } catch (err) {}
           return;
         }
