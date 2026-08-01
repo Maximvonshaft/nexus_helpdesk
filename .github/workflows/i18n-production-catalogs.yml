@@ -78,7 +78,7 @@ jobs:
           assert metadata['inventory_messages'] == 2569, metadata
           assert metadata['unique_sources'] == 1907, metadata
           assert set(metadata['models']) == {'en', 'de', 'cnr'}, metadata
-          assert metadata['override_counts'] == {'en': 578, 'de': 578, 'cnr': 578}, metadata
+          assert metadata['override_counts'] == {'en': 655, 'de': 655, 'cnr': 655}, metadata
           for locale in ('en', 'de', 'cnr'):
               model = metadata['models'][locale]
               assert model['resolved_revision'], model
