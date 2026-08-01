@@ -7,13 +7,12 @@ import re
 from pathlib import Path
 
 import torch
-from huggingface_hub import model_info
+from huggingface_hub import hf_hub_download, model_info
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-1.7B"
 MODEL_REVISION = "026ef898ee93472ecf27df9ea89c651fba82ad6a"
 APPROVED_LICENSE = "apache-2.0"
-APPROVED_LICENSE_TAG = "license:apache-2.0"
 
 SOURCES = [
     "发布",
@@ -132,6 +131,7 @@ LOCALES = {
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 CYRILLIC_RE = re.compile(r"[\u0400-\u052f]")
 PLACEHOLDER_RE = re.compile(r"\{\{\d+\}\}|%(?:\d+\$)?[sdif]|\{[A-Za-z_][A-Za-z0-9_]*\}")
+LICENSE_FRONTMATTER_RE = re.compile(r"(?m)^license:\s*apache-2\.0\s*$")
 
 
 def write_json(path: Path, value: object) -> None:
@@ -154,17 +154,28 @@ def placeholders(value: str) -> list[str]:
     return sorted(PLACEHOLDER_RE.findall(value))
 
 
-def verify_model_license(info) -> tuple[str, str, str]:
-    normalized_tags = {str(tag).strip().lower() for tag in (info.tags or [])}
-    if APPROVED_LICENSE_TAG not in normalized_tags:
-        raise RuntimeError(
-            f"bakeoff_model_license_tag_invalid:{sorted(tag for tag in normalized_tags if tag.startswith('license:'))}"
+def verify_model_license() -> tuple[str, str, str]:
+    readme_path = Path(
+        hf_hub_download(
+            repo_id=MODEL_ID,
+            filename="README.md",
+            revision=MODEL_REVISION,
         )
-    evidence = f"{MODEL_ID}@{MODEL_REVISION}:{APPROVED_LICENSE_TAG}"
+    )
+    readme_bytes = readme_path.read_bytes()
+    readme_text = readme_bytes.decode("utf-8", errors="strict")
+    if not readme_text.startswith("---\n"):
+        raise RuntimeError("bakeoff_model_card_frontmatter_missing")
+    closing = readme_text.find("\n---", 4)
+    if closing < 0:
+        raise RuntimeError("bakeoff_model_card_frontmatter_unclosed")
+    frontmatter = readme_text[4:closing]
+    if not LICENSE_FRONTMATTER_RE.search(frontmatter):
+        raise RuntimeError("bakeoff_model_card_license_invalid")
     return (
         APPROVED_LICENSE,
-        "huggingface_model_info.tags",
-        hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
+        "README.md#yaml-frontmatter",
+        hashlib.sha256(readme_bytes).hexdigest(),
     )
 
 
@@ -194,7 +205,7 @@ def main() -> int:
     info = model_info(MODEL_ID, revision=MODEL_REVISION)
     if str(info.sha) != MODEL_REVISION:
         raise RuntimeError(f"bakeoff_model_revision_invalid:{info.sha}")
-    license_value, license_evidence, license_evidence_sha256 = verify_model_license(info)
+    license_value, license_evidence, license_evidence_sha256 = verify_model_license()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
     model = AutoModelForCausalLM.from_pretrained(
