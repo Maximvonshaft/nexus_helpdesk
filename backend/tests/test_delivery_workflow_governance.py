@@ -94,7 +94,7 @@ def test_materialize_rc_browser_authority_boundary_patch():
 '''
     contract = contract.replace(insertion_point, "\n" + authority_test + insertion_point)
 
-    generated_canonical = GENERATED_OUTPUT / ".github/workflows/canonical-acceptance.yml"
+    generated_canonical = GENERATED_OUTPUT / "canonical-acceptance.yml"
     generated_contract = (
         GENERATED_OUTPUT
         / "scripts/release/tests/test_controlled_candidate_workflow_contract.py"
