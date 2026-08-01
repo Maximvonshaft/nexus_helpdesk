@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .schemas import AuthUserRead, LoginResponse
 
-UI_LOCALE_PATTERN = r"^(zh-CN|en|de)$"
+UILocale = Literal["zh-CN", "en", "de"]
 
 
 class AuthSessionUserRead(AuthUserRead):
@@ -15,7 +15,7 @@ class AuthSessionUserRead(AuthUserRead):
     password_changed_at: datetime | None = None
     last_login_at: datetime | None = None
     mfa_enabled: bool = False
-    ui_locale: str = "zh-CN"
+    ui_locale: UILocale = "zh-CN"
 
 
 class AuthSessionResponse(LoginResponse):
@@ -23,11 +23,11 @@ class AuthSessionResponse(LoginResponse):
 
 
 class UIPreferenceUpdateRequest(BaseModel):
-    ui_locale: str = Field(pattern=UI_LOCALE_PATTERN)
+    ui_locale: UILocale
 
 
 class UIPreferenceRead(BaseModel):
-    ui_locale: str = Field(pattern=UI_LOCALE_PATTERN)
+    ui_locale: UILocale
 
 
 class PasswordChangeRequest(BaseModel):
