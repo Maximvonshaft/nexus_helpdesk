@@ -164,7 +164,7 @@ def test_webchat_static_assets_force_cache_revalidation():
         main,
     )
     assert "no-cache, max-age=0, must-revalidate" in main
-    assert "/webchat/widget.js?v=webchat-session-recovery-v3" in demo
+    assert "/webchat/widget.js?v=webchat-session-recovery-v4" in demo
     assert "nexus-widget-consolidated-20260706" not in demo
 
 
@@ -226,3 +226,17 @@ def test_webchat_ws_observability_and_connection_limits_contract():
     assert "websocket_active_connections" in hub
     assert 'log_event(20, "websocket_connected", client_type=client_type)' in ws_route
     assert all("visitor_token" not in line and "access_token" not in line for line in ws_route.splitlines() if "log_event" in line)
+
+
+
+def test_websocket_transport_error_falls_back_without_rotating_http_session():
+    text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
+    start = text.index("        if (data.type === 'error') {")
+    end = text.index("        if (typeof data.event_id === 'number')", start)
+    error_block = text[start:end]
+
+    assert "recoverLegacySession" not in error_block
+    assert "socket.close(1000, 'server_error')" in error_block
+    close_start = text.index("      socket.onclose", start)
+    close_end = text.index("      socket.onerror", close_start)
+    assert "scheduleLegacyPoll();" in text[close_start:close_end]

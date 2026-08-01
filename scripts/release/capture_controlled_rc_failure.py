@@ -55,6 +55,26 @@ def _load_existing(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _load_status_stage(evidence_dir: Path) -> str | None:
+    status_path = evidence_dir / "status.json"
+    if not status_path.exists():
+        return None
+    if (
+        not status_path.is_file()
+        or status_path.is_symlink()
+        or status_path.stat().st_size > MAX_SUMMARY_BYTES
+    ):
+        return None
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != "nexus.osr.rc-test-status.v1":
+        return None
+    stage = str(payload.get("stage") or "")
+    return stage if _STAGE_RE.fullmatch(stage) else None
+
+
 def _bounded_service_states(value: object) -> dict[str, str]:
     if not isinstance(value, dict) or len(value) > MAX_SERVICE_STATES:
         return {}
@@ -147,9 +167,10 @@ def capture_failure(*, log_path: Path, evidence_dir: Path, exit_code: int) -> Pa
         raise FailureEvidenceError("exit_code_invalid")
     log_text = _read_bounded_text(log_path, max_bytes=MAX_LOG_BYTES)
     matches = _STAGE_LINE_RE.findall(log_text.replace("\r\n", "\n"))
-    stage = matches[-1] if matches else "unknown"
 
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    status_stage = _load_status_stage(evidence_dir)
+    stage = status_stage or (matches[-1] if matches else "unknown")
     if evidence_dir.is_symlink() or not evidence_dir.is_dir():
         raise FailureEvidenceError("evidence_dir_invalid")
     output = evidence_dir / "failure-summary.json"

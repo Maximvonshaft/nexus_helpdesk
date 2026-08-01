@@ -905,7 +905,6 @@
         }
         if (data.type === 'error') {
           markReceiveDegraded('Realtime connection interrupted. Reconnecting…');
-          if (data.code === 'request_failed' && data.retryable !== true) recoverLegacySession(session).catch(function () {});
           try { socket.close(1000, 'server_error'); } catch (err) {}
           return;
         }
