@@ -45,6 +45,12 @@ jobs:
             ../frontend_dist/operator_catalog_overrides_v1.json \
             ../frontend_dist/critical_operator_catalog_overrides_v1.json \
             > ../frontend_dist/i18n-review-authorities.sha256
+          tar -czf ../frontend_dist/i18n-source-snapshot.tar.gz \
+            src \
+            scripts/vite-i18n-plugin.mjs \
+            tests/i18n-transform-contract.test.mjs
+          sha256sum ../frontend_dist/i18n-source-snapshot.tar.gz \
+            > ../frontend_dist/i18n-source-snapshot.sha256
 
       - name: Upload immutable inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -59,3 +65,5 @@ jobs:
             frontend_dist/operator_catalog_overrides_v1.json
             frontend_dist/critical_operator_catalog_overrides_v1.json
             frontend_dist/i18n-review-authorities.sha256
+            frontend_dist/i18n-source-snapshot.tar.gz
+            frontend_dist/i18n-source-snapshot.sha256
