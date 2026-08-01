@@ -1,0 +1,96 @@
+name: I18N Authority One Shot Fix
+
+on:
+  push:
+    branches:
+      - tooling/i18n-production-catalogs-en-de-cnr
+    paths:
+      - .github/workflows/i18n-authority-one-shot-fix.yml
+      - scripts/i18n/operator_catalog_overrides_v1.json
+      - scripts/i18n/contextual_catalog_contract_v2.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: i18n-authority-one-shot-fix
+  cancel-in-progress: false
+
+jobs:
+  repair-reviewed-authority:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Repair reviewed Montenegrin authority and digest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import re
+
+          overrides_path = Path('scripts/i18n/operator_catalog_overrides_v1.json')
+          contract_path = Path('scripts/i18n/contextual_catalog_contract_v2.py')
+          source = 'ChannelAccount 是唯一渠道身份与路由权威。WhatsApp 的 Meta Cloud API 与 Baileys 只是同一账号下的可选传输适配器，不创建第二套客户、Conversation、Inbox、Outbox、权限或审计链。'
+          previous = 'ChannelAccount je jedini autoritet za identitet kanala i rutiranje. Meta Cloud API i Baileys su opcioni transportni adapteri u okviru istog naloga; ne stvaraju drugi sistem klijenata, Conversation, Inbox, Outbox, dozvola ili revizije.'
+          corrected = 'ChannelAccount je jedini autoritet za identitet kanala i rutiranje. WhatsApp Meta Cloud API i Baileys samo su opcioni transportni adapteri u okviru istog naloga; ne stvaraju drugi registar korisnika, niti drugi Conversation, Inbox, Outbox, sistem dozvola ili revizijski lanac.'
+
+          data = json.loads(overrides_path.read_text(encoding='utf-8'))
+          current = data['cnr'][source]
+          if current not in {previous, corrected}:
+              raise SystemExit(f'unexpected reviewed authority value: {current!r}')
+          data['cnr'][source] = corrected
+          output = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+          overrides_path.write_text(output, encoding='utf-8')
+          digest = hashlib.sha256(overrides_path.read_bytes()).hexdigest()
+
+          contract = contract_path.read_text(encoding='utf-8')
+          updated, count = re.subn(
+              r'BASE_OVERRIDES_SHA256 = "[0-9a-f]{64}"',
+              f'BASE_OVERRIDES_SHA256 = "{digest}"',
+              contract,
+              count=1,
+          )
+          if count != 1:
+              raise SystemExit(f'BASE_OVERRIDES_SHA256 replacement count={count}')
+          contract_path.write_text(updated, encoding='utf-8')
+          PY
+
+          python -m py_compile scripts/i18n/contextual_catalog_contract_v2.py
+          python - <<'PY'
+          import importlib.util
+          import json
+          from pathlib import Path
+
+          module_path = Path('scripts/i18n/contextual_catalog_contract_v2.py')
+          spec = importlib.util.spec_from_file_location('contract', module_path)
+          module = importlib.util.module_from_spec(spec)
+          assert spec.loader is not None
+          spec.loader.exec_module(module)
+          source = 'ChannelAccount 是唯一渠道身份与路由权威。WhatsApp 的 Meta Cloud API 与 Baileys 只是同一账号下的可选传输适配器，不创建第二套客户、Conversation、Inbox、Outbox、权限或审计链。'
+          data = json.loads(Path('scripts/i18n/operator_catalog_overrides_v1.json').read_text(encoding='utf-8'))
+          reasons = module.validation_reasons('cnr', source, data['cnr'][source])
+          if reasons:
+              raise SystemExit(f'corrected reviewed authority still invalid: {reasons}')
+          PY
+
+      - name: Commit exact repair
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if git diff --quiet -- scripts/i18n/operator_catalog_overrides_v1.json scripts/i18n/contextual_catalog_contract_v2.py; then
+            echo 'Reviewed authority and digest are already current.'
+            exit 0
+          fi
+          git config user.name 'nexus-i18n-authority-bot'
+          git config user.email 'nexus-i18n-authority-bot@users.noreply.github.com'
+          git add scripts/i18n/operator_catalog_overrides_v1.json scripts/i18n/contextual_catalog_contract_v2.py
+          git commit -m 'fix(i18n): correct reviewed Montenegrin channel authority'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
