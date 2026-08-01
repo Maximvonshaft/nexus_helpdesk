@@ -4,7 +4,6 @@ import {
   enabledUiLocale,
   enabledUiLocales,
   intlLocale,
-  normalizeUiLocale,
   readRecoveryUiLocale,
   resolveInitialUiLocale,
   writeUiLocale,
