@@ -9,6 +9,7 @@ on:
       - scripts/i18n/build_production_catalogs_v1.py
       - scripts/i18n/run_production_catalogs_v1.py
       - scripts/i18n/operator_catalog_overrides_v1.json
+      - scripts/i18n/critical_operator_catalog_overrides_v1.json
       - .github/workflows/i18n-production-catalogs.yml
 
 permissions:
@@ -78,7 +79,10 @@ jobs:
           assert metadata['inventory_messages'] == 2569, metadata
           assert metadata['unique_sources'] == 1907, metadata
           assert set(metadata['models']) == {'en', 'de', 'cnr'}, metadata
-          assert metadata['override_counts'] == {'en': 655, 'de': 655, 'cnr': 655}, metadata
+          assert metadata['base_override_counts'] == {'en': 655, 'de': 655, 'cnr': 655}, metadata
+          assert metadata['critical_override_counts'] == {'en': 37, 'de': 37, 'cnr': 37}, metadata
+          assert metadata['base_override_sha256'], metadata
+          assert metadata['critical_override_sha256'], metadata
           for locale in ('en', 'de', 'cnr'):
               model = metadata['models'][locale]
               assert model['resolved_revision'], model
