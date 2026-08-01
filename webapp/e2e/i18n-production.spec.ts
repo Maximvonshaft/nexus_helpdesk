@@ -58,10 +58,11 @@ test('English is complete on the unauthenticated entry surface', async ({ page }
   await page.goto('/login')
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(page.locator('html')).toHaveAttribute('data-ui-catalog', 'loaded')
   await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Account', exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Password', exact: true })).toBeVisible()
-  await expect(page.getByRole('combobox', { name: 'Interface language' })).toHaveValue('en')
+  await expect(page.getByRole('combobox', { name: 'Interface language' })).toContainText('English')
   await expect(page.getByRole('main')).not.toContainText(/[\u3400-\u9fff]/u)
 })
 
@@ -71,10 +72,11 @@ test('German entry copy is complete and does not overflow a narrow viewport', as
   await page.goto('/login')
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  await expect(page.locator('html')).toHaveAttribute('data-ui-catalog', 'loaded')
   await expect(page.getByRole('heading', { level: 1, name: 'Anmelden' })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Konto', exact: true })).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Passwort', exact: true })).toBeVisible()
-  await expect(page.getByRole('combobox', { name: 'Oberflächensprache' })).toHaveValue('de')
+  await expect(page.getByRole('combobox', { name: 'Oberflächensprache' })).toContainText('Deutsch')
   await expect(page.getByRole('main')).not.toContainText(/[\u3400-\u9fff]/u)
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
@@ -86,10 +88,28 @@ test('authenticated language preference persists through the server and reloads 
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
   await expect(page.getByRole('heading', { level: 1, name: 'Account settings' })).toBeVisible()
   const selector = page.getByRole('combobox', { name: 'Interface language' }).last()
-  await selector.selectOption('de')
+  await selector.click()
+  await page.getByRole('option', { name: 'Deutsch' }).click()
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'de')
   await expect(page.getByRole('heading', { level: 1, name: 'Kontoeinstellungen' })).toBeVisible()
   await expect.poll(() => state.preferenceUpdates).toBe(1)
   await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), LOCALE_KEY)).toBe('de')
+})
+
+test('a missing German catalog blocks mixed-language startup and offers safe recovery', async ({ page }) => {
+  await setAnonymousLocale(page, 'de')
+  await page.route('**/i18n/de.json', (route) => route.fulfill({ status: 503, body: 'unavailable' }))
+  await page.goto('/login')
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'de')
+  await expect(page.locator('html')).toHaveAttribute('data-ui-catalog', 'blocked')
+  await expect(page.getByRole('heading', { level: 1, name: 'Die Oberflächensprache konnte nicht geladen werden' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Erneut versuchen' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Vereinfachtes Chinesisch verwenden' })).toBeVisible()
+  await expect(page.getByRole('main')).not.toContainText(/[\u3400-\u9fff]/u)
+
+  await page.getByRole('button', { name: 'Vereinfachtes Chinesisch verwenden' }).click()
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+  await expect(page.getByRole('heading', { level: 1, name: '登录' })).toBeVisible()
 })
