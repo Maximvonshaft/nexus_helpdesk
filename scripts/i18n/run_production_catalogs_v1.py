@@ -7,9 +7,9 @@ from pathlib import Path
 import build_production_catalogs_v1 as builder
 
 PLAIN_OVERRIDES_SHA256 = "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c"
-CRITICAL_OVERRIDES_SHA256 = "c8b0be606c4929f0ba772df03497cbd005b71b958eadfe55e256e3b349193e3e"
+CRITICAL_OVERRIDES_SHA256 = "b46f127dea2291617c77cebc16a2a3eebe56bcecaebdc9e79a2df6b7bd6382b8"
 EXPECTED_BASE_COUNTS = {"en": 655, "de": 655, "cnr": 655}
-EXPECTED_CRITICAL_COUNTS = {"en": 37, "de": 37, "cnr": 37}
+EXPECTED_CRITICAL_COUNTS = {"en": 38, "de": 38, "cnr": 38}
 CRITICAL_PATH = Path(__file__).with_name("critical_operator_catalog_overrides_v1.json")
 
 
