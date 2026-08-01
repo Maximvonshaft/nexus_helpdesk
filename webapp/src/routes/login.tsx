@@ -24,7 +24,9 @@ import {
   useMfaLoginVerification,
   useSession,
 } from '@/hooks/useAuth'
-import type { MfaLoginChallenge } from '@/lib/types'
+import { LanguageControl } from '@/i18n/LanguageControl'
+import { synchronizeAuthenticatedUiLocale } from '@/i18n/runtime'
+import type { MfaLoginChallenge, AuthUser } from '@/lib/types'
 
 function LoginPage() {
   const navigate = useNavigate()
@@ -40,11 +42,22 @@ function LoginPage() {
 
   useEffect(() => { document.title = '登录 · Nexus OSR' }, [])
 
+  const finishAuthentication = (user: AuthUser) => {
+    if (synchronizeAuthenticatedUiLocale(user.ui_locale)) {
+      window.location.replace('/')
+      return
+    }
+    navigate({ to: '/', replace: true })
+  }
+
   useEffect(() => {
     if (session.data && !login.isPending && !login.isSuccess && !mfaVerification.isPending) {
-      navigate({ to: '/', replace: true })
+      finishAuthentication(session.data)
     }
-  }, [login.isPending, login.isSuccess, mfaVerification.isPending, navigate, session.data])
+    // Navigation and locale reconciliation are intentionally driven only by the
+    // authoritative session transition, not by transient mutation object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [login.isPending, login.isSuccess, mfaVerification.isPending, session.data])
 
   useEffect(() => {
     if (login.error || mfaVerification.error) errorRef.current?.focus()
@@ -68,7 +81,7 @@ function LoginPage() {
         setPassword('')
         return
       }
-      navigate({ to: '/', replace: true })
+      finishAuthentication(result.user)
     } catch {
       // React Query retains failure state; the bounded alert below receives focus.
     }
@@ -78,11 +91,11 @@ function LoginPage() {
     event.preventDefault()
     if (!mfaChallenge || mfaVerification.isPending || !mfaCredential.trim()) return
     try {
-      await mfaVerification.mutateAsync({
+      const result = await mfaVerification.mutateAsync({
         challengeToken: mfaChallenge.challenge_token,
         credential: mfaCredential.trim(),
       })
-      navigate({ to: '/', replace: true })
+      finishAuthentication(result.user)
     } catch {
       // React Query retains failure state; the bounded alert below receives focus.
     }
@@ -107,7 +120,11 @@ function LoginPage() {
       }}
     >
       <Container maxWidth="sm">
-        <Stack spacing={3}>
+        <Stack spacing={2.5}>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <LanguageControl compact />
+          </Box>
+
           <Stack spacing={1} sx={{ alignItems: 'center', textAlign: 'center' }}>
             <Box
               aria-hidden="true"
