@@ -1,0 +1,76 @@
+name: one-shot-898-extract-failed-job
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  extract:
+    if: github.head_ref == 'audit/898-rc-failure-log'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      FAILED_JOB_ID: "91343796124"
+      OUTPUT_DIR: artifacts/failed-job-diagnostics
+    steps:
+      - name: Download and safely reduce exact failed job log
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$OUTPUT_DIR"
+          gh api "repos/${REPOSITORY}/actions/jobs/${FAILED_JOB_ID}/logs" > /tmp/job-log-download
+          if file /tmp/job-log-download | grep -qi 'zip archive'; then
+            unzip -p /tmp/job-log-download > /tmp/job.log
+          else
+            cp /tmp/job-log-download /tmp/job.log
+          fi
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          raw = Path('/tmp/job.log').read_text(encoding='utf-8', errors='replace')
+          patterns = [
+              (re.compile(r'(?i)(authorization:\s*(?:bearer|basic)\s+)[^\s]+'), r'\1[REDACTED]'),
+              (re.compile(r'(?i)(postgresql(?:\+psycopg)?://[^:\s]+:)[^@\s]+@'), r'\1[REDACTED]@'),
+              (re.compile(r'(?i)(password|secret|token|api[_-]?key)([=:]\s*)[^\s]+'), r'\1\2[REDACTED]'),
+              (re.compile(r'gh[pousr]_[A-Za-z0-9_]{20,}'), '[REDACTED_GITHUB_TOKEN]'),
+              (re.compile(r'sk-[A-Za-z0-9_-]{16,}'), '[REDACTED_API_KEY]'),
+              (re.compile(r'(?m)^.*::add-mask::.*$'), '[MASK_COMMAND_REDACTED]'),
+          ]
+          text = raw
+          for pattern, replacement in patterns:
+              text = pattern.sub(replacement, text)
+          lines = text.splitlines()
+          keywords = re.compile(
+              r'(?i)(execute existing one-build rc chain|run_rc_test_candidate|RC0_TEST_DEPLOYABLE|FAILED_STAGE|'
+              r'error|failed|failure|traceback|exception|playwright|browser-smoke|http-smoke|side-effect-proof|'
+              r'network-proof|migrate|seed|unhealthy|timed out|exit code|npm ERR|docker compose)'
+          )
+          selected = set(range(max(0, len(lines) - 500), len(lines)))
+          for index, line in enumerate(lines):
+              if keywords.search(line):
+                  selected.update(range(max(0, index - 12), min(len(lines), index + 25)))
+          reduced = '\n'.join(f'{i + 1:06d}: {lines[i]}' for i in sorted(selected)) + '\n'
+          out = Path('artifacts/failed-job-diagnostics')
+          (out / 'reduced-redacted.log').write_text(reduced, encoding='utf-8')
+          (out / 'metadata.txt').write_text(
+              f'job_id=91343796124\nsource_lines={len(lines)}\nselected_lines={len(selected)}\n',
+              encoding='utf-8',
+          )
+          PY
+          test -s "$OUTPUT_DIR/reduced-redacted.log"
+
+      - name: Upload reduced diagnostics
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: failed-job-diagnostics-91343796124
+          path: artifacts/failed-job-diagnostics
+          retention-days: 3
+          if-no-files-found: error
