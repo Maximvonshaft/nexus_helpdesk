@@ -161,6 +161,40 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+export type StaticJsonAssetOptions = {
+  timeoutMs?: number
+  cache?: RequestCache
+}
+
+/**
+ * Loads same-origin immutable application assets without API authentication,
+ * request IDs, API-base rewriting, retries or operator-facing error mapping.
+ * Native HTTP ownership remains centralized in this module.
+ */
+export async function staticJsonAssetRequest<T>(
+  path: string,
+  options: StaticJsonAssetOptions = {},
+): Promise<T> {
+  const normalizedPath = String(path || '').trim()
+  if (!normalizedPath) throw new Error('static_asset_path_required')
+
+  const url = new URL(normalizedPath, window.location.origin)
+  if (url.origin !== window.location.origin) throw new Error('static_asset_cross_origin_forbidden')
+
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: options.cache ?? 'no-cache',
+      headers: { Accept: 'application/json' },
+    },
+    options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
+  )
+  if (!response.ok) throw new Error(`static_asset_http_${response.status}`)
+  return await response.json() as T
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const {
     timeoutMs = DEFAULT_API_TIMEOUT_MS,
