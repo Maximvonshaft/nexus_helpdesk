@@ -1,5 +1,4 @@
 import {
-  CircularProgress,
   FormControl,
   FormHelperText,
   InputLabel,
@@ -46,6 +45,7 @@ export function LanguageControl({
   const mutation = useMutation({
     mutationFn: uiPreferenceApi.updateLocale,
     onSuccess: (response) => setUiLocale(response.ui_locale),
+    onError: () => setSelectedLocale(activeLocale),
   })
   const copy = controlCopy[activeLocale]
 
@@ -74,7 +74,6 @@ export function LanguageControl({
         disabled={mutation.isPending}
         onChange={handleChange}
         inputProps={{ 'aria-label': copy.label }}
-        endAdornment={mutation.isPending ? <CircularProgress size={16} sx={{ mr: 3 }} /> : undefined}
       >
         {enabledUiLocales.map((locale) => (
           <MenuItem key={locale} value={locale} lang={locale}>
