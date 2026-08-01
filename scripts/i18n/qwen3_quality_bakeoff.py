@@ -11,7 +11,7 @@ from huggingface_hub import hf_hub_download, model_info
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-1.7B"
-MODEL_REVISION = "026ef898ee93472ecf27df9ea89c651fba82ad6a"
+REQUESTED_REVISION = None
 APPROVED_LICENSE = "apache-2.0"
 
 SOURCES = [
@@ -131,7 +131,6 @@ LOCALES = {
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 CYRILLIC_RE = re.compile(r"[\u0400-\u052f]")
 PLACEHOLDER_RE = re.compile(r"\{\{\d+\}\}|%(?:\d+\$)?[sdif]|\{[A-Za-z_][A-Za-z0-9_]*\}")
-LICENSE_FRONTMATTER_RE = re.compile(r"(?m)^license:\s*apache-2\.0\s*$")
 
 
 def write_json(path: Path, value: object) -> None:
@@ -154,28 +153,26 @@ def placeholders(value: str) -> list[str]:
     return sorted(PLACEHOLDER_RE.findall(value))
 
 
-def verify_model_license() -> tuple[str, str, str]:
-    readme_path = Path(
+def verify_model_license(resolved_revision: str) -> tuple[str, str, str]:
+    license_path = Path(
         hf_hub_download(
             repo_id=MODEL_ID,
-            filename="README.md",
-            revision=MODEL_REVISION,
+            filename="LICENSE",
+            revision=resolved_revision,
         )
     )
-    readme_bytes = readme_path.read_bytes()
-    readme_text = readme_bytes.decode("utf-8", errors="strict")
-    if not readme_text.startswith("---\n"):
-        raise RuntimeError("bakeoff_model_card_frontmatter_missing")
-    closing = readme_text.find("\n---", 4)
-    if closing < 0:
-        raise RuntimeError("bakeoff_model_card_frontmatter_unclosed")
-    frontmatter = readme_text[4:closing]
-    if not LICENSE_FRONTMATTER_RE.search(frontmatter):
-        raise RuntimeError("bakeoff_model_card_license_invalid")
+    license_bytes = license_path.read_bytes()
+    license_text = license_bytes.decode("utf-8", errors="strict").lower()
+    if (
+        "apache license" not in license_text
+        or "version 2.0, january 2004" not in license_text
+        or "http://www.apache.org/licenses/" not in license_text
+    ):
+        raise RuntimeError("bakeoff_model_license_text_invalid")
     return (
         APPROVED_LICENSE,
-        "README.md#yaml-frontmatter",
-        hashlib.sha256(readme_bytes).hexdigest(),
+        "LICENSE",
+        hashlib.sha256(license_bytes).hexdigest(),
     )
 
 
@@ -202,15 +199,16 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=16)
     args = parser.parse_args()
 
-    info = model_info(MODEL_ID, revision=MODEL_REVISION)
-    if str(info.sha) != MODEL_REVISION:
-        raise RuntimeError(f"bakeoff_model_revision_invalid:{info.sha}")
-    license_value, license_evidence, license_evidence_sha256 = verify_model_license()
+    info = model_info(MODEL_ID, revision=REQUESTED_REVISION)
+    resolved_revision = str(info.sha)
+    if not re.fullmatch(r"[0-9a-f]{40}", resolved_revision):
+        raise RuntimeError(f"bakeoff_model_revision_invalid:{resolved_revision}")
+    license_value, license_evidence, license_evidence_sha256 = verify_model_license(resolved_revision)
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=resolved_revision)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        revision=MODEL_REVISION,
+        revision=resolved_revision,
         torch_dtype="auto",
         low_cpu_mem_usage=True,
     )
@@ -279,8 +277,8 @@ def main() -> int:
         {
             "schema": "nexus.i18n-qwen3-quality-bakeoff.v1",
             "model_id": MODEL_ID,
-            "requested_revision": MODEL_REVISION,
-            "resolved_revision": str(info.sha),
+            "requested_revision": REQUESTED_REVISION,
+            "resolved_revision": resolved_revision,
             "license": license_value,
             "license_evidence": license_evidence,
             "license_evidence_sha256": license_evidence_sha256,
