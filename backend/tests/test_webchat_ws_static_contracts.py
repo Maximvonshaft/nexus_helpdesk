@@ -189,6 +189,8 @@ def test_static_widget_ignores_stale_websocket_and_poll_callbacks():
     assert "state.legacyWs.readyState === WebSocket.CONNECTING" in text
     assert "return state.legacyWs === socket && isLegacySessionCurrent(session);" in text
     assert "if (!isLegacySessionCurrent(session)) return;" in text
+    assert "var headers = { 'X-Webchat-Visitor-Token': session.visitorToken };" in text
+    assert "var headers = { 'X-Webchat-Visitor-Token': state.legacyVisitorToken };" not in text
 
 
 def test_webchat_ws_observability_and_connection_limits_contract():
