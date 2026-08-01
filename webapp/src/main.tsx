@@ -1,6 +1,7 @@
 import { renderCatalogLoadFailure } from '@/i18n/catalogLoadFailure'
 import { resolveInitialUiLocale } from '@/i18n/localeAuthority'
 import type { UiLocale } from '@/i18n/localeAuthority'
+import { staticJsonAssetRequest } from '@/lib/apiClient'
 
 function isCatalog(value: unknown): value is Record<string, string> {
   return Boolean(
@@ -14,13 +15,10 @@ function isCatalog(value: unknown): value is Record<string, string> {
 async function loadCatalog(locale: UiLocale) {
   if (locale === 'zh-CN') return { catalog: {}, loaded: true }
   try {
-    const response = await fetch(`${import.meta.env.BASE_URL}i18n/${locale}.json`, {
-      credentials: 'same-origin',
-      cache: 'no-cache',
-      headers: { Accept: 'application/json' },
-    })
-    if (!response.ok) throw new Error(`catalog_http_${response.status}`)
-    const payload: unknown = await response.json()
+    const payload = await staticJsonAssetRequest<unknown>(
+      `${import.meta.env.BASE_URL}i18n/${locale}.json`,
+      { cache: 'no-cache' },
+    )
     if (!isCatalog(payload)) throw new Error('catalog_shape_invalid')
     return { catalog: payload, loaded: true }
   } catch (error) {
