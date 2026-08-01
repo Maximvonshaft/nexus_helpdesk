@@ -30,6 +30,7 @@ jobs:
           set -Eeuo pipefail
           test "$(git merge-base HEAD origin/main)" = "$EXPECTED_BASE_SHA"
           test -f scripts/_apply_898_authorized_scope_continuity.py
+          test -f scripts/_correct_898_authorized_scope_continuity.py
           test -z "$(git status --porcelain)"
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -44,11 +45,12 @@ jobs:
           set -Eeuo pipefail
           python -m pip install --disable-pip-version-check -r backend/requirements.txt
 
-      - name: Apply root-cause patch and run focused verification
+      - name: Apply corrected root-cause patch and run focused verification
         shell: bash
         run: |
           set -Eeuo pipefail
           python scripts/_apply_898_authorized_scope_continuity.py
+          python scripts/_correct_898_authorized_scope_continuity.py
           node --check backend/app/static/webchat/widget.js
           python -m compileall -q backend/app backend/tests scripts/release
           python -m pytest -q \
@@ -57,15 +59,16 @@ jobs:
             backend/tests/test_webchat_voice_api.py \
             backend/tests/test_webchat_round_b.py
           git diff --check
-          ! grep -F "function rememberPublicSession" backend/app/static/webchat/widget.js
-          test "$(grep -F "state.legacyVisitorToken = data.visitor_token;" backend/app/static/webchat/widget.js | wc -l)" -eq 1
-          git rm scripts/_apply_898_authorized_scope_continuity.py
+          grep -F "rememberPublicSession(data)" backend/app/static/webchat/widget.js >/dev/null
+          git rm \
+            scripts/_apply_898_authorized_scope_continuity.py \
+            scripts/_correct_898_authorized_scope_continuity.py
 
       - name: Commit only final product and tests
         shell: bash
         run: |
           set -Eeuo pipefail
-          allowed='^(backend/app/api/webchat_public.py|backend/app/services/webchat_message_service.py|backend/app/services/webchat_rate_limit.py|backend/app/services/webchat_service.py|backend/app/services/webchat_tenant_binding.py|backend/app/services/voice_session_service.py|backend/app/static/webchat/widget.js|backend/tests/test_webchat_public_tenant_binding.py|backend/tests/test_webchat_ws_static_contracts.py|scripts/_apply_898_authorized_scope_continuity.py)$'
+          allowed='^(backend/app/api/webchat_public.py|backend/app/services/webchat_message_service.py|backend/app/services/webchat_rate_limit.py|backend/app/services/webchat_service.py|backend/app/services/webchat_tenant_binding.py|backend/app/services/voice_session_service.py|backend/tests/test_webchat_public_tenant_binding.py|scripts/_apply_898_authorized_scope_continuity.py|scripts/_correct_898_authorized_scope_continuity.py)$'
           unexpected="$(git status --porcelain | sed -E 's/^.. //' | grep -Ev "$allowed" || true)"
           test -z "$unexpected" || { echo "unexpected remediation paths:"; echo "$unexpected"; exit 2; }
           git config user.name github-actions[bot]
