@@ -36,7 +36,7 @@ void i18n.init({
   lng: currentLocale,
   supportedLngs: [...enabledUiLocales],
   fallbackLng: false,
-  initImmediate: false,
+  initAsync: false,
   keySeparator: false,
   nsSeparator: false,
   returnEmptyString: false,
