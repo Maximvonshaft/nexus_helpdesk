@@ -22,8 +22,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  TOOLING_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
   PRODUCT_INVENTORY_HEAD_SHA: 7b11a78afa30e54832ed0e8f43ac1a59db8ff224
-  PREPARATION_ARTIFACT: i18n-contextual-preparation-7b11a78afa30e54832ed0e8f43ac1a59db8ff224
+  PREPARATION_ARTIFACT: i18n-contextual-preparation-${{ github.event.pull_request.head.sha }}-7b11a78afa30e54832ed0e8f43ac1a59db8ff224
 
 jobs:
   prepare-exact-product-inventory:
@@ -33,8 +34,15 @@ jobs:
       - name: Checkout exact tooling candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ env.TOOLING_HEAD_SHA }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Enforce exact tooling source head
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$TOOLING_HEAD_SHA"
+          test -z "$(git status --porcelain)"
 
       - name: Compile contextual catalog tooling
         run: |
@@ -107,8 +115,15 @@ jobs:
       - name: Checkout exact tooling candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ env.TOOLING_HEAD_SHA }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Enforce exact tooling source head
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$TOOLING_HEAD_SHA"
+          test -z "$(git status --porcelain)"
 
       - name: Download exact preparation authority
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -183,8 +198,15 @@ jobs:
       - name: Checkout exact tooling candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ env.TOOLING_HEAD_SHA }}
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Enforce exact tooling source head
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$TOOLING_HEAD_SHA"
+          test -z "$(git status --porcelain)"
 
       - name: Download exact preparation authority
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
