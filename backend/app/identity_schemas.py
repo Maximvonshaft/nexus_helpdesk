@@ -16,6 +16,7 @@ class AuthSessionUserRead(AuthUserRead):
     last_login_at: datetime | None = None
     mfa_enabled: bool = False
     ui_locale: UILocale = "zh-CN"
+    ui_locale_configured: bool = False
 
 
 class AuthSessionResponse(LoginResponse):
