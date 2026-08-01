@@ -31,8 +31,8 @@ jobs:
           test ! -e .github/workflows/_one_shot_898_remediation.yml
           test ! -e .github/workflows/_one_shot_898_pr_kick.yml
           test ! -e scripts/_one_shot_898_fix.py
-          test "$(grep -R --fixed-strings 'webchat-session-recovery-v2' backend/app/static/webchat backend/tests/test_webchat_ws_static_contracts.py | wc -l)" = "0"
-          test "$(grep -R --fixed-strings 'Promise.resolve(false)' backend/app/static/webchat/widget.js | wc -l)" = "0"
+          ! grep -R --fixed-strings 'webchat-session-recovery-v2' backend/app/static/webchat backend/tests/test_webchat_ws_static_contracts.py
+          ! grep -R --fixed-strings 'Promise.resolve(false)' backend/app/static/webchat/widget.js
 
       - name: Commit final remediation tree
         shell: bash
