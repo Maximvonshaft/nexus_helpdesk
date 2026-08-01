@@ -7,6 +7,7 @@ on:
     paths:
       - webapp/**
       - scripts/i18n/bootstrap_operator_catalogs.py
+      - scripts/i18n/bootstrap_operator_catalogs_v2.py
       - .github/workflows/i18n-catalog-bootstrap.yml
 
 permissions:
@@ -53,7 +54,7 @@ jobs:
           HF_HUB_DISABLE_TELEMETRY: '1'
           TOKENIZERS_PARALLELISM: 'false'
         run: |
-          python scripts/i18n/bootstrap_operator_catalogs.py \
+          python scripts/i18n/bootstrap_operator_catalogs_v2.py \
             --inventory frontend_dist/i18n-inventory.json \
             --output /tmp/nexus-i18n-catalog-bootstrap \
             --batch-size 48
