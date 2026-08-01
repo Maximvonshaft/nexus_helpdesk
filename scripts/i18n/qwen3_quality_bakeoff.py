@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 import torch
-from huggingface_hub import model_info
+from huggingface_hub import hf_hub_download, model_info
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "Qwen/Qwen3-1.7B"
@@ -153,6 +153,26 @@ def placeholders(value: str) -> list[str]:
     return sorted(PLACEHOLDER_RE.findall(value))
 
 
+def verify_model_license() -> tuple[str, str]:
+    license_path = Path(
+        hf_hub_download(
+            repo_id=MODEL_ID,
+            filename="LICENSE",
+            revision=MODEL_REVISION,
+        )
+    )
+    license_bytes = license_path.read_bytes()
+    license_text = license_bytes.decode("utf-8", errors="strict")
+    normalized = license_text.lower()
+    if (
+        "apache license" not in normalized
+        or "version 2.0, january 2004" not in normalized
+        or "http://www.apache.org/licenses/" not in normalized
+    ):
+        raise RuntimeError("bakeoff_model_license_text_invalid")
+    return APPROVED_LICENSE, hashlib.sha256(license_bytes).hexdigest()
+
+
 def prompt_for(locale: str, items: list[tuple[str, str]]) -> str:
     spec = LOCALES[locale]
     payload = [{"id": item_id, "source": source} for item_id, source in items]
@@ -177,11 +197,9 @@ def main() -> int:
     args = parser.parse_args()
 
     info = model_info(MODEL_ID, revision=MODEL_REVISION)
-    license_value = str(getattr(info.card_data, "license", "") or "").strip().lower()
-    if license_value != APPROVED_LICENSE:
-        raise RuntimeError(f"bakeoff_model_license_invalid:{license_value or 'missing'}")
     if str(info.sha) != MODEL_REVISION:
         raise RuntimeError(f"bakeoff_model_revision_invalid:{info.sha}")
+    license_value, license_sha256 = verify_model_license()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
     model = AutoModelForCausalLM.from_pretrained(
@@ -258,6 +276,8 @@ def main() -> int:
             "requested_revision": MODEL_REVISION,
             "resolved_revision": str(info.sha),
             "license": license_value,
+            "license_file": "LICENSE",
+            "license_sha256": license_sha256,
             "sample_count": len(SOURCES),
             "source_sha256": hashlib.sha256(
                 json.dumps(SOURCES, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
