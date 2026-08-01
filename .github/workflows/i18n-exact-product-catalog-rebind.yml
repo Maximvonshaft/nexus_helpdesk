@@ -48,6 +48,7 @@ jobs:
           import hashlib
           import json
           import os
+          import re
           from pathlib import Path
 
           repository = Path.cwd()
@@ -69,6 +70,7 @@ jobs:
           expected_keys = {message['key'] for message in messages}
           if len(expected_keys) != len(messages):
               raise RuntimeError('exact_product_inventory_duplicate_keys')
+          (output / 'i18n-inventory.json').write_bytes(inventory_raw)
 
           metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
           if metadata.get('policy') != 'production_candidate_requires_human_semantic_review_and_exact_head_acceptance':
@@ -76,8 +78,11 @@ jobs:
           if set(metadata.get('models', {})) != {'en', 'de', 'cnr'}:
               raise RuntimeError('catalog_model_provenance_invalid')
 
+          token_pattern = re.compile(r'\{\{\d+\}\}|%(?:\d+\$)?[sdif]|\{[A-Za-z_][A-Za-z0-9_]*\}')
+          message_by_key = {message['key']: message for message in messages}
           removed_by_locale = {}
           rendered = {}
+          filtered_catalogs = {}
           for locale, path in catalog_paths.items():
               catalog = json.loads(path.read_text(encoding='utf-8'))
               keys = set(catalog)
@@ -92,6 +97,7 @@ jobs:
                   }))
               removed_by_locale[locale] = extras
               filtered = {key: catalog[key] for key in sorted(expected_keys)}
+              filtered_catalogs[locale] = filtered
               raw = (json.dumps(filtered, ensure_ascii=False, indent=2, sort_keys=True) + '\n').encode('utf-8')
               rendered[locale] = raw
               (output / f'catalog-{locale}.review.json').write_bytes(raw)
@@ -102,6 +108,28 @@ jobs:
                   'error': 'catalog_locale_keysets_diverged',
                   'removed_by_locale': removed_by_locale,
               }))
+
+          token_diagnostics = []
+          for locale, catalog in filtered_catalogs.items():
+              for key, translated in catalog.items():
+                  message = message_by_key[key]
+                  source_tokens = sorted(token_pattern.findall(str(message['source'])))
+                  translated_tokens = sorted(token_pattern.findall(str(translated)))
+                  if source_tokens != translated_tokens:
+                      token_diagnostics.append({
+                          'locale': locale,
+                          'key': key,
+                          'source': message['source'],
+                          'translation': translated,
+                          'source_tokens': source_tokens,
+                          'translation_tokens': translated_tokens,
+                          'kind': message.get('kind'),
+                          'occurrences': message.get('occurrences', []),
+                      })
+          (output / 'format-token-diagnostics.json').write_text(
+              json.dumps(token_diagnostics, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
 
           metadata['inventory_messages'] = len(messages)
           metadata['unique_sources'] = len({message['source'] for message in messages})
@@ -130,6 +158,7 @@ jobs:
               'removed_catalog_keys': reference_removed,
               'removed_catalog_key_count': len(reference_removed),
               'catalog_sha256': metadata['catalog_sha256'],
+              'format_token_mismatch_count': len(token_diagnostics),
           }
           (output / 'exact-product-rebind-report.json').write_text(
               json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
