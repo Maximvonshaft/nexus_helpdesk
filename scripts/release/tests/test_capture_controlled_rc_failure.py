@@ -31,6 +31,29 @@ class ControlledRCFailureEvidenceTests(unittest.TestCase):
             self.assertEqual(os.stat(output).st_mode & 0o777, 0o600)
             self.assertEqual(MODULE.validate_file(output), payload)
 
+
+    def test_capture_prefers_canonical_status_file_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            (evidence / "status.json").write_text(
+                json.dumps({
+                    "schema": "nexus.osr.rc-test-status.v1",
+                    "stage": "browser-smoke",
+                    "updated_at": "2026-08-01T00:00:00+00:00",
+                }),
+                encoding="utf-8",
+            )
+            log = root / "run.log"
+            log.write_text("no RC_STAGE marker\n", encoding="utf-8")
+
+            output = MODULE.capture_failure(log_path=log, evidence_dir=evidence, exit_code=1)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload["stage"], "browser-smoke")
+            self.assertEqual(MODULE.validate_file(output), payload)
+
     def test_capture_preserves_valid_existing_details(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
