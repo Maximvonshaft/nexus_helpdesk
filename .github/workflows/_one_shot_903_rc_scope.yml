@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   converge:
-    if: github.head_ref == 'fix/898-webchat-recovery-and-gates' && github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'fix/898-webchat-recovery-and-gates'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
