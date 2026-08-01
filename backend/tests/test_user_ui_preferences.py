@@ -74,6 +74,7 @@ def test_ui_locale_is_persisted_audited_and_does_not_revoke_session(tmp_path):
         )
         assert login.status_code == 200, login.text
         assert login.json()["user"]["ui_locale"] == "zh-CN"
+        assert login.json()["user"]["ui_locale_configured"] is False
         headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
         updated = client.patch(
@@ -91,6 +92,7 @@ def test_ui_locale_is_persisted_audited_and_does_not_revoke_session(tmp_path):
         current = client.get("/api/auth/me", headers=headers)
         assert current.status_code == 200, current.text
         assert current.json()["ui_locale"] == "en"
+        assert current.json()["ui_locale_configured"] is True
 
         audit = (
             db_session.query(AdminAuditLog)
@@ -108,7 +110,9 @@ def test_ui_locale_is_persisted_audited_and_does_not_revoke_session(tmp_path):
             json={"ui_locale": "de"},
         )
         assert german.status_code == 200
-        assert client.get("/api/auth/me", headers=headers).json()["ui_locale"] == "de"
+        german_session = client.get("/api/auth/me", headers=headers).json()
+        assert german_session["ui_locale"] == "de"
+        assert german_session["ui_locale_configured"] is True
 
         invalid = client.patch(
             "/api/auth/preferences",
