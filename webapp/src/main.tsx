@@ -1,29 +1,48 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import { RouterProvider } from '@tanstack/react-router'
-import { QueryClientProvider } from '@tanstack/react-query'
-import { I18nextProvider } from 'react-i18next'
-import { router } from '@/router'
-import { queryClient } from '@/lib/queryClient'
-import { initFrontendTelemetry } from '@/lib/frontendTelemetry'
-import { initWebVitals } from '@/lib/webVitals'
-import { i18n, initializeUiLocale } from '@/i18n/runtime'
-import { NexusThemeProvider } from '@/theme/NexusThemeProvider'
-import '@/styles.css'
-import '@/a11y.css'
+import { renderCatalogLoadFailure } from '@/i18n/catalogLoadFailure'
+import { resolveInitialUiLocale } from '@/i18n/localeAuthority'
+import type { UiLocale } from '@/i18n/localeAuthority'
 
-initializeUiLocale()
-initFrontendTelemetry()
-initWebVitals()
+function isCatalog(value: unknown): value is Record<string, string> {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.values(value).every((entry) => typeof entry === 'string'),
+  )
+}
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <I18nextProvider i18n={i18n}>
-      <NexusThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </NexusThemeProvider>
-    </I18nextProvider>
-  </React.StrictMode>,
-)
+async function loadCatalog(locale: UiLocale) {
+  if (locale === 'zh-CN') return { catalog: {}, loaded: true }
+  try {
+    const response = await fetch(`${import.meta.env.BASE_URL}i18n/${locale}.json`, {
+      credentials: 'same-origin',
+      cache: 'no-cache',
+      headers: { Accept: 'application/json' },
+    })
+    if (!response.ok) throw new Error(`catalog_http_${response.status}`)
+    const payload: unknown = await response.json()
+    if (!isCatalog(payload)) throw new Error('catalog_shape_invalid')
+    return { catalog: payload, loaded: true }
+  } catch (error) {
+    console.error('Nexus UI catalog failed to load; startup blocked.', error)
+    return { catalog: {}, loaded: false }
+  }
+}
+
+const locale = resolveInitialUiLocale()
+const loaded = await loadCatalog(locale)
+document.documentElement.lang = locale
+document.documentElement.dir = 'ltr'
+document.documentElement.dataset.uiLocale = locale
+document.documentElement.dataset.uiCatalog = loaded.loaded ? 'loaded' : 'blocked'
+
+if (!loaded.loaded && locale !== 'zh-CN') {
+  renderCatalogLoadFailure(locale)
+} else {
+  window.__NEXUS_UI_I18N_BOOTSTRAP__ = {
+    locale,
+    catalog: loaded.catalog,
+    catalogLoaded: loaded.loaded,
+  }
+  await import('./application')
+}
