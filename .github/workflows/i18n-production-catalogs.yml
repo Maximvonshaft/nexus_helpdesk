@@ -92,7 +92,7 @@ jobs:
           assert metadata['unique_sources'] == 1907, metadata
           assert set(metadata['models']) == {'en', 'de', 'cnr'}, metadata
           assert metadata['base_override_counts'] == {'en': 655, 'de': 655, 'cnr': 655}, metadata
-          assert metadata['critical_override_counts'] == {'en': 37, 'de': 37, 'cnr': 37}, metadata
+          assert metadata['critical_override_counts'] == {'en': 38, 'de': 38, 'cnr': 38}, metadata
           assert metadata['base_override_sha256'], metadata
           assert metadata['critical_override_sha256'], metadata
           for locale in ('en', 'de', 'cnr'):
