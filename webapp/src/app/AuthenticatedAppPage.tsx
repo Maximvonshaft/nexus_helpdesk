@@ -1,12 +1,13 @@
 import { Alert, Box, Button, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorLoadingState,
   OperatorPageBoundary,
 } from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
+import { synchronizeAuthenticatedUiLocale } from '@/i18n/runtime'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
 import { usePasswordRecoveryGuard } from './usePasswordRecoveryGuard'
@@ -25,6 +26,13 @@ export function AuthenticatedAppPage({
   const session = useSession()
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
   const passwordRecoveryRequired = usePasswordRecoveryGuard(session.data?.must_change_password, activeRoute)
+
+  useEffect(() => {
+    if (!session.data?.ui_locale) return
+    if (synchronizeAuthenticatedUiLocale(session.data.ui_locale)) {
+      window.location.reload()
+    }
+  }, [session.data?.ui_locale])
 
   const handleLogout = () => {
     logout()
