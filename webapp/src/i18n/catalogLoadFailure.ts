@@ -28,9 +28,9 @@ function button(label: string, primary: boolean, onClick: () => void) {
   element.style.minHeight = '44px'
   element.style.padding = '10px 18px'
   element.style.borderRadius = '8px'
-  element.style.border = primary ? '1px solid #0b57d0' : '1px solid #8a94a6'
-  element.style.background = primary ? '#0b57d0' : '#ffffff'
-  element.style.color = primary ? '#ffffff' : '#182230'
+  element.style.border = primary ? '1px solid LinkText' : '1px solid GrayText'
+  element.style.background = primary ? 'LinkText' : 'ButtonFace'
+  element.style.color = primary ? 'Canvas' : 'ButtonText'
   element.style.font = '600 15px/1.4 system-ui, sans-serif'
   element.style.cursor = 'pointer'
   element.addEventListener('click', onClick)
@@ -42,8 +42,8 @@ export function renderCatalogLoadFailure(locale: Exclude<UiLocale, 'zh-CN'>) {
   document.title = content.title
   document.body.replaceChildren()
   document.body.style.margin = '0'
-  document.body.style.background = '#f5f7fa'
-  document.body.style.color = '#182230'
+  document.body.style.background = 'Canvas'
+  document.body.style.color = 'CanvasText'
 
   const main = document.createElement('main')
   main.setAttribute('role', 'main')
@@ -55,10 +55,9 @@ export function renderCatalogLoadFailure(locale: Exclude<UiLocale, 'zh-CN'>) {
   const panel = document.createElement('section')
   panel.style.width = 'min(100%, 560px)'
   panel.style.padding = '28px'
-  panel.style.border = '1px solid #d0d5dd'
+  panel.style.border = '1px solid GrayText'
   panel.style.borderRadius = '12px'
-  panel.style.background = '#ffffff'
-  panel.style.boxShadow = '0 8px 24px rgba(16, 24, 40, 0.08)'
+  panel.style.background = 'Canvas'
 
   const heading = document.createElement('h1')
   heading.tabIndex = -1
