@@ -5,6 +5,7 @@ import {
   enabledUiLocales,
   intlLocale,
   normalizeUiLocale,
+  readRecoveryUiLocale,
   resolveInitialUiLocale,
   writeUiLocale,
 } from './localeAuthority'
@@ -89,11 +90,13 @@ export function setUiLocale(value: unknown, options?: { reload?: boolean }) {
 }
 
 /**
- * Reconcile the server-owned user preference after authentication. Returning a
- * boolean lets the caller perform one controlled navigation/reload without
- * introducing a second locale state authority.
+ * Reconcile the server-owned user preference after authentication. A temporary
+ * session recovery locale deliberately suspends this projection so an operator
+ * can enter Account settings after a catalog outage and repair the persisted
+ * preference without a reload loop.
  */
 export function synchronizeAuthenticatedUiLocale(value: unknown): boolean {
+  if (readRecoveryUiLocale()) return false
   const normalized = enabledUiLocale(value)
   if (!normalized || normalized === currentLocale) return false
   persistUiLocale(normalized)
