@@ -758,18 +758,34 @@
     return state.legacySessionPromise;
   }
 
-  function recoverLegacySession(expectedSession) {
-    if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);
+  function hasLegacySession() {
+    return Boolean(state.legacyConversationId && state.legacyVisitorToken);
+  }
+
+  function confirmLegacySessionReady() {
+    if (!hasLegacySession()) throw new Error('webchat_session_recovery_failed');
+    return true;
+  }
+
+  function joinLegacySessionTransition() {
     if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
+    if (state.legacySessionPromise) return state.legacySessionPromise.then(confirmLegacySessionReady);
+    if (hasLegacySession()) return Promise.resolve(true);
+    return createLegacySession().then(confirmLegacySessionReady);
+  }
+
+  function recoverLegacySession(expectedSession) {
+    if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
+    if (expectedSession && !isLegacySessionCurrent(expectedSession)) {
+      return joinLegacySessionTransition();
+    }
     clearLegacySession();
     markReceiveDegraded('Reconnecting to support…');
-    state.legacyRecoveryPromise = createLegacySession().then(function () {
-      if (!state.legacyConversationId || !state.legacyVisitorToken) throw new Error('webchat_session_recovery_failed');
-      markReceiveHealthy();
-      return true;
-    }).finally(function () {
-      state.legacyRecoveryPromise = null;
-    });
+    state.legacyRecoveryPromise = createLegacySession()
+      .then(confirmLegacySessionReady)
+      .finally(function () {
+        state.legacyRecoveryPromise = null;
+      });
     return state.legacyRecoveryPromise;
   }
 
@@ -821,7 +837,7 @@
     var session = legacySessionSnapshot();
     var qs = '?limit=50';
     if (state.legacyLastMessageId) qs += '&after_id=' + encodeURIComponent(state.legacyLastMessageId);
-    var headers = { 'X-Webchat-Visitor-Token': state.legacyVisitorToken };
+    var headers = { 'X-Webchat-Visitor-Token': session.visitorToken };
     if (!(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) headers['X-Webchat-WS-Fallback'] = 'true';
     return api('/api/webchat/conversations/' + encodeURIComponent(session.conversationId) + '/messages' + qs, {
       headers: headers
