@@ -1,63 +1,34 @@
 import { createInstance } from 'i18next'
 import type { Resource } from 'i18next'
-import englishCatalog from './catalogs/en.json'
-import germanCatalog from './catalogs/de.json'
+import {
+  enabledUiLocale,
+  enabledUiLocales,
+  intlLocale,
+  normalizeUiLocale,
+  resolveInitialUiLocale,
+  writeUiLocale,
+} from './localeAuthority'
+import type { UiI18nBootstrapState, UiLocale, UiMessageCatalog } from './localeAuthority'
 
-export type UiLocale = 'zh-CN' | 'en' | 'de'
-export type UiMessageCatalog = Readonly<Record<string, string>>
+export type { UiLocale, UiMessageCatalog } from './localeAuthority'
+export { enabledUiLocales, normalizeUiLocale } from './localeAuthority'
 
-const STORAGE_KEY = 'nexus-operator-ui-locale'
-
-export const enabledUiLocales = ['zh-CN', 'en', 'de'] as const satisfies readonly UiLocale[]
-
-const catalogs: Readonly<Record<UiLocale, UiMessageCatalog>> = {
-  'zh-CN': {},
-  en: englishCatalog,
-  de: germanCatalog,
-}
-
-function browserStorage() {
-  return typeof window !== 'undefined' ? window.localStorage : null
-}
-
-export function normalizeUiLocale(value: unknown): UiLocale | null {
-  const candidate = String(value ?? '').trim().replaceAll('_', '-').toLowerCase()
-  if (candidate === 'zh' || candidate === 'zh-cn' || candidate === 'zh-hans') return 'zh-CN'
-  if (candidate === 'en' || candidate.startsWith('en-')) return 'en'
-  if (candidate === 'de' || candidate.startsWith('de-')) return 'de'
-  return null
-}
-
-function enabledLocale(value: UiLocale | null): UiLocale | null {
-  return value && enabledUiLocales.includes(value)
-    ? value
-    : null
-}
-
-function initialLocale(): UiLocale {
-  const stored = (() => {
-    try {
-      return enabledLocale(normalizeUiLocale(browserStorage()?.getItem(STORAGE_KEY)))
-    } catch {
-      return null
-    }
-  })()
-  if (stored) return stored
-
-  if (typeof navigator !== 'undefined') {
-    for (const candidate of navigator.languages ?? [navigator.language]) {
-      const locale = enabledLocale(normalizeUiLocale(candidate))
-      if (locale) return locale
-    }
+function bootstrapState(): UiI18nBootstrapState {
+  if (typeof window !== 'undefined' && window.__NEXUS_UI_I18N_BOOTSTRAP__) {
+    return window.__NEXUS_UI_I18N_BOOTSTRAP__
   }
-  return 'zh-CN'
+  const locale = resolveInitialUiLocale()
+  return { locale, catalog: {}, catalogLoaded: locale === 'zh-CN' }
 }
 
-let currentLocale: UiLocale = initialLocale()
+const bootstrap = bootstrapState()
+let currentLocale: UiLocale = bootstrap.locale
+let currentCatalog: UiMessageCatalog = bootstrap.catalog
+let currentCatalogLoaded = bootstrap.catalogLoaded
 
-const resources: Resource = Object.fromEntries(
-  enabledUiLocales.map((locale) => [locale, { translation: catalogs[locale] }]),
-)
+const resources: Resource = {
+  [currentLocale]: { translation: currentCatalog },
+}
 
 export const i18n = createInstance()
 void i18n.init({
@@ -85,9 +56,7 @@ export function getUiLocale(): UiLocale {
 }
 
 export function getIntlLocale(locale = currentLocale) {
-  if (locale === 'de') return 'de-DE'
-  if (locale === 'en') return 'en-GB'
-  return 'zh-CN'
+  return intlLocale(locale)
 }
 
 export function initializeUiLocale() {
@@ -95,20 +64,17 @@ export function initializeUiLocale() {
   document.documentElement.lang = currentLocale
   document.documentElement.dir = 'ltr'
   document.documentElement.dataset.uiLocale = currentLocale
+  document.documentElement.dataset.uiCatalog = currentCatalogLoaded ? 'loaded' : 'fallback'
 }
 
 export function persistUiLocale(value: unknown): { locale: UiLocale; changed: boolean } {
-  const normalized = enabledLocale(normalizeUiLocale(value))
+  const normalized = enabledUiLocale(value)
   if (!normalized) throw new Error('ui_locale_not_enabled')
   const changed = normalized !== currentLocale
-  try {
-    browserStorage()?.setItem(STORAGE_KEY, normalized)
-  } catch {
-    // Hardened/private browser contexts can deny storage. The active document
-    // still receives the selected locale and the server remains authoritative
-    // for the next authenticated session.
-  }
+  writeUiLocale(normalized)
   currentLocale = normalized
+  currentCatalog = {}
+  currentCatalogLoaded = normalized === 'zh-CN'
   void i18n.changeLanguage(normalized)
   initializeUiLocale()
   return { locale: normalized, changed }
@@ -128,7 +94,7 @@ export function setUiLocale(value: unknown, options?: { reload?: boolean }) {
  * introducing a second locale state authority.
  */
 export function synchronizeAuthenticatedUiLocale(value: unknown): boolean {
-  const normalized = enabledLocale(normalizeUiLocale(value))
+  const normalized = enabledUiLocale(value)
   if (!normalized || normalized === currentLocale) return false
   persistUiLocale(normalized)
   return true
