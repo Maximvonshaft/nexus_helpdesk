@@ -35,16 +35,26 @@ jobs:
               raise SystemExit('expected one broad stale-recovery assertion')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
+
+          cp .github/workflows/canonical-acceptance.yml scripts/_canonical_898_final.yml
+          git checkout HEAD -- .github/workflows/canonical-acceptance.yml
+          git checkout HEAD -- .github/workflows/_one_shot_898_pr_kick.yml
+          git checkout HEAD -- .github/workflows/_one_shot_898_remediation.yml
+
           node --check backend/app/static/webchat/widget.js
           python -m compileall -q backend/tests
           git diff --check
-          test ! -e .github/workflows/_one_shot_898_remediation.yml
-          test ! -e .github/workflows/_one_shot_898_pr_kick.yml
           test ! -e scripts/_one_shot_898_fix.py
+          test -s scripts/_canonical_898_final.yml
+          grep -q '^  review-governance:' scripts/_canonical_898_final.yml
+          grep -q '^  pull_request_review:' scripts/_canonical_898_final.yml
           ! grep -R --fixed-strings 'webchat-session-recovery-v2' backend/app/static/webchat backend/tests/test_webchat_ws_static_contracts.py
           ! grep -R --fixed-strings 'if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);' backend/app/static/webchat/widget.js
+          git diff --quiet HEAD -- .github/workflows/canonical-acceptance.yml
+          git diff --quiet HEAD -- .github/workflows/_one_shot_898_pr_kick.yml
+          git diff --quiet HEAD -- .github/workflows/_one_shot_898_remediation.yml
 
-      - name: Commit final remediation tree
+      - name: Commit product remediation and staged workflow patch
         shell: bash
         run: |
           set -Eeuo pipefail
