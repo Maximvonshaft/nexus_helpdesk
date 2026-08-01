@@ -9,13 +9,11 @@ from pathlib import Path
 from typing import Iterable, Literal
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
 
 Locale = Literal["en", "de"]
-SourceLocale = Literal["zh", "en"]
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
-ALPHA_RE = re.compile(r"[A-Za-z]")
 PLACEHOLDER_RE = re.compile(r"\{\{\d+\}\}")
 PROTECTED_TERM_RE = re.compile(
     r"Nexus OSR|Nexus|WebChat|WebCall|WhatsApp|LiveKit|Speedaf|PostgreSQL|"
@@ -29,23 +27,17 @@ PROTECTED_TOKEN_RE = re.compile(
 MARKER_RE = re.compile(r"[⟦［\[]\s*(\d+)\s*[⟧］\]]")
 MARKER_RESIDUE_RE = re.compile(r"[⟦⟧］［]|NXS\d+", re.IGNORECASE)
 REPEATED_GARBAGE_RE = re.compile(r"([A-Za-z])\1{12,}", re.IGNORECASE)
-
 PUNCTUATION_TRANSLATION = str.maketrans(
-    {
-        "，": ",",
-        "。": ".",
-        "：": ":",
-        "；": ";",
-        "？": "?",
-        "！": "!",
-        "（": "(",
-        "）": ")",
-    }
+    {"，": ",", "。": ".", "：": ":", "；": ";", "？": "?", "！": "!", "（": "(", "）": ")"}
 )
 
-# These are product-language decisions rather than model output. Keep them exact
-# and intentionally small; every remaining occurrence stays traceable to the
-# pinned translation models and the generated review inventory.
+MODEL_ID = "facebook/m2m100_418M"
+SOURCE_LANGUAGE = "zh"
+TARGET_LANGUAGES: dict[Locale, str] = {"en": "en", "de": "de"}
+
+# Product terminology overrides are exact, reviewable decisions. The model handles
+# full sentences; these entries remove ambiguity from high-frequency logistics and
+# identity concepts whose Chinese labels have several unrelated dictionary senses.
 SOURCE_OVERRIDES: dict[Locale, dict[str, str]] = {
     "en": {
         "6 位验证码": "6-digit verification code",
@@ -53,13 +45,37 @@ SOURCE_OVERRIDES: dict[Locale, dict[str, str]] = {
         "队列": "Queue",
         "案例": "Case",
         "坐席": "Agent",
+        "坐席与范围": "Agent and work scope",
         "两步验证": "Two-factor authentication",
+        "账户": "Account",
+        "当前账号": "Current account",
         "账户设置": "Account settings",
+        "退出": "Sign out",
         "退出登录": "Sign out",
+        "退出所有设备": "Sign out on all devices",
+        "退出所有设备？": "Sign out on all devices?",
+        "确认退出所有设备": "Confirm sign-out on all devices",
         "工作范围": "Work scope",
         "主导航": "Main navigation",
+        "打开主导航": "Open main navigation",
         "跳到主要内容": "Skip to main content",
+        "管理员": "Administrator",
+        "审计员": "Auditor",
+        "客服专员": "Customer service agent",
+        "客服": "Customer service",
         "客服状态": "Agent status",
+        "运营经理": "Operations manager",
+        "组长": "Team lead",
+        "邮箱": "Email",
+        "登录设备": "Signed-in devices",
+        "正在登录…": "Signing in…",
+        "登录": "Sign in",
+        "账号或密码错误。": "The username or password is incorrect.",
+        "验证码、恢复码或登录挑战无效。请重试或重新输入密码。": "The verification code, recovery code or sign-in challenge is invalid. Try again or re-enter your password.",
+        "请稍后重试": "Try again later",
+        "请重新登录": "Sign in again",
+        "暂无": "Not available",
+        "未分配": "Unassigned",
         "暂停接线": "Pause availability",
         "开启电话接线": "Enable voice calls",
         "关闭电话接线": "Disable voice calls",
@@ -70,13 +86,37 @@ SOURCE_OVERRIDES: dict[Locale, dict[str, str]] = {
         "队列": "Warteschlange",
         "案例": "Fall",
         "坐席": "Agent",
+        "坐席与范围": "Agent und Arbeitsbereich",
         "两步验证": "Zwei-Faktor-Authentifizierung",
+        "账户": "Konto",
+        "当前账号": "Aktuelles Konto",
         "账户设置": "Kontoeinstellungen",
+        "退出": "Abmelden",
         "退出登录": "Abmelden",
+        "退出所有设备": "Auf allen Geräten abmelden",
+        "退出所有设备？": "Auf allen Geräten abmelden?",
+        "确认退出所有设备": "Abmeldung auf allen Geräten bestätigen",
         "工作范围": "Arbeitsbereich",
         "主导航": "Hauptnavigation",
+        "打开主导航": "Hauptnavigation öffnen",
         "跳到主要内容": "Zum Hauptinhalt springen",
+        "管理员": "Administrator",
+        "审计员": "Auditor",
+        "客服专员": "Kundenservice-Agent",
+        "客服": "Kundenservice",
         "客服状态": "Agentenstatus",
+        "运营经理": "Betriebsleiter",
+        "组长": "Teamleiter",
+        "邮箱": "E-Mail",
+        "登录设备": "Angemeldete Geräte",
+        "正在登录…": "Anmeldung läuft…",
+        "登录": "Anmelden",
+        "账号或密码错误。": "Benutzername oder Passwort ist falsch.",
+        "验证码、恢复码或登录挑战无效。请重试或重新输入密码。": "Der Bestätigungscode, Wiederherstellungscode oder die Anmeldeanforderung ist ungültig. Versuchen Sie es erneut oder geben Sie Ihr Passwort erneut ein.",
+        "请稍后重试": "Versuchen Sie es später erneut",
+        "请重新登录": "Erneut anmelden",
+        "暂无": "Nicht verfügbar",
+        "未分配": "Nicht zugewiesen",
         "暂停接线": "Verfügbarkeit pausieren",
         "开启电话接线": "Sprachanrufe aktivieren",
         "关闭电话接线": "Sprachanrufe deaktivieren",
@@ -90,12 +130,6 @@ class ProtectedText:
     replacements: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class Segment:
-    value: str
-    protected: bool
-
-
 def protect_text(value: str) -> ProtectedText:
     replacements: list[str] = []
 
@@ -105,6 +139,15 @@ def protect_text(value: str) -> ProtectedText:
         return f"⟦{index}⟧"
 
     return ProtectedText(PROTECTED_TOKEN_RE.sub(replace, value), tuple(replacements))
+
+
+def normalize_output(value: str) -> str:
+    output = value.translate(PUNCTUATION_TRANSLATION)
+    output = re.sub(r"\s+([,.;:!?])", r"\1", output)
+    output = re.sub(r"([([])\s+", r"\1", output)
+    output = re.sub(r"\s+([)\]])", r"\1", output)
+    output = re.sub(r"[ \t]{2,}", " ", output)
+    return output.strip()
 
 
 def restore_text(value: str, replacements: tuple[str, ...]) -> tuple[str, bool]:
@@ -122,66 +165,33 @@ def restore_text(value: str, replacements: tuple[str, ...]) -> tuple[str, bool]:
     return normalize_output(output), complete
 
 
-def split_segments(value: str) -> tuple[Segment, ...]:
-    segments: list[Segment] = []
-    cursor = 0
-    for match in PROTECTED_TOKEN_RE.finditer(value):
-        if match.start() > cursor:
-            segments.append(Segment(value[cursor : match.start()], False))
-        segments.append(Segment(match.group(0), True))
-        cursor = match.end()
-    if cursor < len(value):
-        segments.append(Segment(value[cursor:], False))
-    return tuple(segments) or (Segment(value, False),)
-
-
-def split_boundary_whitespace(value: str) -> tuple[str, str, str]:
-    prefix_match = re.match(r"^\s*", value)
-    suffix_match = re.search(r"\s*$", value)
-    prefix = prefix_match.group(0) if prefix_match else ""
-    suffix = suffix_match.group(0) if suffix_match else ""
-    end = len(value) - len(suffix) if suffix else len(value)
-    core = value[len(prefix) : end]
-    return prefix, core, suffix
-
-
-def should_translate(value: str, source_locale: SourceLocale) -> bool:
-    return bool(CJK_RE.search(value)) if source_locale == "zh" else bool(ALPHA_RE.search(value))
-
-
 def batches(values: list[str], size: int) -> Iterable[list[str]]:
     for index in range(0, len(values), size):
         yield values[index : index + size]
 
 
-def normalize_output(value: str) -> str:
-    output = value.translate(PUNCTUATION_TRANSLATION)
-    output = re.sub(r"\s+([,.;:!?])", r"\1", output)
-    output = re.sub(r"([([])\s+", r"\1", output)
-    output = re.sub(r"\s+([)\]])", r"\1", output)
-    output = re.sub(r"[ \t]{2,}", " ", output)
-    return output.strip()
-
-
-def load_model(model_id: str, revision: str | None):
-    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_id, revision=revision)
+def translate_sources(
+    sources: list[str],
+    *,
+    target_locale: Locale,
+    batch_size: int,
+) -> tuple[dict[str, str], dict[str, object]]:
+    tokenizer = M2M100Tokenizer.from_pretrained(MODEL_ID)
+    model = M2M100ForConditionalGeneration.from_pretrained(MODEL_ID)
     model.eval()
     model.to("cpu")
-    return tokenizer, model
+    tokenizer.src_lang = SOURCE_LANGUAGE
+    forced_bos_token_id = tokenizer.get_lang_id(TARGET_LANGUAGES[target_locale])
 
+    protected = {source: protect_text(source) for source in sources}
+    unique_inputs = sorted(
+        {row.value for row in protected.values()},
+        key=lambda value: (len(value), value),
+    )
+    raw_outputs: dict[str, str] = {}
 
-def model_translate(
-    values: list[str],
-    *,
-    tokenizer,
-    model,
-    batch_size: int,
-) -> dict[str, str]:
-    unique_values = sorted(set(values), key=lambda value: (len(value), value))
-    translations: dict[str, str] = {}
     with torch.inference_mode():
-        for source_batch in batches(unique_values, batch_size):
+        for source_batch in batches(unique_inputs, batch_size):
             encoded = tokenizer(
                 source_batch,
                 return_tensors="pt",
@@ -191,6 +201,7 @@ def model_translate(
             )
             generated = model.generate(
                 **encoded,
+                forced_bos_token_id=forced_bos_token_id,
                 max_new_tokens=192,
                 num_beams=4,
                 early_stopping=True,
@@ -199,101 +210,39 @@ def model_translate(
             if len(decoded) != len(source_batch):
                 raise RuntimeError("translation_batch_cardinality_mismatch")
             for source, translated in zip(source_batch, decoded, strict=True):
-                translations[source] = normalize_output(translated) or source
-    return translations
-
-
-def segmented_fallbacks(
-    values: list[str],
-    *,
-    tokenizer,
-    model,
-    source_locale: SourceLocale,
-    batch_size: int,
-) -> dict[str, str]:
-    cores = [
-        core
-        for value in values
-        for segment in split_segments(value)
-        if not segment.protected
-        for _prefix, core, _suffix in [split_boundary_whitespace(segment.value)]
-        if core and should_translate(core, source_locale)
-    ]
-    translated_cores = model_translate(
-        cores,
-        tokenizer=tokenizer,
-        model=model,
-        batch_size=batch_size,
-    )
-    result: dict[str, str] = {}
-    for value in values:
-        parts: list[str] = []
-        for segment in split_segments(value):
-            if segment.protected:
-                parts.append(segment.value)
-                continue
-            prefix, core, suffix = split_boundary_whitespace(segment.value)
-            translated = translated_cores.get(core, core)
-            parts.append(f"{prefix}{translated}{suffix}")
-        result[value] = normalize_output("".join(parts))
-    return result
-
-
-def translate_sources(
-    values: list[str],
-    *,
-    model_id: str,
-    revision: str | None,
-    source_locale: SourceLocale,
-    batch_size: int,
-) -> tuple[dict[str, str], dict[str, object]]:
-    tokenizer, model = load_model(model_id, revision)
-    protected = {value: protect_text(value) for value in values}
-    full_outputs = model_translate(
-        [row.value for row in protected.values()],
-        tokenizer=tokenizer,
-        model=model,
-        batch_size=batch_size,
-    )
-    fallbacks = segmented_fallbacks(
-        values,
-        tokenizer=tokenizer,
-        model=model,
-        source_locale=source_locale,
-        batch_size=batch_size,
-    )
+                raw_outputs[source] = normalize_output(translated) or source
 
     translations: dict[str, str] = {}
-    fallback_sources: list[str] = []
-    for source in values:
+    marker_failures: list[str] = []
+    for source in sources:
         row = protected[source]
-        restored, complete = restore_text(full_outputs[row.value], row.replacements)
-        if complete and sorted(PLACEHOLDER_RE.findall(source)) == sorted(PLACEHOLDER_RE.findall(restored)):
-            translations[source] = restored
-        else:
-            translations[source] = fallbacks[source]
-            fallback_sources.append(source)
+        restored, complete = restore_text(raw_outputs[row.value], row.replacements)
+        if not complete:
+            marker_failures.append(source)
+            # Fail safely: preserve protected tokens and translate the surrounding
+            # sentence through a second pass without markers only when no token is
+            # present. Sources with damaged protected tokens require an override.
+            if row.replacements:
+                translations[source] = source
+                continue
+        translations[source] = restored
+
+    translations.update({
+        source: translated
+        for source, translated in SOURCE_OVERRIDES[target_locale].items()
+        if source in translations
+    })
 
     metadata = {
-        "model_id": model_id,
-        "requested_revision": revision,
+        "model_id": MODEL_ID,
         "resolved_revision": getattr(model.config, "_commit_hash", None),
         "tokenizer_revision": getattr(tokenizer, "_commit_hash", None),
-        "source_locale": source_locale,
-        "sources": len(values),
-        "full_sentence_translations": len(values) - len(fallback_sources),
-        "segmented_fallbacks": len(fallback_sources),
-        "fallback_samples": fallback_sources[:20],
+        "source_language": SOURCE_LANGUAGE,
+        "target_language": TARGET_LANGUAGES[target_locale],
+        "sources": len(sources),
+        "marker_failures": marker_failures,
     }
     return translations, metadata
-
-
-def apply_overrides(translations: dict[str, str], *, locale: Locale) -> dict[str, str]:
-    result = dict(translations)
-    for source, translated in SOURCE_OVERRIDES[locale].items():
-        if source in result:
-            result[source] = translated
-    return result
 
 
 def protected_terms(value: str) -> list[str]:
@@ -317,17 +266,12 @@ def validate_translation(source: str, translated: str, *, locale: Locale) -> lis
     for term in protected_terms(source):
         if term.casefold() not in translated.casefold():
             errors.append(f"protected_term_missing:{term}")
-    if locale == "de" and translated == source and CJK_RE.search(source):
+    if translated == source and CJK_RE.search(source):
         errors.append("untranslated")
     return errors
 
 
-def validate_catalog(
-    sources: list[str],
-    translations: dict[str, str],
-    *,
-    locale: Locale,
-) -> None:
+def validate_catalog(sources: list[str], translations: dict[str, str], *, locale: Locale) -> None:
     failures = {
         source: errors
         for source in sources
@@ -349,7 +293,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=48)
+    parser.add_argument("--batch-size", type=int, default=24)
     args = parser.parse_args()
 
     raw_inventory = args.inventory.read_bytes()
@@ -364,29 +308,18 @@ def main() -> int:
         {str(message["source"]) for message in messages},
         key=lambda value: (len(value), value),
     )
-    english_raw, en_metadata = translate_sources(
-        sources,
-        model_id="Helsinki-NLP/opus-mt-zh-en",
-        revision="cf109095479db38d6df799875e34039d4938aaa6",
-        source_locale="zh",
-        batch_size=args.batch_size,
-    )
-    english = apply_overrides(english_raw, locale="en")
-    validate_catalog(sources, english, locale="en")
+    source_catalogs: dict[Locale, dict[str, str]] = {}
+    metadata: dict[Locale, dict[str, object]] = {}
+    for locale in ("en", "de"):
+        translations, locale_metadata = translate_sources(
+            sources,
+            target_locale=locale,
+            batch_size=args.batch_size,
+        )
+        validate_catalog(sources, translations, locale=locale)
+        source_catalogs[locale] = translations
+        metadata[locale] = locale_metadata
 
-    english_values = [english[source] for source in sources]
-    german_by_english, de_metadata = translate_sources(
-        english_values,
-        model_id="Helsinki-NLP/opus-mt-en-de",
-        revision="6183067f769a302e3861815543b9f312c71b0ca4",
-        source_locale="en",
-        batch_size=args.batch_size,
-    )
-    german_raw = {source: german_by_english[english[source]] for source in sources}
-    german = apply_overrides(german_raw, locale="de")
-    validate_catalog(sources, german, locale="de")
-
-    source_catalogs = {"en": english, "de": german}
     keyed_catalogs = {
         locale: {
             str(message["key"]): translations[str(message["source"])]
@@ -396,19 +329,18 @@ def main() -> int:
     }
 
     output = args.output
-    write_json(output / "source-en.review.json", english)
-    write_json(output / "source-de.review.json", german)
-    write_json(output / "catalog-en.review.json", keyed_catalogs["en"])
-    write_json(output / "catalog-de.review.json", keyed_catalogs["de"])
+    for locale in ("en", "de"):
+        write_json(output / f"source-{locale}.review.json", source_catalogs[locale])
+        write_json(output / f"catalog-{locale}.review.json", keyed_catalogs[locale])
     write_json(
         output / "bootstrap-metadata.json",
         {
-            "schema_version": 3,
+            "schema_version": 4,
             "inventory_sha256": hashlib.sha256(raw_inventory).hexdigest(),
             "inventory_messages": len(messages),
             "unique_sources": len(sources),
-            "english": en_metadata,
-            "german": {**de_metadata, "pivot_locale": "en"},
+            "model": MODEL_ID,
+            "locales": metadata,
             "overrides": {locale: len(values) for locale, values in SOURCE_OVERRIDES.items()},
             "policy": "machine_bootstrap_requires_human_occurrence_review",
         },
