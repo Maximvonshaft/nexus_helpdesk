@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - webapp/**
+      - scripts/i18n/operator_catalog_overrides_v1.json
+      - scripts/i18n/critical_operator_catalog_overrides_v1.json
       - .github/workflows/i18n-inventory-export.yml
 
 permissions:
@@ -37,6 +39,12 @@ jobs:
           npm run build
           node scripts/assert-i18n-inventory.mjs
           sha256sum ../frontend_dist/i18n-inventory.json > ../frontend_dist/i18n-inventory.sha256
+          cp ../scripts/i18n/operator_catalog_overrides_v1.json ../frontend_dist/operator_catalog_overrides_v1.json
+          cp ../scripts/i18n/critical_operator_catalog_overrides_v1.json ../frontend_dist/critical_operator_catalog_overrides_v1.json
+          sha256sum \
+            ../frontend_dist/operator_catalog_overrides_v1.json \
+            ../frontend_dist/critical_operator_catalog_overrides_v1.json \
+            > ../frontend_dist/i18n-review-authorities.sha256
 
       - name: Upload immutable inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -48,3 +56,6 @@ jobs:
             frontend_dist/i18n-inventory.json
             frontend_dist/i18n-inventory-summary.json
             frontend_dist/i18n-inventory.sha256
+            frontend_dist/operator_catalog_overrides_v1.json
+            frontend_dist/critical_operator_catalog_overrides_v1.json
+            frontend_dist/i18n-review-authorities.sha256
