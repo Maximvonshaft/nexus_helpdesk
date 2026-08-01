@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const bootstrap = readFileSync(new URL('../src/bootstrap.ts', import.meta.url), 'utf8')
+const entrypoint = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
+const application = readFileSync(new URL('../src/application.tsx', import.meta.url), 'utf8')
 const localeAuthority = readFileSync(new URL('../src/i18n/localeAuthority.ts', import.meta.url), 'utf8')
 const runtime = readFileSync(new URL('../src/i18n/runtime.ts', import.meta.url), 'utf8')
 const languageControl = readFileSync(new URL('../src/i18n/LanguageControl.tsx', import.meta.url), 'utf8')
@@ -14,8 +15,9 @@ const format = readFileSync(new URL('../src/lib/format.ts', import.meta.url), 'u
 test('one synchronous i18next authority owns all production locales', () => {
   assert.match(runtime, /createInstance/)
   assert.match(localeAuthority, /enabledUiLocales = \['zh-CN', 'en', 'de'\]/)
-  assert.match(bootstrap, /i18n\/\$\{locale\}\.json/)
-  assert.match(bootstrap, /await import\('\.\/main'\)/)
+  assert.match(entrypoint, /i18n\/\$\{locale\}\.json/)
+  assert.match(entrypoint, /await import\('\.\/application'\)/)
+  assert.match(application, /I18nextProvider/)
   assert.match(runtime, /__NEXUS_UI_I18N_BOOTSTRAP__/)
   assert.match(runtime, /initImmediate: false/)
   assert.match(runtime, /keySeparator: false/)
