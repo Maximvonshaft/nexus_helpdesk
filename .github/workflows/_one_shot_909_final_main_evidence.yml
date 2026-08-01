@@ -18,15 +18,10 @@ jobs:
         with:
           ref: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
           persist-credentials: false
-      - name: Print bounded token-authority excerpts
+      - name: Print bounded visitor-token authority writes
         shell: bash
         run: |
           set -Eeuo pipefail
-          file=backend/app/static/webchat/widget.js
-          grep -n -E 'legacyVisitorToken[[:space:]]*=|rememberPublicSession|recoverLegacySession|pollLegacy\(' "$file"
-          while IFS=: read -r line _; do
-            start=$(( line > 8 ? line - 8 : 1 ))
-            end=$(( line + 12 ))
-            echo "--- lines ${start}-${end}"
-            sed -n "${start},${end}p" "$file"
-          done < <(grep -n -E 'legacyVisitorToken[[:space:]]*=|rememberPublicSession' "$file")
+          grep -RIn --include='*.py' -E 'visitor_token_hash[[:space:]]*=|setattr\([^,]+,[[:space:]]*["'"']visitor_token_hash' backend/app || true
+          grep -RIn --include='*.py' -E 'visitor_token_expires_at[[:space:]]*=' backend/app || true
+          grep -RIn --include='*.py' -E 'WebchatConversation\(' backend/app/services backend/app/api | head -n 100
