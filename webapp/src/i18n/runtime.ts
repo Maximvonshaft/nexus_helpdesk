@@ -1,85 +1,105 @@
-export type UiLocale = 'zh-CN' | 'en' | 'de'
-export type UiMessageCatalog = Readonly<Record<string, string>>
+import { createInstance } from 'i18next'
+import type { Resource } from 'i18next'
+import {
+  enabledUiLocale,
+  enabledUiLocales,
+  intlLocale,
+  readRecoveryUiLocale,
+  resolveInitialUiLocale,
+  writeUiLocale,
+} from './localeAuthority'
+import type { UiI18nBootstrapState, UiLocale, UiMessageCatalog } from './localeAuthority'
 
-const STORAGE_KEY = 'nexus-operator-ui-locale'
+export type { UiLocale, UiMessageCatalog } from './localeAuthority'
+export { enabledUiLocales, normalizeUiLocale } from './localeAuthority'
 
-// PR1 deliberately enables only the existing locale. English and German become
-// selectable only after their catalogs and full browser acceptance are complete.
-export const enabledUiLocales = ['zh-CN'] as const satisfies readonly UiLocale[]
-
-const catalogs: Readonly<Record<UiLocale, UiMessageCatalog>> = {
-  'zh-CN': {},
-  en: {},
-  de: {},
-}
-
-function browserStorage() {
-  return typeof window !== 'undefined' ? window.localStorage : null
-}
-
-export function normalizeUiLocale(value: unknown): UiLocale | null {
-  const candidate = String(value ?? '').trim().replaceAll('_', '-').toLowerCase()
-  if (candidate === 'zh' || candidate === 'zh-cn' || candidate === 'zh-hans') return 'zh-CN'
-  if (candidate === 'en' || candidate.startsWith('en-')) return 'en'
-  if (candidate === 'de' || candidate.startsWith('de-')) return 'de'
-  return null
-}
-
-function enabledLocale(value: UiLocale | null): UiLocale | null {
-  return value && enabledUiLocales.includes(value as (typeof enabledUiLocales)[number])
-    ? value
-    : null
-}
-
-function initialLocale(): UiLocale {
-  const stored = (() => {
-    try {
-      return enabledLocale(normalizeUiLocale(browserStorage()?.getItem(STORAGE_KEY)))
-    } catch {
-      return null
-    }
-  })()
-  if (stored) return stored
-
-  if (typeof navigator !== 'undefined') {
-    for (const candidate of navigator.languages ?? [navigator.language]) {
-      const locale = enabledLocale(normalizeUiLocale(candidate))
-      if (locale) return locale
-    }
+function bootstrapState(): UiI18nBootstrapState {
+  if (typeof window !== 'undefined' && window.__NEXUS_UI_I18N_BOOTSTRAP__) {
+    return window.__NEXUS_UI_I18N_BOOTSTRAP__
   }
-  return 'zh-CN'
+  const locale = resolveInitialUiLocale()
+  return { locale, catalog: {}, catalogLoaded: locale === 'zh-CN' }
 }
 
-let currentLocale: UiLocale = initialLocale()
+const bootstrap = bootstrapState()
+let currentLocale: UiLocale = bootstrap.locale
+let currentCatalog: UiMessageCatalog = bootstrap.catalog
+let currentCatalogLoaded = bootstrap.catalogLoaded
+
+const resources: Resource = {
+  [currentLocale]: { translation: currentCatalog },
+}
+
+export const i18n = createInstance()
+void i18n.init({
+  resources,
+  lng: currentLocale,
+  supportedLngs: [...enabledUiLocales],
+  fallbackLng: false,
+  initImmediate: false,
+  keySeparator: false,
+  nsSeparator: false,
+  returnEmptyString: false,
+  returnNull: false,
+  interpolation: {
+    escapeValue: false,
+    // Nexus templates deliberately use {{0}}, {{1}}, ... and perform bounded
+    // positional substitution after catalog lookup. Distinct delimiters prevent
+    // i18next from consuming those source-owned placeholders.
+    prefix: '⟪',
+    suffix: '⟫',
+  },
+})
 
 export function getUiLocale(): UiLocale {
   return currentLocale
 }
 
 export function getIntlLocale(locale = currentLocale) {
-  if (locale === 'de') return 'de-DE'
-  if (locale === 'en') return 'en-GB'
-  return 'zh-CN'
+  return intlLocale(locale)
 }
 
 export function initializeUiLocale() {
   if (typeof document === 'undefined') return
   document.documentElement.lang = currentLocale
+  document.documentElement.dir = 'ltr'
   document.documentElement.dataset.uiLocale = currentLocale
+  document.documentElement.dataset.uiCatalog = currentCatalogLoaded ? 'loaded' : 'fallback'
 }
 
-export function setUiLocale(locale: UiLocale) {
-  const normalized = enabledLocale(normalizeUiLocale(locale))
+export function persistUiLocale(value: unknown): { locale: UiLocale; changed: boolean } {
+  const normalized = enabledUiLocale(value)
   if (!normalized) throw new Error('ui_locale_not_enabled')
-  try {
-    browserStorage()?.setItem(STORAGE_KEY, normalized)
-  } catch {
-    // Storage can be unavailable in hardened or private browser contexts. The
-    // current document still switches consistently through a controlled reload.
-  }
+  const changed = normalized !== currentLocale
+  writeUiLocale(normalized)
   currentLocale = normalized
+  currentCatalog = {}
+  currentCatalogLoaded = normalized === 'zh-CN'
+  void i18n.changeLanguage(normalized)
   initializeUiLocale()
-  if (typeof window !== 'undefined') window.location.reload()
+  return { locale: normalized, changed }
+}
+
+export function setUiLocale(value: unknown, options?: { reload?: boolean }) {
+  const result = persistUiLocale(value)
+  if (result.changed && options?.reload !== false && typeof window !== 'undefined') {
+    window.location.reload()
+  }
+  return result
+}
+
+/**
+ * Reconcile the server-owned user preference after authentication. A temporary
+ * session recovery locale deliberately suspends this projection so an operator
+ * can enter Account settings after a catalog outage and repair the persisted
+ * preference without a reload loop.
+ */
+export function synchronizeAuthenticatedUiLocale(value: unknown): boolean {
+  if (readRecoveryUiLocale()) return false
+  const normalized = enabledUiLocale(value)
+  if (!normalized || normalized === currentLocale) return false
+  persistUiLocale(normalized)
+  return true
 }
 
 /**
@@ -89,7 +109,7 @@ export function setUiLocale(locale: UiLocale) {
  * remain untranslated even when identical visible copy is localized elsewhere.
  */
 export function translateStatic(key: string, source: string): string {
-  const translated = catalogs[currentLocale][key]
+  const translated = i18n.t(key, { defaultValue: source })
   return typeof translated === 'string' && translated ? translated : source
 }
 

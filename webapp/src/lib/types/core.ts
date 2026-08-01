@@ -1,3 +1,5 @@
+import type { UiLocale } from '@/i18n/runtime'
+
 export type BadgeTone = 'default' | 'warning' | 'success' | 'danger'
 export interface AuthUser {
   id: number
@@ -11,6 +13,8 @@ export interface AuthUser {
   password_changed_at?: string | null
   last_login_at?: string | null
   mfa_enabled?: boolean
+  ui_locale: UiLocale
+  ui_locale_configured?: boolean
 }
 export interface AuthSessionResponse {
   access_token: string

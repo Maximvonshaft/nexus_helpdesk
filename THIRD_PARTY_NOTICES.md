@@ -21,6 +21,35 @@ A candidate with missing, unknown, denied, unreviewed or identity-mismatched
 license evidence is not releasable. This notice does not override that gate and
 does not itself constitute a legal approval.
 
+## Operator-interface localization
+
+The operator web application includes these unmodified MIT-licensed runtime
+libraries:
+
+- `pkg:npm/i18next@26.3.6`
+- `pkg:npm/react-i18next@17.0.11`
+
+Upstream source and license authorities:
+
+- <https://github.com/i18next/i18next>
+- <https://github.com/i18next/react-i18next>
+
+The initial English and German catalog candidates were produced in an isolated,
+non-production tooling workflow with `facebook/m2m100_418M`, whose model card
+identifies the model license as MIT. The model weights, tokenizer and inference
+runtime are not included in the Nexus application or image; only reviewed text
+catalog outputs and their provenance metadata may enter the product branch.
+
+Upstream model and license authority:
+
+- <https://huggingface.co/facebook/m2m100_418M>
+
+Catalog generation is not release authority. The product gate independently
+requires exact occurrence-key coverage, placeholder preservation, no source
+language residue, terminology review, browser acceptance and immutable source
+binding. Any model, revision, license, catalog or review-policy change invalidates
+the recorded catalog provenance and requires a new review.
+
 ## LGPL-reviewed Python components
 
 The exact candidate currently includes these unmodified Python distributions:
