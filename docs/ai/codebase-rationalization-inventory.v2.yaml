@@ -53,7 +53,8 @@ canonical_authorities:
   schema_migration: backend/alembic
   compatibility_lifecycle: config/architecture/compatibility-lifecycle.v1.json
   repository_verification: scripts/verify_repository.py
-  remote_execution: .github/workflows/canonical-acceptance.yml
+  canonical_acceptance: .github/workflows/canonical-acceptance.yml
+  controlled_candidate_convergence: .github/workflows/controlled-candidate-convergence.yml
 
 retired_paths_must_be_absent:
   - frontend
@@ -63,9 +64,18 @@ retired_paths_must_be_absent:
   - webapp/src/components/ui
   - webapp/src/lib/api.ts
   - webapp/src/lib/webchatRealtime.ts
+  - webapp/src/lib/cn.ts
   - webapp/src/styles/tokens.css
   - webapp/src/styles/components.css
+  - webapp/src/styles/auth.css
+  - webapp/src/app/app-shell.css
+  - webapp/src/features/operator-workspace/OperatorWorkspaceCommon.tsx
+  - webapp/src/features/operator-workspace/operator-workspace.css
+  - webapp/src/features/operator-workspace/operator-workspace-refinements.css
+  - webapp/src/features/admin-routes/admin-routes.css
+  - webapp/src/features/knowledge/knowledge.css
   - webapp/src/features/knowledge/KnowledgeReadOnlyPage.tsx
+  - webapp/src/features/runtime/runtime-evidence-audit.css
   - backend/app/services/canonical_ticket_service.py
   - backend/app/services/canonical_operator_work_queue.py
   - backend/app/services/canonical_webchat_handoff_service.py
@@ -85,6 +95,10 @@ retired_paths_must_be_absent:
   - deploy/docker-compose.server.yml
   - deploy/docker-compose.candidate.yml
   - deploy/docker-compose.operations-dispatch.yml
+  - deploy/.env.prod.example
+  - deploy/.env.prod.local-postgres.example
+  - deploy/.env.prod.external-postgres.example
+  - deploy/.env.candidate.example
   - deploy/systemd/nexusdesk-worker.service
   - deploy/systemd/nexusdesk-api.service
   - deploy/nginx/nexusdesk.edge.env.example
@@ -104,7 +118,14 @@ retired_paths_must_be_absent:
   - docs/backend-refactor-roadmap.md
   - docs/backend-module-split-plan.md
   - docs/ai/codebase-rationalization-inventory.v1.yaml
+  - config/governance/legacy-surface-domains.v1.json
+  - config/governance/actions-authority.v1.json
+  - config/governance/release-candidate-preconditions.v1.json
+  - scripts/ci/actions_authority_inventory.py
+  - scripts/release/exact_main_candidate_preconditions.py
+  - docs/superpowers/plans/2026-07-14-actions-authority-convergence.md
   - artifacts/supply-chain
+  - nexus-pr763-backend-source.tar.gz
 
 single_authority_rules:
   - one authenticated operator product
@@ -124,7 +145,10 @@ single_authority_rules:
   - no worker deployment through run_worker.py or queue all
   - no ticket closure from status or technical success alone
   - no worker health claim without durable progress freshness
-  - one GitHub Actions workflow and one required gate
+  - one Canonical Acceptance workflow for repository verification
+  - one downstream Controlled Candidate workflow that consumes successful exact-main acceptance only
+  - one required-gate for branch protection; internal jobs must not become parallel required authorities
+  - no independently dispatchable second release or candidate workflow
   - no verification evidence written into the candidate tree
 
 compatibility_rules:
@@ -142,12 +166,17 @@ verification:
   browser: cd webapp && npm run e2e
   postgres: python scripts/qualification/postgres_acceptance.py
   release_supply_chain: python scripts/qualification/supply_chain.py --release --evidence-dir <outside-repository>
+  canonical_acceptance: pull request, exact main push, or explicit manual verification of the selected ref
+  controlled_candidate: automatic only after successful exact-main Canonical Acceptance on a main push
   candidate_mutation_during_verification: forbidden
 
 protected_non_duplicates:
   public_webchat_widget:
     path: backend/app/static/webchat
     reason: separate customer-facing surface, not an operator console
+  controlled_candidate_workflow:
+    path: .github/workflows/controlled-candidate-convergence.yml
+    reason: downstream immutable image and evidence convergence, not a second repository acceptance authority
   alembic_history:
     path: backend/alembic/versions
     reason: deterministic upgrade, restore and rollback authority
