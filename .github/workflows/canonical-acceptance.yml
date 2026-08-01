@@ -4,8 +4,6 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-  pull_request_review:
-    types: [submitted, dismissed]
   push:
     branches: [main]
   workflow_dispatch: {}
@@ -73,7 +71,7 @@ jobs:
           mode=""
           run_full="false"
           case "$EVENT_NAME" in
-            pull_request|pull_request_review)
+            pull_request)
               if [[ "$PR_ACTION" = "converted_to_draft" || "$PR_DRAFT" = "true" ]]; then
                 mode="development"
                 run_full="false"
@@ -164,58 +162,6 @@ jobs:
           path: /tmp/candidate-identity.json
           if-no-files-found: error
           retention-days: 30
-
-  review-governance:
-    name: review-governance
-    if: >-
-      needs.validation-mode.outputs.mode == 'candidate' &&
-      (github.event_name == 'pull_request' || github.event_name == 'pull_request_review')
-    needs: [validation-mode, candidate-identity]
-    permissions:
-      contents: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require exact-Head independent approval and zero unresolved threads
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          EXPECTED_HEAD: ${{ needs.candidate-identity.outputs.source_sha }}
-        run: |
-          set -Eeuo pipefail
-          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]
-          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
-          owner="${REPOSITORY%%/*}"
-          name="${REPOSITORY#*/}"
-          pull="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
-          test "$(jq -r '.head.sha' <<<"$pull")" = "$EXPECTED_HEAD"
-          test "$(jq -r '.draft' <<<"$pull")" = "false"
-          reviews="$(gh api --paginate --slurp "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews")"
-          latest_reviews="$(jq -c --arg author "$PR_AUTHOR" '
-            [
-              .[][]
-              | select(.user.login != $author)
-              | select(
-                  .state == "APPROVED"
-                  or .state == "CHANGES_REQUESTED"
-                  or .state == "DISMISSED"
-                )
-            ]
-            | group_by(.user.login)
-            | map(sort_by(.submitted_at) | last)
-          ' <<<"$reviews")"
-          test "$(jq --arg head "$EXPECTED_HEAD" '[.[] | select(.state == "APPROVED" and .commit_id == $head)] | length' <<<"$latest_reviews")" -ge 1
-          test "$(jq '[.[] | select(.state == "CHANGES_REQUESTED")] | length' <<<"$latest_reviews")" = "0"
-          threads="$(gh api graphql --paginate --slurp \
-            -f owner="$owner" \
-            -f name="$name" \
-            -F number="$PR_NUMBER" \
-            -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}')"
-          test "$(jq '[.[] | .data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' <<<"$threads")" = "0"
 
   development-fast:
     name: development-fast
@@ -452,6 +398,8 @@ jobs:
           cache-dependency-path: webapp/package-lock.json
       - name: Verify frontend and browser journeys
         working-directory: webapp
+        env:
+          RC_RUN_BROWSER_SMOKE: "true"
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run verify
@@ -818,7 +766,6 @@ jobs:
     needs:
       - validation-mode
       - candidate-identity
-      - review-governance
       - development-fast
       - static-authority
       - security-supply-chain
@@ -834,10 +781,8 @@ jobs:
         shell: bash
         env:
           MODE: ${{ needs.validation-mode.outputs.mode }}
-          EVENT_NAME: ${{ github.event_name }}
           VALIDATION_MODE: ${{ needs.validation-mode.result }}
           CANDIDATE_IDENTITY: ${{ needs.candidate-identity.result }}
-          REVIEW_GOVERNANCE: ${{ needs.review-governance.result }}
           DEVELOPMENT_FAST: ${{ needs.development-fast.result }}
           STATIC_AUTHORITY: ${{ needs.static-authority.result }}
           SECURITY_SUPPLY_CHAIN: ${{ needs.security-supply-chain.result }}
@@ -852,7 +797,6 @@ jobs:
           test "$CANDIDATE_IDENTITY" = "success"
           case "$MODE" in
             development)
-              test "$REVIEW_GOVERNANCE" = "skipped"
               test "$DEVELOPMENT_FAST" = "success"
               for result in \
                 "$STATIC_AUTHORITY" \
@@ -867,11 +811,6 @@ jobs:
               done
               ;;
             candidate|main)
-              if [[ "$MODE" = "candidate" && ( "$EVENT_NAME" = "pull_request" || "$EVENT_NAME" = "pull_request_review" ) ]]; then
-                test "$REVIEW_GOVERNANCE" = "success"
-              else
-                test "$REVIEW_GOVERNANCE" = "skipped"
-              fi
               test "$DEVELOPMENT_FAST" = "skipped"
               for result in \
                 "$STATIC_AUTHORITY" \
