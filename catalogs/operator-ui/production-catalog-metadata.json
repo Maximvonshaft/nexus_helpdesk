@@ -1,9 +1,22 @@
 {
-  "catalog_sha256": {
-    "cnr": "d262094bbecd905f9244fb820d0446b74eb7ec518a124ec08a2cc53f36ca4bad",
-    "de": "700d440f008d004c5cddf20374f69978903c239fbbc4b6375ba28cc499230772",
-    "en": "85943ef00431c26efe3ec3414b2cab924b993bd1d3ba07a6d2ccc420b51c5158"
+  "base_override_counts": {
+    "cnr": 655,
+    "de": 655,
+    "en": 655
   },
+  "base_override_sha256": "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c",
+  "catalog_sha256": {
+    "cnr": "0ca5572e5904990525d0a9d2c7509c246777c8b4a1ba5b22de2b53f28de56a23",
+    "de": "55b6c46041e8f2a26acb429a98e3da4e8ef61bc3fdd20cf80a093028995fe0d4",
+    "en": "48fc30387072fcab70d28d9361fbfdeb956ea71a9b6ad347e19c3fc677a4802b"
+  },
+  "combined_override_sha256": "3ae81a67e2d6578e22e648789f75d2477dcc49d3ea2b85391e7584ba816af8b9",
+  "critical_override_counts": {
+    "cnr": 37,
+    "de": 37,
+    "en": 37
+  },
+  "critical_override_sha256": "c8b0be606c4929f0ba772df03497cbd005b71b958eadfe55e256e3b349193e3e",
   "fallback_counts": {
     "cnr": 2,
     "de": 1,
@@ -32,11 +45,11 @@
     }
   },
   "override_counts": {
-    "cnr": 655,
-    "de": 655,
-    "en": 655
+    "cnr": 663,
+    "de": 663,
+    "en": 663
   },
-  "override_sha256": "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c",
+  "override_sha256": "3ae81a67e2d6578e22e648789f75d2477dcc49d3ea2b85391e7584ba816af8b9",
   "policy": "production_candidate_requires_human_semantic_review_and_exact_head_acceptance",
   "schema_version": 1,
   "unique_sources": 1907
