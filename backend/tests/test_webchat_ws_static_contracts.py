@@ -164,21 +164,19 @@ def test_webchat_static_assets_force_cache_revalidation():
         main,
     )
     assert "no-cache, max-age=0, must-revalidate" in main
-    assert "/webchat/widget.js?v=webchat-session-recovery-v2" in demo
+    assert "/webchat/widget.js?v=webchat-session-recovery-v3" in demo
     assert "nexus-widget-consolidated-20260706" not in demo
 
 
-def test_static_widget_recovers_stale_visitor_session_before_retrying_send():
+def test_static_widget_declares_one_recovery_coordinator_and_no_stale_rejection_path():
     text = (ROOT / "backend" / "app" / "static" / "webchat" / "widget.js").read_text(encoding="utf-8")
 
-    assert "function isLegacySessionAuthError(err)" in text
-    assert "err.status === 401 || err.status === 403 || err.status === 404" in text
-    assert "function clearLegacySession()" in text
-    assert "window.sessionStorage.removeItem(storageKey + ':legacy')" in text
-    assert "function recoverLegacySession(expectedSession)" in text
-    assert "function legacySessionSnapshot()" in text
-    assert "function isLegacySessionCurrent(snapshot)" in text
-    assert "if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);" in text
+    assert text.count("function recoverLegacySession(expectedSession)") == 1
+    assert text.count("function joinLegacySessionTransition()") == 1
+    assert "if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;" in text
+    assert "if (state.legacySessionPromise) return state.legacySessionPromise.then(confirmLegacySessionReady);" in text
+    assert "return joinLegacySessionTransition();" in text
+    assert "if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);" not in text
     assert "return recoverLegacySession(submittedSession).then(function (recovered)" in text
     assert "body: JSON.stringify({ body: body, client_message_id: cmid })" in text
 
@@ -191,6 +189,8 @@ def test_static_widget_ignores_stale_websocket_and_poll_callbacks():
     assert "state.legacyWs.readyState === WebSocket.CONNECTING" in text
     assert "return state.legacyWs === socket && isLegacySessionCurrent(session);" in text
     assert "if (!isLegacySessionCurrent(session)) return;" in text
+    assert "var headers = { 'X-Webchat-Visitor-Token': session.visitorToken };" in text
+    assert "var headers = { 'X-Webchat-Visitor-Token': state.legacyVisitorToken };" not in text
 
 
 def test_webchat_ws_observability_and_connection_limits_contract():
