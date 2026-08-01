@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..models_user_ui_preferences import SUPPORTED_UI_LOCALES, UserUIPreference
 from ..utils.time import utc_now
+from .audit_service import log_admin_audit
 
 DEFAULT_UI_LOCALE = "zh-CN"
 
@@ -53,6 +54,7 @@ def set_user_ui_locale(
 ) -> tuple[str, str]:
     normalized = normalize_ui_locale(ui_locale)
     row = db.get(UserUIPreference, int(user_id))
+    was_configured = row is not None
     previous = row.ui_locale if row is not None else DEFAULT_UI_LOCALE
     now = utc_now()
     if row is None:
@@ -67,4 +69,17 @@ def set_user_ui_locale(
         row.ui_locale = normalized
         row.updated_at = now
     db.flush()
+
+    if not was_configured and previous == normalized:
+        log_admin_audit(
+            db,
+            actor_id=int(user_id),
+            action="auth.ui_locale_changed",
+            target_type="user_ui_preference",
+            target_id=int(user_id),
+            old_value={"ui_locale": previous, "configured": False},
+            new_value={"ui_locale": normalized, "configured": True},
+        )
+        db.flush()
+
     return previous, normalized
