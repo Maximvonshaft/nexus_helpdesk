@@ -92,7 +92,7 @@ export function AccountPage() {
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Typography component="h1" variant="h1">账户设置</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        管理当前账号的界面语言、密码、两步验证和登录设备。
+        管理当前账号的密码、两步验证和登录设备。
       </Typography>
 
       {session.data.must_change_password ? (
