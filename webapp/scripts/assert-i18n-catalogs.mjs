@@ -4,8 +4,8 @@ import { resolve } from 'node:path'
 const root = process.cwd()
 const inventoryPath = resolve(root, 'frontend_dist/i18n-inventory.json')
 const catalogPaths = {
-  en: resolve(root, 'src/i18n/catalogs/en.json'),
-  de: resolve(root, 'src/i18n/catalogs/de.json'),
+  en: resolve(root, 'public/i18n/en.json'),
+  de: resolve(root, 'public/i18n/de.json'),
 }
 const cjk = /[\u3400-\u9fff]/u
 const markerResidue = /[⟦⟧［］]|NXS\d+|ZX(?:PH|TERM)\d+ZX/iu
