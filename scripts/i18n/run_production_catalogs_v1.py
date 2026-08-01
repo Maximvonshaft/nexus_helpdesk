@@ -6,7 +6,7 @@ from pathlib import Path
 
 import build_production_catalogs_v1 as builder
 
-PLAIN_OVERRIDES_SHA256 = "20c415159edb8ddf9a9d15edf6ed6cf91294b062506602875f4108f39b77a209"
+PLAIN_OVERRIDES_SHA256 = "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c"
 EXPECTED_COUNTS = {"en": 578, "de": 578, "cnr": 578}
 
 
