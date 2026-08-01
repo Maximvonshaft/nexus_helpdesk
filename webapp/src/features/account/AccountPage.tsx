@@ -25,6 +25,7 @@ import {
   OperatorLoadingState,
 } from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
+import { AccountLanguagePanel } from '@/i18n/AccountLanguagePanel'
 import { formatDateTime } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { MfaAccountPanel } from './MfaAccountPanel'
@@ -91,7 +92,7 @@ export function AccountPage() {
     <Box component="main" sx={{ p: { xs: 1.5, md: 2.5 } }}>
       <Typography component="h1" variant="h1">账户设置</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-        管理当前账号的密码、两步验证和登录设备。
+        管理当前账号的界面语言、密码、两步验证和登录设备。
       </Typography>
 
       {session.data.must_change_password ? (
@@ -100,7 +101,9 @@ export function AccountPage() {
         </Alert>
       ) : null}
 
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(280px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2.5 }}>
+      <AccountLanguagePanel />
+
+      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'minmax(280px, 0.8fr) minmax(0, 1.2fr)' }, mt: 2 }}>
         <Paper component="section" variant="outlined" aria-labelledby="account-identity-title" sx={{ p: 2, alignSelf: 'start' }}>
           <Typography id="account-identity-title" component="h2" variant="h3">当前账号</Typography>
           <Divider sx={{ my: 2 }} />
