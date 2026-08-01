@@ -8,8 +8,7 @@ on:
       - webapp/**
       - scripts/i18n/build_production_catalogs_v1.py
       - scripts/i18n/run_production_catalogs_v1.py
-      - scripts/i18n/operator_catalog_overrides_v1.json.gz.b64
-      - scripts/i18n/critical_operator_catalog_overrides_v1.json
+      - scripts/i18n/operator_catalog_overrides_v1.json
       - .github/workflows/i18n-production-catalogs.yml
 
 permissions:
@@ -62,7 +61,7 @@ jobs:
           set -Eeuo pipefail
           python scripts/i18n/run_production_catalogs_v1.py \
             --inventory frontend_dist/i18n-inventory.json \
-            --overrides scripts/i18n/operator_catalog_overrides_v1.json.gz.b64 \
+            --overrides scripts/i18n/operator_catalog_overrides_v1.json \
             --output /tmp/nexus-i18n-production \
             --batch-size 48
 
@@ -79,8 +78,11 @@ jobs:
           assert metadata['inventory_messages'] == 2569, metadata
           assert metadata['unique_sources'] == 1907, metadata
           assert set(metadata['models']) == {'en', 'de', 'cnr'}, metadata
-          assert metadata['critical_override_counts'] == {'en': 25, 'de': 25, 'cnr': 25}, metadata
+          assert metadata['override_counts'] == {'en': 578, 'de': 578, 'cnr': 578}, metadata
           for locale in ('en', 'de', 'cnr'):
+              model = metadata['models'][locale]
+              assert model['resolved_revision'], model
+              assert model['license'] in {'cc-by-4.0', 'apache-2.0'}, model
               path = root / f'catalog-{locale}.review.json'
               catalog = json.loads(path.read_text(encoding='utf-8'))
               assert len(catalog) == 2569, (locale, len(catalog))
