@@ -1,4 +1,4 @@
-import { UI_LOCALE_STORAGE_KEY } from './localeAuthority'
+import { setRecoveryUiLocale } from './localeAuthority'
 import type { UiLocale } from './localeAuthority'
 
 const copy: Record<Exclude<UiLocale, 'zh-CN'>, {
@@ -61,6 +61,7 @@ export function renderCatalogLoadFailure(locale: Exclude<UiLocale, 'zh-CN'>) {
   panel.style.boxShadow = '0 8px 24px rgba(16, 24, 40, 0.08)'
 
   const heading = document.createElement('h1')
+  heading.tabIndex = -1
   heading.textContent = content.title
   heading.style.margin = '0'
   heading.style.font = '700 24px/1.3 system-ui, sans-serif'
@@ -77,11 +78,7 @@ export function renderCatalogLoadFailure(locale: Exclude<UiLocale, 'zh-CN'>) {
   actions.append(
     button(content.retry, true, () => window.location.reload()),
     button(content.chinese, false, () => {
-      try {
-        window.localStorage.setItem(UI_LOCALE_STORAGE_KEY, 'zh-CN')
-      } catch {
-        // A full navigation still gives the Chinese source catalog a safe path.
-      }
+      setRecoveryUiLocale('zh-CN')
       window.location.reload()
     }),
   )
