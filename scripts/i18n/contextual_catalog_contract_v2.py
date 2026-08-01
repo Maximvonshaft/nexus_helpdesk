@@ -15,14 +15,14 @@ LOCALES = ("en", "de", "cnr")
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 CYRILLIC_RE = re.compile(r"[\u0400-\u052f]")
-MOJIBAKE_RE = re.compile(r"[\uFFFDèÈæÆœŒ]|b›|Пров›")
+MOJIBAKE_RE = re.compile(r"[\uFFFD\u00e8\u00c8\u00e6\u00c6\u0153\u0152]|b\u203a|\u041f\u0440\u043e\u0432\u203a")
 CNR_EKAVIAN_RE = re.compile(
-    r"(?i)\b(?:slede|posled|vreme|zahtev|uspe|neuspe|rešen|rešenj|ovde|gde|"
-    r"obavešten|bezbed|promen|reči?|veštač|sedišt)"
+    r"(?i)\b(?:slede|posled|vreme|zahtev|uspe|neuspe|re\u0161en|re\u0161enj|ovde|gde|"
+    r"obave\u0161ten|bezbed|promen|re\u010di?|ve\u0161ta\u010d|sedi\u0161t)"
 )
 PLACEHOLDER_RE = re.compile(r"\{\{\d+\}\}|%(?:\d+\$)?[sdif]|\{[A-Za-z_][A-Za-z0-9_]*\}")
 REPEATED_GARBAGE_RE = re.compile(r"([A-Za-z])\1{12,}")
-MARKER_RE = re.compile(r"(?:ZXPH\d+ZX|NXS\d+|[⟦⟧［］])", re.IGNORECASE)
+MARKER_RE = re.compile(r"(?:ZXPH\d+ZX|NXS\d+|[\u27e6\u27e7\uff3b\uff3d])", re.IGNORECASE)
 MODEL_WRAPPER_RE = re.compile(
     r"(?i)^(?:here(?:'s| is)\b|the translation\b|english\s+translation\b|"
     r"german\s+translation\b|montenegrin\s+translation\b|crnogorski\s+translation\b)"
@@ -37,13 +37,13 @@ FORBIDDEN_PATTERNS = {
         r"^organisation$|^_"
     ),
     "de": re.compile(
-        r"(?ix)\bbonobo\b|\bevolution\b|temporärer\s+ordner|ordner\s+synchronisieren|"
+        r"(?ix)\bbonobo\b|\bevolution\b|tempor\u00e4rer\s+ordner|ordner\s+synchronisieren|"
         r"sonstiger\s+veranstalter|mail-komponente|\bchile\b|"
-        r"nachricht\s+kann\s+nicht\s+geöffnet|keine\s+zeit\.?$|^organisation$|^_"
+        r"nachricht\s+kann\s+nicht\s+ge\u00f6ffnet|keine\s+zeit\.?$|^organisation$|^_"
     ),
     "cnr": re.compile(
         r"(?ix)\bbonobo\b|prenesem\s+kalendar|kopiraj\s+kontakte|cms\s+poruku|"
-        r"snimi\s+kao|^_postavke|^_snimi|broj\s+ra[èč]una|tehni[èč]ka|\bklijent|^_"
+        r"snimi\s+kao|^_postavke|^_snimi|broj\s+ra[\u00e8\u010d]una|tehni[\u00e8\u010d]ka|\bklijent|^_"
     ),
 }
 
@@ -51,45 +51,45 @@ LOCALE_SPECS = {
     "en": {
         "name": "English",
         "requirements": (
-            "Use concise, natural enterprise-software English. Use Account for 账号, never account number; "
-            "Ticket for 工单, Waybill for 运单, Customer for 客户, User for 用户, Email for 邮件, "
-            "Team for 团队, Queue for 队列, Permission for 权限 and Sign in for 登录."
+            "Use concise, natural enterprise-software English. Use Account for \u8d26\u53f7, never account number; "
+            "Ticket for \u5de5\u5355, Waybill for \u8fd0\u5355, Customer for \u5ba2\u6237, User for \u7528\u6237, Email for \u90ae\u4ef6, "
+            "Team for \u56e2\u961f, Queue for \u961f\u5217, Permission for \u6743\u9650 and Sign in for \u767b\u5f55."
         ),
     },
     "de": {
         "name": "German",
         "requirements": (
-            "Use concise, professional German for enterprise software. Use Konto for 账号, never Benutzer; "
-            "Ticket for 工单, Frachtbrief for 运单, Kunde/Kunden- for 客户, Benutzer for 用户, "
-            "E-Mail for 邮件, Team for 团队, Warteschlange for 队列, Berechtigung for 权限 and anmelden for 登录."
+            "Use concise, professional German for enterprise software. Use Konto for \u8d26\u53f7, never Benutzer; "
+            "Ticket for \u5de5\u5355, Frachtbrief for \u8fd0\u5355, Kunde/Kunden- for \u5ba2\u6237, Benutzer for \u7528\u6237, "
+            "E-Mail for \u90ae\u4ef6, Team for \u56e2\u961f, Warteschlange for \u961f\u5217, Berechtigung for \u6743\u9650 and anmelden for \u767b\u5f55."
         ),
     },
     "cnr": {
         "name": "Montenegrin (Crnogorski)",
         "requirements": (
             "Use standard contemporary Montenegrin in Latin script only, with Ijekavian forms. Never use Cyrillic, "
-            "mojibake, klijent, or Serbian Ekavian forms such as zahtev, vreme, sledeći, poslednji, uspešan, "
-            "neuspešan, rešenje, bezbedan or obavešten. Use nalog for 账号, tiket for 工单, "
-            "tovarni list with natural Montenegrin case inflection for 运单, korisnik for both 客户 and 用户 "
-            "according to the product authority, e-pošta for 邮件, tim for 团队, red for 队列, "
-            "dozvola/dozvole for 权限, revizor for 审计员 and prijava/prijaviti se for 登录. "
-            "Prefer zahtjev, sljedeći, posljednji, vrijeme, uspjelo, neuspjelo, rješenje, bezbjedan and obaviješten."
+            "mojibake, klijent, or Serbian Ekavian forms such as zahtev, vreme, slede\u0107i, poslednji, uspe\u0161an, "
+            "neuspe\u0161an, re\u0161enje, bezbedan or obave\u0161ten. Use nalog for \u8d26\u53f7, tiket for \u5de5\u5355, "
+            "tovarni list with natural Montenegrin case inflection for \u8fd0\u5355, korisnik for both \u5ba2\u6237 and \u7528\u6237 "
+            "according to the product authority, e-po\u0161ta for \u90ae\u4ef6, tim for \u56e2\u961f, red for \u961f\u5217, "
+            "dozvola/dozvole for \u6743\u9650, revizor for \u5ba1\u8ba1\u5458 and prijava/prijaviti se for \u767b\u5f55. "
+            "Prefer zahtjev, sljede\u0107i, posljednji, vrijeme, uspjelo, neuspjelo, rje\u0161enje, bezbjedan and obavije\u0161ten."
         ),
     },
 }
 
 TERM_RULES = {
-    "账号": {
+    "\u8d26\u53f7": {
         "en": (re.compile(r"(?i)\baccount\b"), re.compile(r"(?i)\baccount\s+number\b")),
         "de": (re.compile(r"(?i)konto"), re.compile(r"(?i)kontonummer")),
-        "cnr": (re.compile(r"(?i)\bnalog"), re.compile(r"(?i)\bbroj\s+računa\b")),
+        "cnr": (re.compile(r"(?i)\bnalog"), re.compile(r"(?i)\bbroj\s+ra\u010duna\b")),
     },
-    "工单": {
+    "\u5de5\u5355": {
         "en": (re.compile(r"(?i)\bticket\b"), None),
         "de": (re.compile(r"(?i)\bticket"), None),
         "cnr": (re.compile(r"(?i)\btiket"), None),
     },
-    "运单": {
+    "\u8fd0\u5355": {
         "en": (re.compile(r"(?i)\bwaybill\b"), None),
         "de": (re.compile(r"(?i)frachtbrief"), None),
         "cnr": (re.compile(
@@ -97,47 +97,47 @@ TERM_RULES = {
             r"\btovarni\s+listovi\b|\btovarnih\s+listova\b|\btovarnim\s+listovima\b)"
         ), None),
     },
-    "客户": {
+    "\u5ba2\u6237": {
         "en": (re.compile(r"(?i)\bcustomer\b"), None),
         "de": (re.compile(r"(?i)\bkund"), None),
         "cnr": (re.compile(r"(?i)\bkorisnik"), None),
     },
-    "用户": {
+    "\u7528\u6237": {
         "en": (re.compile(r"(?i)\buser\b"), None),
         "de": (re.compile(r"(?i)benutzer"), None),
         "cnr": (re.compile(r"(?i)\bkorisnik"), None),
     },
-    "邮件": {
+    "\u90ae\u4ef6": {
         "en": (re.compile(r"(?i)\bemail\b"), None),
         "de": (re.compile(r"(?i)e-?mail"), None),
-        "cnr": (re.compile(r"(?i)\be-pošt"), None),
+        "cnr": (re.compile(r"(?i)\be-po\u0161t"), None),
     },
-    "权限": {
+    "\u6743\u9650": {
         "en": (re.compile(r"(?i)\bpermission"), None),
         "de": (re.compile(r"(?i)berechtigung"), None),
         "cnr": (re.compile(r"(?i)\bdozvol"), None),
     },
-    "团队": {
+    "\u56e2\u961f": {
         "en": (re.compile(r"(?i)\bteam\b"), None),
         "de": (re.compile(r"(?i)team"), None),
         "cnr": (re.compile(r"(?i)\btim"), None),
     },
-    "队列": {
+    "\u961f\u5217": {
         "en": (re.compile(r"(?i)\bqueue\b"), None),
         "de": (re.compile(r"(?i)warteschlange"), None),
         "cnr": (re.compile(r"(?i)\bred"), None),
     },
-    "登录": {
+    "\u767b\u5f55": {
         "en": (re.compile(r"(?i)\bsign(?:ed|ing)?(?:-|\s+)in\b"), None),
         "de": (re.compile(r"(?i)(?:\b(?:anmeld|angemeld)|\bmeld(?:en|e|et|est)?\b.{0,80}\ban\b)"), None),
         "cnr": (re.compile(r"(?i)\bprijav"), None),
     },
-    "退出登录": {
+    "\u9000\u51fa\u767b\u5f55": {
         "en": (re.compile(r"(?i)\bsign\s+out\b"), None),
         "de": (re.compile(r"(?i)\babmeld"), None),
         "cnr": (re.compile(r"(?i)\bodjav"), None),
     },
-    "审计员": {
+    "\u5ba1\u8ba1\u5458": {
         "en": (re.compile(r"(?i)\bauditor\b"), None),
         "de": (re.compile(r"(?i)\bauditor\b"), None),
         "cnr": (re.compile(r"(?i)\brevizor"), None),
@@ -177,7 +177,7 @@ def normalize(value: str) -> str:
 
 
 def source_core(value: str) -> str:
-    value = re.sub(r"正在|已|中|当前|暂无|尚无|请|。|，|：|…|\s+", "", value)
+    value = re.sub(r"\u6b63\u5728|\u5df2|\u4e2d|\u5f53\u524d|\u6682\u65e0|\u5c1a\u65e0|\u8bf7|\u3002|\uff0c|\uff1a|\u2026|\s+", "", value)
     return value
 
 
@@ -186,7 +186,7 @@ def semantic_reasons(locale: str, source: str, translated: str) -> list[str]:
     for marker, rules in TERM_RULES.items():
         if marker not in source:
             continue
-        if marker == "登录" and "退出登录" in source:
+        if marker == "\u767b\u5f55" and "\u9000\u51fa\u767b\u5f55" in source:
             continue
         required, forbidden = rules[locale]
         if not required.search(translated):
@@ -239,7 +239,7 @@ def load_inventory(path: Path) -> tuple[bytes, dict, list[dict], list[str]]:
         raise RuntimeError("inventory_invalid")
     keys = [str(message["key"]) for message in messages]
     if len(keys) != len(set(keys)):
-        raise RuntimeError&�inventory_duplicate_keys")
+        raise RuntimeError("inventory_duplicate_keys")
     sources = sorted({str(message["source"]) for message in messages}, key=lambda item: (len(item), item))
     return raw, value, messages, sources
 

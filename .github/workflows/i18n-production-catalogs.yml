@@ -36,6 +36,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Compile contextual catalog tooling
+        run: |
+          set -Eeuo pipefail
+          python -m py_compile \
+            scripts/i18n/build_contextual_catalogs_v2.py \
+            scripts/i18n/contextual_catalog_contract_v2.py \
+            scripts/i18n/contextual_catalog_generation_v2.py \
+            scripts/i18n/contextual_catalog_prepare_v2.py \
+            scripts/i18n/contextual_catalog_finalize_v2.py
+
       - name: Checkout exact product inventory candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
