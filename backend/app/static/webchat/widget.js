@@ -54,6 +54,7 @@
     legacyWsReconnectTimer: null,
     legacySessionPromise: null,
     legacyRecoveryPromise: null,
+    legacySessionGeneration: 0,
     receiveFailureCount: 0,
     lastReceiveSuccessAt: null,
     voiceOpen: false,
@@ -696,7 +697,27 @@
     return Boolean(err && (err.status === 401 || err.status === 403 || err.status === 404));
   }
 
+  function legacySessionSnapshot() {
+    return {
+      conversationId: state.legacyConversationId,
+      visitorToken: state.legacyVisitorToken,
+      generation: state.legacySessionGeneration
+    };
+  }
+
+  function isLegacySessionCurrent(snapshot) {
+    return Boolean(
+      snapshot
+      && state.legacySessionGeneration === snapshot.generation
+      && state.legacyConversationId === snapshot.conversationId
+      && state.legacyVisitorToken === snapshot.visitorToken
+    );
+  }
+
   function clearLegacySession() {
+    state.legacySessionGeneration += 1;
+    if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
+    state.legacyPollTimer = null;
     if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
     state.legacyWsReconnectTimer = null;
     try {
@@ -737,13 +758,15 @@
     return state.legacySessionPromise;
   }
 
-  function recoverLegacySession() {
+  function recoverLegacySession(expectedSession) {
+    if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);
     if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
     clearLegacySession();
     markReceiveDegraded('Reconnecting to support…');
     state.legacyRecoveryPromise = createLegacySession().then(function () {
       if (!state.legacyConversationId || !state.legacyVisitorToken) throw new Error('webchat_session_recovery_failed');
       markReceiveHealthy();
+      return true;
     }).finally(function () {
       state.legacyRecoveryPromise = null;
     });
@@ -795,21 +818,24 @@
 
   function pollLegacy(reset) {
     if (!state.legacyConversationId || !state.legacyVisitorToken) return Promise.resolve();
+    var session = legacySessionSnapshot();
     var qs = '?limit=50';
     if (state.legacyLastMessageId) qs += '&after_id=' + encodeURIComponent(state.legacyLastMessageId);
     var headers = { 'X-Webchat-Visitor-Token': state.legacyVisitorToken };
     if (!(state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN)) headers['X-Webchat-WS-Fallback'] = 'true';
-    return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages' + qs, {
+    return api('/api/webchat/conversations/' + encodeURIComponent(session.conversationId) + '/messages' + qs, {
       headers: headers
     }, Number(script.getAttribute('data-timeout-ms') || 90000)).then(function (data) {
+      if (!isLegacySessionCurrent(session)) return;
       (data.messages || []).forEach(renderServerMessage);
       syncAiTyping(data.ai_status, data.ai_pending, data.ai_status_elapsed_ms);
       markReceiveHealthy();
     }).catch(function (err) {
+      if (!isLegacySessionCurrent(session)) return;
       if (isLegacySessionAuthError(err)) {
         markReceiveDegraded('Session expired. Reconnecting…');
-        return recoverLegacySession().then(function () {
-          scheduleLegacyPoll();
+        return recoverLegacySession(session).then(function (recovered) {
+          if (recovered) scheduleLegacyPoll();
         });
       }
       markReceiveDegraded('Connection interrupted. Retrying…');
@@ -827,24 +853,34 @@
   function startLegacyWs() {
     if (script.getAttribute('data-websocket') === 'false') return;
     if (!window.WebSocket || !state.legacyConversationId || !state.legacyVisitorToken) return;
-    if (state.legacyWs && state.legacyWs.readyState === WebSocket.OPEN) return;
+    if (state.legacyWs && (state.legacyWs.readyState === WebSocket.OPEN || state.legacyWs.readyState === WebSocket.CONNECTING)) return;
     if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
     try {
       if (state.legacyWs && state.legacyWs.readyState < WebSocket.CLOSING) state.legacyWs.close(1000, 'reconnect');
     } catch (err) {}
     try {
-      state.legacyWs = new WebSocket(wsUrl());
-      state.legacyWs.onopen = function () {
-        state.legacyWs.send(JSON.stringify({
+      var session = legacySessionSnapshot();
+      var socket = new WebSocket(wsUrl());
+      state.legacyWs = socket;
+      function isCurrentTransport() {
+        return state.legacyWs === socket && isLegacySessionCurrent(session);
+      }
+      socket.onopen = function () {
+        if (!isCurrentTransport()) {
+          try { socket.close(1000, 'stale_session'); } catch (err) {}
+          return;
+        }
+        socket.send(JSON.stringify({
           type: 'connection.hello',
           client_type: 'visitor',
-          conversation_id: state.legacyConversationId,
-          visitor_token: state.legacyVisitorToken,
+          conversation_id: session.conversationId,
+          visitor_token: session.visitorToken,
           last_event_id: state.legacyLastEventId
         }));
         markReceiveHealthy();
       };
-      state.legacyWs.onmessage = function (event) {
+      socket.onmessage = function (event) {
+        if (!isCurrentTransport()) return;
         var data = {};
         try { data = JSON.parse(String(event.data || '{}')); } catch (err) { return; }
         if (data.type === 'connection.ready' || data.type === 'subscription.ready' || data.type === 'pong') {
@@ -853,8 +889,8 @@
         }
         if (data.type === 'error') {
           markReceiveDegraded('Realtime connection interrupted. Reconnecting…');
-          if (data.code === 'request_failed' && data.retryable !== true) recoverLegacySession().catch(function () {});
-          try { state.legacyWs.close(1000, 'server_error'); } catch (err) {}
+          if (data.code === 'request_failed' && data.retryable !== true) recoverLegacySession(session).catch(function () {});
+          try { socket.close(1000, 'server_error'); } catch (err) {}
           return;
         }
         if (typeof data.event_id === 'number') {
@@ -869,13 +905,16 @@
           syncAiTyping(String(data.type || '').slice('ai_turn.'.length));
         }
       };
-      state.legacyWs.onclose = function () {
+      socket.onclose = function () {
+        if (!isCurrentTransport()) return;
+        state.legacyWs = null;
         if (!state.open) return;
         markReceiveDegraded('Realtime connection lost. Using fallback and reconnecting…');
         state.legacyWsReconnectTimer = setTimeout(startLegacyWs, 4000);
         scheduleLegacyPoll();
       };
-      state.legacyWs.onerror = function () {
+      socket.onerror = function () {
+        if (!isCurrentTransport()) return;
         markReceiveDegraded('Realtime connection interrupted. Retrying…');
       };
     } catch (err) {
@@ -893,17 +932,22 @@
     inputEl.value = '';
     setStatus('Sending message…');
     showTyping();
+    var submittedSession = null;
     function submit() {
-      return api('/api/webchat/conversations/' + encodeURIComponent(state.legacyConversationId) + '/messages', {
+      submittedSession = legacySessionSnapshot();
+      return api('/api/webchat/conversations/' + encodeURIComponent(submittedSession.conversationId) + '/messages', {
         method: 'POST',
-        headers: { 'X-Webchat-Visitor-Token': state.legacyVisitorToken },
+        headers: { 'X-Webchat-Visitor-Token': submittedSession.visitorToken },
         body: JSON.stringify({ body: body, client_message_id: cmid })
       }, 12000);
     }
     ensureLegacySession().then(function () {
       return submit().catch(function (err) {
         if (!isLegacySessionAuthError(err)) throw err;
-        return recoverLegacySession().then(submit);
+        return recoverLegacySession(submittedSession).then(function (recovered) {
+          if (!recovered) throw err;
+          return submit();
+        });
       });
     }).then(function (data) {
       updateMessage(bubble, body, 'visitor');
