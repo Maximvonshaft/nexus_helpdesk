@@ -14,16 +14,17 @@ async function setAnonymousLocale(page: Page, locale: 'en' | 'de') {
 
 async function mockAuthenticatedLocale(
   page: Page,
-  initialLocale: 'zh-CN' | 'en' | 'de',
+  initialServerLocale: 'zh-CN' | 'en' | 'de',
   configured = true,
+  deviceLocale: 'zh-CN' | 'en' | 'de' = initialServerLocale,
 ) {
-  let serverLocale: 'zh-CN' | 'en' | 'de' = initialLocale
+  let serverLocale: 'zh-CN' | 'en' | 'de' = initialServerLocale
   let serverConfigured = configured
   let preferenceUpdates = 0
   await page.addInitScript(([tokenKey, localeKey, locale]) => {
     sessionStorage.setItem(tokenKey, 'i18n-production-token')
     localStorage.setItem(localeKey, locale)
-  }, [TOKEN_KEY, LOCALE_KEY, initialLocale])
+  }, [TOKEN_KEY, LOCALE_KEY, deviceLocale])
 
   await page.route('**/api/**', async (route: Route) => {
     const url = new URL(route.request().url())
@@ -95,7 +96,7 @@ test('German entry copy is complete and does not overflow a narrow viewport', as
 })
 
 test('an unconfigured account adopts the current device locale exactly once', async ({ page }) => {
-  const state = await mockAuthenticatedLocale(page, 'en', false)
+  const state = await mockAuthenticatedLocale(page, 'zh-CN', false, 'en')
   await page.goto('/account')
 
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
