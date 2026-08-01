@@ -7,7 +7,7 @@ from pathlib import Path
 import build_production_catalogs_v1 as builder
 
 PLAIN_OVERRIDES_SHA256 = "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c"
-EXPECTED_COUNTS = {"en": 578, "de": 578, "cnr": 578}
+EXPECTED_COUNTS = {"en": 655, "de": 655, "cnr": 655}
 
 
 def load_plain_overrides(path: Path) -> dict[str, dict[str, str]]:
