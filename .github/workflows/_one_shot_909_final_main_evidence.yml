@@ -1,0 +1,104 @@
+name: one-shot-909-final-main-evidence
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    if: github.head_ref == 'audit/909-final-main-evidence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      TARGET_SHA: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
+      OUTPUT_DIR: artifacts/final-main-evidence
+    steps:
+      - name: Require frozen exact main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(gh api "repos/${REPOSITORY}/commits/main" --jq '.sha')" = "$TARGET_SHA"
+
+      - name: Wait for exact-main Canonical Acceptance
+        id: canonical
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$OUTPUT_DIR"
+          for _ in $(seq 1 240); do
+            test "$(gh api "repos/${REPOSITORY}/commits/main" --jq '.sha')" = "$TARGET_SHA"
+            row="$(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "Canonical Acceptance" and .head_sha == env.TARGET_SHA and .head_branch == "main" and .event == "push")][0] | if . == null then "" else [.id, .status, (.conclusion // "")] | @tsv end')"
+            if [[ -n "$row" ]]; then
+              IFS=$'\t' read -r run_id status conclusion <<< "$row"
+              if [[ "$status" == "completed" ]]; then
+                test "$conclusion" = "success"
+                echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test -n "${run_id:-}"
+
+      - name: Wait for exact-main Controlled Candidate
+        id: controlled
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          canonical_id='${{ steps.canonical.outputs.run_id }}'
+          [[ "$canonical_id" =~ ^[0-9]+$ ]]
+          for _ in $(seq 1 540); do
+            test "$(gh api "repos/${REPOSITORY}/commits/main" --jq '.sha')" = "$TARGET_SHA"
+            row="$(gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=workflow_run&per_page=100" \
+              --jq '[.workflow_runs[] | select(.name == "controlled-candidate-convergence" and .head_sha == env.TARGET_SHA and .head_branch == "main" and .event == "workflow_run")][0] | if . == null then "" else [.id, .status, (.conclusion // "")] | @tsv end')"
+            if [[ -n "$row" ]]; then
+              IFS=$'\t' read -r run_id status conclusion <<< "$row"
+              if [[ "$status" == "completed" ]]; then
+                test "$conclusion" = "success"
+                echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test -n "${run_id:-}"
+
+      - name: Record bounded final evidence
+        shell: bash
+        env:
+          CANONICAL_RUN_ID: ${{ steps.canonical.outputs.run_id }}
+          CONTROLLED_RUN_ID: ${{ steps.controlled.outputs.run_id }}
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          out = Path(os.environ['OUTPUT_DIR'])
+          out.mkdir(parents=True, exist_ok=True)
+          payload = {
+              'schema': 'nexus.final-main-evidence.v1',
+              'status': 'pass',
+              'source_sha': os.environ['TARGET_SHA'],
+              'canonical_run_id': int(os.environ['CANONICAL_RUN_ID']),
+              'controlled_candidate_run_id': int(os.environ['CONTROLLED_RUN_ID']),
+          }
+          (out / 'summary.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+          test -s "$OUTPUT_DIR/summary.json"
+
+      - name: Upload final evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: final-main-evidence-55ee9165
+          path: artifacts/final-main-evidence
+          retention-days: 7
+          if-no-files-found: error
