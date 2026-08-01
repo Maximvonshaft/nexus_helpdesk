@@ -43,7 +43,10 @@ function LoginPage() {
   useEffect(() => { document.title = '登录 · Nexus OSR' }, [])
 
   const finishAuthentication = (user: AuthUser) => {
-    if (synchronizeAuthenticatedUiLocale(user.ui_locale)) {
+    if (
+      user.ui_locale_configured !== false
+      && synchronizeAuthenticatedUiLocale(user.ui_locale)
+    ) {
       window.location.replace('/')
       return
     }
