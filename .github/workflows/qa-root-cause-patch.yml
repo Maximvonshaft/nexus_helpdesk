@@ -1,0 +1,434 @@
+name: qa-root-cause-patch
+
+on:
+  push:
+    branches:
+      - fix/qa-root-cause-webchat-convergence-20260801
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Apply root-cause remediation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          widget_path = "backend/app/static/webchat/widget.js"
+          old_widget = r'''  function clearLegacySession() {
+            state.legacySessionGeneration += 1;
+            if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
+            state.legacyPollTimer = null;
+            if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
+            state.legacyWsReconnectTimer = null;
+            try {
+              if (state.legacyWs && state.legacyWs.readyState < WebSocket.CLOSING) state.legacyWs.close(1000, 'session_reset');
+            } catch (err) {}
+            state.legacyWs = null;
+            state.legacyConversationId = null;
+            state.legacyVisitorToken = null;
+            state.legacyLastMessageId = 0;
+            state.legacyLastEventId = 0;
+            try { window.sessionStorage.removeItem(storageKey + ':legacy'); } catch (err) {}
+          }
+
+          function createLegacySession() {
+            if (state.legacySessionPromise) return state.legacySessionPromise;
+            setStatus('Connecting to support…', 'degraded');
+            state.legacySessionPromise = api('/api/webchat/init', {
+              method: 'POST',
+              body: JSON.stringify({
+                tenant_key: tenantKey,
+                channel_key: channelKey,
+                conversation_id: null,
+                origin: window.location.origin,
+                page_url: window.location.href
+              })
+            }, 12000).then(function (data) {
+              state.legacyConversationId = data.conversation_id;
+              state.legacyVisitorToken = data.visitor_token;
+              persistLegacySession();
+              markReceiveHealthy();
+              startLegacyWs();
+            }).catch(function (err) {
+              markReceiveDegraded('Unable to connect to support. Retrying…');
+              throw err;
+            }).finally(function () {
+              state.legacySessionPromise = null;
+            });
+            return state.legacySessionPromise;
+          }
+
+          function recoverLegacySession(expectedSession) {
+            if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);
+            if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
+            clearLegacySession();
+            markReceiveDegraded('Reconnecting to support…');
+            state.legacyRecoveryPromise = createLegacySession().then(function () {
+              if (!state.legacyConversationId || !state.legacyVisitorToken) throw new Error('webchat_session_recovery_failed');
+              markReceiveHealthy();
+              return true;
+            }).finally(function () {
+              state.legacyRecoveryPromise = null;
+            });
+            return state.legacyRecoveryPromise;
+          }
+'''
+          new_widget = r'''  function stopLegacyTransports(closeReason) {
+            state.legacySessionGeneration += 1;
+            if (state.legacyPollTimer) clearTimeout(state.legacyPollTimer);
+            state.legacyPollTimer = null;
+            if (state.legacyWsReconnectTimer) clearTimeout(state.legacyWsReconnectTimer);
+            state.legacyWsReconnectTimer = null;
+            try {
+              if (state.legacyWs && state.legacyWs.readyState < WebSocket.CLOSING) {
+                state.legacyWs.close(1000, closeReason || 'session_reset');
+              }
+            } catch (err) {}
+            state.legacyWs = null;
+          }
+
+          function clearLegacySession() {
+            stopLegacyTransports('session_reset');
+            state.legacyConversationId = null;
+            state.legacyVisitorToken = null;
+            state.legacyLastMessageId = 0;
+            state.legacyLastEventId = 0;
+            try { window.sessionStorage.removeItem(storageKey + ':legacy'); } catch (err) {}
+          }
+
+          function hasLegacySession() {
+            return Boolean(state.legacyConversationId && state.legacyVisitorToken);
+          }
+
+          function createLegacySession(resumeSession) {
+            if (state.legacySessionPromise) return state.legacySessionPromise;
+            var resumable = Boolean(resumeSession && resumeSession.conversationId && resumeSession.visitorToken);
+            var headers = resumable ? { 'X-Webchat-Visitor-Token': resumeSession.visitorToken } : {};
+            setStatus(resumable ? 'Revalidating support session…' : 'Connecting to support…', 'degraded');
+            state.legacySessionPromise = api('/api/webchat/init', {
+              method: 'POST',
+              headers: headers,
+              body: JSON.stringify({
+                tenant_key: tenantKey,
+                channel_key: channelKey,
+                conversation_id: resumable ? resumeSession.conversationId : null,
+                origin: window.location.origin,
+                page_url: window.location.href
+              })
+            }, 12000).then(function (data) {
+              if (resumable && data.conversation_id !== resumeSession.conversationId) {
+                var driftError = new Error('webchat_session_identity_drift');
+                driftError.status = 409;
+                throw driftError;
+              }
+              state.legacyConversationId = data.conversation_id;
+              state.legacyVisitorToken = data.visitor_token;
+              persistLegacySession();
+              markReceiveHealthy();
+              startLegacyWs();
+            }).catch(function (err) {
+              markReceiveDegraded(resumable ? 'Unable to restore this support session.' : 'Unable to connect to support. Retrying…');
+              throw err;
+            }).finally(function () {
+              state.legacySessionPromise = null;
+            });
+            return state.legacySessionPromise;
+          }
+
+          function recoverLegacySession(expectedSession) {
+            if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;
+            if (expectedSession && !isLegacySessionCurrent(expectedSession)) {
+              if (hasLegacySession()) return Promise.resolve(true);
+              if (state.legacySessionPromise) {
+                return state.legacySessionPromise.then(function () { return hasLegacySession(); });
+              }
+              return Promise.resolve(false);
+            }
+            var resumableSession = expectedSession || legacySessionSnapshot();
+            if (!resumableSession.conversationId || !resumableSession.visitorToken) {
+              return createLegacySession().then(function () { return hasLegacySession(); });
+            }
+            stopLegacyTransports('session_revalidate');
+            markReceiveDegraded('Reconnecting to support…');
+            var recovery = createLegacySession(resumableSession).then(function () {
+              if (!hasLegacySession()) throw new Error('webchat_session_recovery_failed');
+              markReceiveHealthy();
+              return true;
+            }).catch(function (err) {
+              if (isLegacySessionAuthError(err) || (err && err.status === 409)) clearLegacySession();
+              throw err;
+            });
+            state.legacyRecoveryPromise = recovery.finally(function () {
+              state.legacyRecoveryPromise = null;
+            });
+            return state.legacyRecoveryPromise;
+          }
+'''
+          replace_once(widget_path, old_widget, new_widget)
+
+          replace_once(
+              "backend/app/static/webchat/demo/index.html",
+              "/webchat/widget.js?v=webchat-session-recovery-v2",
+              "/webchat/widget.js?v=webchat-session-recovery-v3",
+          )
+
+          static_tests = Path("backend/tests/test_webchat_ws_static_contracts.py")
+          text = static_tests.read_text(encoding="utf-8")
+          text = text.replace(
+              "/webchat/widget.js?v=webchat-session-recovery-v2",
+              "/webchat/widget.js?v=webchat-session-recovery-v3",
+          )
+          start = text.index("\ndef test_static_widget_recovers_stale_visitor_session_before_retrying_send():")
+          end = text.index("\ndef test_webchat_ws_observability_and_connection_limits_contract():", start)
+          text = text[:start] + "\n\n" + text[end:]
+          static_tests.write_text(text, encoding="utf-8")
+
+          replace_once(
+              "webapp/playwright.config.ts",
+              "  testDir: './e2e',\n  fullyParallel: true,",
+              "  testDir: './e2e',\n  testIgnore: rcBrowser ? [] : ['**/rc-live.spec.ts'],\n  fullyParallel: true,",
+          )
+
+          replace_once(
+              "webapp/e2e/rc-live.spec.ts",
+              "test.describe.configure({ mode: 'serial' })\ntest.skip(!rcConfigured, 'RC live browser environment is not configured')",
+              "test.describe.configure({ mode: 'serial' })\ntest.beforeAll(() => {\n  expect(rcConfigured, 'RC live browser environment must be configured').toBe(true)\n})",
+          )
+
+          browser_test = r'''import { readFileSync } from 'node:fs'
+          import { expect, test, type Route } from '@playwright/test'
+
+          const widgetSource = readFileSync(
+            new URL('../../backend/app/static/webchat/widget.js', import.meta.url),
+            'utf8',
+          )
+
+          function deferred(): { promise: Promise<void>; resolve: () => void } {
+            let resolve!: () => void
+            const promise = new Promise<void>((done) => { resolve = done })
+            return { promise, resolve }
+          }
+
+          async function fulfillJson(route: Route, status: number, payload: unknown): Promise<void> {
+            await route.fulfill({
+              status,
+              contentType: 'application/json',
+              body: JSON.stringify(payload),
+            })
+          }
+
+          test('WebChat joins in-flight recovery and never changes conversation identity silently', async ({ page }) => {
+            test.setTimeout(45_000)
+            await page.clock.install()
+
+            const conversationId = 'wc_original_session'
+            const visitorToken = 'visitor_token_original_1234567890'
+            const firstMessage = 'first deterministic message'
+            const secondMessage = 'second deterministic message'
+            const secondPostGate = deferred()
+            const recoveryInitGate = deferred()
+            const initPayloads: Array<Record<string, unknown>> = []
+            const messagePaths: string[] = []
+            const secondClientMessageIds: string[] = []
+            let initCount = 0
+            let pollCount = 0
+            let secondPostAttempts = 0
+            let secondPostStarted = false
+            let recoveryInitStarted = false
+
+            await page.route('**/api/webchat/**', async (route) => {
+              const request = route.request()
+              const url = new URL(request.url())
+              const path = url.pathname
+
+              if (request.method() === 'POST' && path === '/api/webchat/init') {
+                initCount += 1
+                const payload = request.postDataJSON() as Record<string, unknown>
+                initPayloads.push(payload)
+                if (initCount === 1) {
+                  expect(payload.conversation_id).toBeNull()
+                  await fulfillJson(route, 200, {
+                    conversation_id: conversationId,
+                    visitor_token: visitorToken,
+                    status: 'open',
+                  })
+                  return
+                }
+                expect(initCount).toBe(2)
+                expect(payload.conversation_id).toBe(conversationId)
+                expect(request.headers()['x-webchat-visitor-token']).toBe(visitorToken)
+                recoveryInitStarted = true
+                await recoveryInitGate.promise
+                await fulfillJson(route, 200, {
+                  conversation_id: conversationId,
+                  visitor_token: visitorToken,
+                  status: 'open',
+                })
+                return
+              }
+
+              if (request.method() === 'POST' && /\/api\/webchat\/conversations\/[^/]+\/messages$/.test(path)) {
+                messagePaths.push(path)
+                const payload = request.postDataJSON() as { body?: string; client_message_id?: string }
+                if (payload.body === firstMessage) {
+                  await fulfillJson(route, 200, {
+                    message: {
+                      id: 1,
+                      direction: 'visitor',
+                      body_text: firstMessage,
+                      client_message_id: payload.client_message_id,
+                    },
+                  })
+                  return
+                }
+                expect(payload.body).toBe(secondMessage)
+                secondPostAttempts += 1
+                secondClientMessageIds.push(String(payload.client_message_id || ''))
+                if (secondPostAttempts === 1) {
+                  secondPostStarted = true
+                  await secondPostGate.promise
+                  await fulfillJson(route, 404, { detail: 'transient session revalidation required' })
+                  return
+                }
+                expect(secondPostAttempts).toBe(2)
+                await fulfillJson(route, 200, {
+                  message: {
+                    id: 2,
+                    direction: 'visitor',
+                    body_text: secondMessage,
+                    client_message_id: payload.client_message_id,
+                  },
+                })
+                return
+              }
+
+              if (request.method() === 'GET' && /\/api\/webchat\/conversations\/[^/]+\/messages$/.test(path)) {
+                pollCount += 1
+                if (pollCount === 2) {
+                  await fulfillJson(route, 404, { detail: 'transient poll session error' })
+                  return
+                }
+                await fulfillJson(route, 200, {
+                  messages: [],
+                  ai_pending: false,
+                  ai_status: 'completed',
+                })
+                return
+              }
+
+              await fulfillJson(route, 404, { detail: `unexpected route ${request.method()} ${path}` })
+            })
+
+            await page.goto('/')
+            await page.evaluate((source) => {
+              document.body.innerHTML = ''
+              delete (window as typeof window & { __NEXUSDESK_WEBCHAT_LOADED__?: boolean }).__NEXUSDESK_WEBCHAT_LOADED__
+              const script = document.createElement('script')
+              script.setAttribute('data-api-base', window.location.origin)
+              script.setAttribute('data-auto-open', 'true')
+              script.setAttribute('data-websocket', 'false')
+              script.setAttribute('data-poll-ms', '1000')
+              script.setAttribute('data-pending-poll-ms', '350')
+              script.textContent = source
+              document.head.appendChild(script)
+            }, widgetSource)
+
+            await page.clock.fastForward(200)
+            await expect.poll(() => initCount).toBe(1)
+            const input = page.locator('.nd-webchat-input')
+            const send = page.locator('.nd-webchat-send')
+            await expect(input).toBeEnabled()
+
+            await input.fill(firstMessage)
+            await send.click()
+            await expect(page.locator('.nd-webchat-msg.visitor', { hasText: firstMessage })).toBeVisible()
+            await expect(send).toBeEnabled()
+            await expect.poll(() => pollCount).toBe(1)
+
+            await input.fill(secondMessage)
+            await send.click()
+            await expect.poll(() => secondPostStarted).toBe(true)
+
+            await page.clock.fastForward(1000)
+            await expect.poll(() => recoveryInitStarted).toBe(true)
+            expect(pollCount).toBeGreaterThanOrEqual(2)
+
+            secondPostGate.resolve()
+            await expect.poll(() => secondPostAttempts).toBe(1)
+            recoveryInitGate.resolve()
+
+            await expect.poll(() => secondPostAttempts).toBe(2)
+            await expect(page.locator('.nd-webchat-msg.visitor', { hasText: secondMessage })).toBeVisible()
+            await expect(page.locator('.nd-webchat-msg.visitor.failed', { hasText: secondMessage })).toHaveCount(0)
+            await expect(page.locator('.nd-webchat-msg.visitor', { hasText: secondMessage }).locator('.nd-webchat-retry')).toHaveCount(0)
+
+            expect(initPayloads).toHaveLength(2)
+            expect(initPayloads[1]?.conversation_id).toBe(conversationId)
+            expect(messagePaths).toHaveLength(3)
+            expect(messagePaths.every((path) => path.includes(`/${conversationId}/messages`))).toBe(true)
+            expect(secondClientMessageIds).toHaveLength(2)
+            expect(secondClientMessageIds[0]).toBeTruthy()
+            expect(secondClientMessageIds[1]).toBe(secondClientMessageIds[0])
+          })
+          '''
+          browser_test = "\n".join(line[10:] if line.startswith("          ") else line for line in browser_test.splitlines()) + "\n"
+          Path("webapp/e2e/webchat-widget-session-recovery.spec.ts").write_text(browser_test, encoding="utf-8")
+
+          workflow = Path(".github/workflows/qa-root-cause-patch.yml")
+          workflow.unlink()
+
+          widget = Path(widget_path).read_text(encoding="utf-8")
+          required = (
+              "conversation_id: resumable ? resumeSession.conversationId : null",
+              "if (state.legacyRecoveryPromise) return state.legacyRecoveryPromise;",
+              "stopLegacyTransports('session_revalidate')",
+              "webchat_session_identity_drift",
+          )
+          for token in required:
+              if token not in widget:
+                  raise SystemExit(f"missing remediated widget contract: {token}")
+          forbidden = (
+              "if (expectedSession && !isLegacySessionCurrent(expectedSession)) return Promise.resolve(false);",
+              "conversation_id: null,\n            origin: window.location.origin",
+          )
+          for token in forbidden:
+              if token in widget:
+                  raise SystemExit(f"stale widget implementation remains: {token}")
+          PY
+
+      - name: Verify syntax and residue
+        run: |
+          set -Eeuo pipefail
+          node --check backend/app/static/webchat/widget.js
+          python3 -m py_compile backend/tests/test_webchat_ws_static_contracts.py
+          test ! -e .github/workflows/qa-root-cause-patch.yml
+          test "$(grep -RIl 'webchat-session-recovery-v2' backend webapp | wc -l)" -eq 0
+          test "$(grep -RIl 'return Promise.resolve(false);' backend/app/static/webchat/widget.js | wc -l)" -eq 0
+
+      - name: Commit root-cause remediation
+        run: |
+          set -Eeuo pipefail
+          git config user.name "nexus-qa-root-cause"
+          git config user.email "nexus-qa-root-cause@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(webchat): preserve conversation identity through recovery"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
