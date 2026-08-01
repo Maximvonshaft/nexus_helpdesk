@@ -1,18 +1,6 @@
 import { resolveInitialUiLocale } from '@/i18n/localeAuthority'
 import type { UiLocale } from '@/i18n/localeAuthority'
 
-export interface UiI18nBootstrapState {
-  locale: UiLocale
-  catalog: Readonly<Record<string, string>>
-  catalogLoaded: boolean
-}
-
-declare global {
-  interface Window {
-    __NEXUS_UI_I18N_BOOTSTRAP__?: UiI18nBootstrapState
-  }
-}
-
 function isCatalog(value: unknown): value is Record<string, string> {
   return Boolean(
     value
