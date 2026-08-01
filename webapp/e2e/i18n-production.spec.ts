@@ -12,8 +12,13 @@ async function setAnonymousLocale(page: Page, locale: 'en' | 'de') {
   await page.addInitScript(([key, value]) => localStorage.setItem(key, value), [LOCALE_KEY, locale])
 }
 
-async function mockAuthenticatedLocale(page: Page, initialLocale: 'en' | 'de') {
-  let serverLocale: 'en' | 'de' = initialLocale
+async function mockAuthenticatedLocale(
+  page: Page,
+  initialLocale: 'zh-CN' | 'en' | 'de',
+  configured = true,
+) {
+  let serverLocale: 'zh-CN' | 'en' | 'de' = initialLocale
+  let serverConfigured = configured
   let preferenceUpdates = 0
   await page.addInitScript(([tokenKey, localeKey, locale]) => {
     sessionStorage.setItem(tokenKey, 'i18n-production-token')
@@ -23,14 +28,19 @@ async function mockAuthenticatedLocale(page: Page, initialLocale: 'en' | 'de') {
   await page.route('**/api/**', async (route: Route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/auth/me') {
-      return json(route, { ...responsiveUser, ui_locale: serverLocale })
+      return json(route, {
+        ...responsiveUser,
+        ui_locale: serverLocale,
+        ui_locale_configured: serverConfigured,
+      })
     }
     if (url.pathname === '/api/auth/preferences' && route.request().method() === 'PATCH') {
-      const payload = route.request().postDataJSON() as { ui_locale?: 'en' | 'de' }
-      if (payload.ui_locale !== 'en' && payload.ui_locale !== 'de') {
+      const payload = route.request().postDataJSON() as { ui_locale?: 'zh-CN' | 'en' | 'de' }
+      if (!payload.ui_locale || !['zh-CN', 'en', 'de'].includes(payload.ui_locale)) {
         return json(route, { detail: 'invalid locale' }, 422)
       }
       serverLocale = payload.ui_locale
+      serverConfigured = true
       preferenceUpdates += 1
       return json(route, { ui_locale: serverLocale })
     }
@@ -49,6 +59,9 @@ async function mockAuthenticatedLocale(page: Page, initialLocale: 'en' | 'de') {
   return {
     get preferenceUpdates() {
       return preferenceUpdates
+    },
+    get serverLocale() {
+      return serverLocale
     },
   }
 }
@@ -79,6 +92,20 @@ test('German entry copy is complete and does not overflow a narrow viewport', as
   await expect(page.getByRole('combobox', { name: 'Oberflächensprache' })).toContainText('Deutsch')
   await expect(page.getByRole('main')).not.toContainText(/[\u3400-\u9fff]/u)
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('an unconfigured account adopts the current device locale exactly once', async ({ page }) => {
+  const state = await mockAuthenticatedLocale(page, 'en', false)
+  await page.goto('/account')
+
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  await expect(page.getByRole('heading', { level: 1, name: 'Account settings' })).toBeVisible()
+  await expect.poll(() => state.preferenceUpdates).toBe(1)
+  await expect.poll(() => state.serverLocale).toBe('en')
+
+  await page.reload()
+  await expect(page.getByRole('heading', { level: 1, name: 'Account settings' })).toBeVisible()
+  await expect.poll(() => state.preferenceUpdates).toBe(1)
 })
 
 test('authenticated language preference persists through the server and reloads the full UI', async ({ page }) => {
