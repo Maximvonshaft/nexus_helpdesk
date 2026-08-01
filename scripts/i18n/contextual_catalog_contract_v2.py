@@ -9,7 +9,7 @@ from pathlib import Path
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 REQUESTED_REVISION: str | None = "cdbee75f17c01a7cc42f958dc650907174af0554"
 APPROVED_LICENSE = "apache-2.0"
-BASE_OVERRIDES_SHA256 = "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c"
+BASE_OVERRIDES_SHA256 = "8b24b5519eee4d8e3333cd64bbf27553e4df969c643565afeb1578a290150988"
 EXPECTED_BASE_COUNTS = {"en": 655, "de": 655, "cnr": 655}
 LOCALES = ("en", "de", "cnr")
 
