@@ -28,7 +28,18 @@ jobs:
           node --check backend/app/static/webchat/widget.js
           python -m compileall -q backend/tests scripts/release
           python -m unittest -v scripts.release.tests.test_capture_controlled_rc_failure
-          python -m pytest -q backend/tests/test_webchat_ws_static_contracts.py
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('backend/app/static/webchat/widget.js').read_text(encoding='utf-8')
+          start = text.index("        if (data.type === 'error') {")
+          end = text.index("        if (typeof data.event_id === 'number')", start)
+          block = text[start:end]
+          assert 'recoverLegacySession' not in block
+          assert "socket.close(1000, 'server_error')" in block
+          close_start = text.index('      socket.onclose', start)
+          close_end = text.index('      socket.onerror', close_start)
+          assert 'scheduleLegacyPoll();' in text[close_start:close_end]
+          PY
           git diff --check
           ! grep -F "recoverLegacySession(session).catch" backend/app/static/webchat/widget.js
           test -f webapp/e2e/webchat-realtime-fallback.spec.ts
