@@ -1,0 +1,43 @@
+{
+  "catalog_sha256": {
+    "cnr": "d262094bbecd905f9244fb820d0446b74eb7ec518a124ec08a2cc53f36ca4bad",
+    "de": "700d440f008d004c5cddf20374f69978903c239fbbc4b6375ba28cc499230772",
+    "en": "85943ef00431c26efe3ec3414b2cab924b993bd1d3ba07a6d2ccc420b51c5158"
+  },
+  "fallback_counts": {
+    "cnr": 2,
+    "de": 1,
+    "en": 3
+  },
+  "inventory_messages": 2569,
+  "inventory_sha256": "3f80eb2fc631074b202a7f83eccf4c53c47c8fe84bb8e39e8225bf4d178a0644",
+  "models": {
+    "cnr": {
+      "license": "apache-2.0",
+      "model_id": "Helsinki-NLP/opus-mt-en-zls",
+      "requested_revision": null,
+      "resolved_revision": "f127a88f95d3550a38f6fe8075f91d0548220f3a"
+    },
+    "de": {
+      "license": "cc-by-4.0",
+      "model_id": "Helsinki-NLP/opus-mt-en-de",
+      "requested_revision": "6183067f769a302e3861815543b9f312c71b0ca4",
+      "resolved_revision": "6183067f769a302e3861815543b9f312c71b0ca4"
+    },
+    "en": {
+      "license": "cc-by-4.0",
+      "model_id": "Helsinki-NLP/opus-mt-zh-en",
+      "requested_revision": "cf109095479db38d6df799875e34039d4938aaa6",
+      "resolved_revision": "cf109095479db38d6df799875e34039d4938aaa6"
+    }
+  },
+  "override_counts": {
+    "cnr": 655,
+    "de": 655,
+    "en": 655
+  },
+  "override_sha256": "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c",
+  "policy": "production_candidate_requires_human_semantic_review_and_exact_head_acceptance",
+  "schema_version": 1,
+  "unique_sources": 1907
+}
