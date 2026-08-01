@@ -1,4 +1,17 @@
 export type UiLocale = 'zh-CN' | 'en' | 'de'
+export type UiMessageCatalog = Readonly<Record<string, string>>
+
+export interface UiI18nBootstrapState {
+  locale: UiLocale
+  catalog: UiMessageCatalog
+  catalogLoaded: boolean
+}
+
+declare global {
+  interface Window {
+    __NEXUS_UI_I18N_BOOTSTRAP__?: UiI18nBootstrapState
+  }
+}
 
 export const UI_LOCALE_STORAGE_KEY = 'nexus-operator-ui-locale'
 export const enabledUiLocales = ['zh-CN', 'en', 'de'] as const satisfies readonly UiLocale[]
