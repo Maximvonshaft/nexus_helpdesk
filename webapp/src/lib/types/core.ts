@@ -14,6 +14,7 @@ export interface AuthUser {
   last_login_at?: string | null
   mfa_enabled?: boolean
   ui_locale: UiLocale
+  ui_locale_configured?: boolean
 }
 export interface AuthSessionResponse {
   access_token: string
