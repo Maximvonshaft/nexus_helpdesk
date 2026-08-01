@@ -7,6 +7,7 @@ const sourceSha = process.env.RC_SOURCE_SHA || ''
 const baseURL = (process.env.PLAYWRIGHT_BASE_URL || '').replace(/\/+$/, '')
 const browserStageFile = process.env.RC_BROWSER_STAGE_FILE || ''
 const operatorTokenKey = 'helpdesk-webapp-token'
+const rcRequired = (process.env.RC_RUN_BROWSER_SMOKE || '').toLowerCase() === 'true'
 const rcConfigured = Boolean(
   adminUsername
   && adminPassword
@@ -80,9 +81,18 @@ async function activateWorkspaceSurface(page: Page, name: '客户沟通' | '操�
 }
 
 test.describe.configure({ mode: 'serial' })
-test.skip(!rcConfigured, 'RC live browser environment is not configured')
 
-test('RC public WebChat supports consecutive messages, human ownership, reply and closure', async ({ page, context }) => {
+test.describe('controlled candidate live WebChat', () => {
+  test.skip(!rcRequired, 'RC live browser journey runs only in Controlled Candidate')
+
+  test.beforeAll(() => {
+    expect(
+      rcConfigured,
+      'RC_RUN_BROWSER_SMOKE=true requires admin credentials, an exact source SHA, and a loopback PLAYWRIGHT_BASE_URL',
+    ).toBe(true)
+  })
+
+  test('RC public WebChat supports consecutive messages, human ownership, reply and closure', async ({ page, context }) => {
   test.setTimeout(90_000)
   const firstMessage = `RC browser synthetic message 1 ${sourceSha.slice(0, 12)}`
   const secondMessage = `RC browser synthetic message 2 ${sourceSha.slice(0, 12)}`
@@ -270,4 +280,5 @@ test('RC public WebChat supports consecutive messages, human ownership, reply an
   expect(Number(finalState.available_capacity || 0) + Number(finalState.active_conversations || 0)).toBe(Number(finalState.max_concurrent_conversations || 0))
 
   markStage('completed')
+  })
 })

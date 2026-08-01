@@ -51,3 +51,21 @@ def test_canonical_workflow_routes_draft_and_candidate_without_second_authority(
     assert workflow.count("required-gate:") == 1
     assert "pull_request_target:" not in workflow
     assert "workflow_run:" not in workflow
+
+
+
+def test_canonical_candidate_requires_completed_review_before_required_gate():
+    workflow = CANONICAL_WORKFLOW.read_text(encoding="utf-8")
+
+    for marker in (
+        "pull_request_review:",
+        "review-governance:",
+        "pull-requests: read",
+        'select(.state == "APPROVED" and .commit_id == $head)',
+        "reviewThreads(first:100,after:$endCursor)",
+        "REVIEW_GOVERNANCE",
+    ):
+        assert marker in workflow
+
+    assert 'RC_RUN_BROWSER_SMOKE: "true"' not in workflow
+    assert "pull_request_target:" not in workflow
