@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - scripts/i18n/qwen3_quality_bakeoff.py
+      - scripts/i18n/qwen3_4b_quality_bakeoff.py
       - .github/workflows/i18n-qwen3-quality-bakeoff.yml
 
 permissions:
@@ -44,9 +45,9 @@ jobs:
           set -uo pipefail
           mkdir -p /tmp/nexus-i18n-qwen3-bakeoff
           set +e
-          python scripts/i18n/qwen3_quality_bakeoff.py \
+          python scripts/i18n/qwen3_4b_quality_bakeoff.py \
             --output /tmp/nexus-i18n-qwen3-bakeoff \
-            --batch-size 16 \
+            --batch-size 12 \
             2>&1 | tee /tmp/nexus-i18n-qwen3-bakeoff/bakeoff.log
           status=${PIPESTATUS[0]}
           set -e
