@@ -1,0 +1,124 @@
+name: I18N Production Catalogs EN DE CNR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - webapp/**
+      - scripts/i18n/build_production_catalogs_v1.py
+      - scripts/i18n/operator_catalog_overrides_v1.json.gz.b64
+      - .github/workflows/i18n-production-catalogs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  generate-production-catalogs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact tooling candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build exact localization inventory
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node scripts/assert-i18n-inventory.mjs
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned CPU translation toolchain
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'torch==2.7.1' --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --disable-pip-version-check --no-cache-dir \
+            'transformers==4.57.6' 'sentencepiece==0.2.1' 'sacremoses==0.1.1'
+
+      - name: Generate English German and Montenegrin catalogs
+        env:
+          HF_HUB_DISABLE_TELEMETRY: '1'
+          TOKENIZERS_PARALLELISM: 'false'
+        run: |
+          set -Eeuo pipefail
+          python scripts/i18n/build_production_catalogs_v1.py \
+            --inventory frontend_dist/i18n-inventory.json \
+            --overrides scripts/i18n/operator_catalog_overrides_v1.json.gz.b64 \
+            --output /tmp/nexus-i18n-production \
+            --batch-size 48
+
+      - name: Verify catalog evidence
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path('/tmp/nexus-i18n-production')
+          metadata = json.loads((root / 'production-catalog-metadata.json').read_text(encoding='utf-8'))
+          assert metadata['inventory_messages'] == 2569, metadata
+          assert metadata['unique_sources'] == 1907, metadata
+          assert set(metadata['models']) == {'en', 'de', 'cnr'}, metadata
+          for locale in ('en', 'de', 'cnr'):
+              path = root / f'catalog-{locale}.review.json'
+              catalog = json.loads(path.read_text(encoding='utf-8'))
+              assert len(catalog) == 2569, (locale, len(catalog))
+              assert all(isinstance(value, str) and value.strip() for value in catalog.values())
+              metadata.setdefault('catalog_sha256', {})[locale] = hashlib.sha256(path.read_bytes()).hexdigest()
+          (root / 'production-catalog-metadata.json').write_text(
+              json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload immutable catalog evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: i18n-production-catalogs-${{ github.event.pull_request.head.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: /tmp/nexus-i18n-production
+
+      - name: Publish validated catalogs to output branch
+        env:
+          OUTPUT_BRANCH: tooling/i18n-catalog-output
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'nexus-i18n-catalog-bot'
+          git config user.email 'nexus-i18n-catalog-bot@users.noreply.github.com'
+          git fetch origin "$OUTPUT_BRANCH"
+          git checkout -B "$OUTPUT_BRANCH" "origin/$OUTPUT_BRANCH"
+          mkdir -p catalogs/operator-ui
+          cp /tmp/nexus-i18n-production/catalog-en.review.json catalogs/operator-ui/en.json
+          cp /tmp/nexus-i18n-production/catalog-de.review.json catalogs/operator-ui/de.json
+          cp /tmp/nexus-i18n-production/catalog-cnr.review.json catalogs/operator-ui/cnr.json
+          cp /tmp/nexus-i18n-production/source-en.review.json catalogs/operator-ui/source-en.review.json
+          cp /tmp/nexus-i18n-production/source-de.review.json catalogs/operator-ui/source-de.review.json
+          cp /tmp/nexus-i18n-production/source-cnr.review.json catalogs/operator-ui/source-cnr.review.json
+          cp /tmp/nexus-i18n-production/production-catalog-metadata.json catalogs/operator-ui/production-catalog-metadata.json
+          git add catalogs/operator-ui
+          if git diff --cached --quiet; then
+            echo 'Catalog output is already current.'
+            exit 0
+          fi
+          git commit -m "tooling(i18n): publish validated en de cnr catalogs"
+          git push origin "HEAD:$OUTPUT_BRANCH"
