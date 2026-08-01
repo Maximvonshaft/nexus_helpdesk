@@ -9,108 +9,24 @@ permissions:
   contents: read
 
 jobs:
-  reproduce:
+  inspect:
     if: github.head_ref == 'audit/909-final-main-evidence'
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    env:
-      TARGET_SHA: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
-      SOURCE_SHA: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
-      RC_SOURCE_SHA: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
-      RC_ENV_FILE: deploy/.env.rc-test
-      RC_EVIDENCE_DIR: artifacts/rc-test
-      RC_RUN_BROWSER_SMOKE: "true"
-      RC_BASE_URL: http://127.0.0.1:18083
-      RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
-      COMPOSE_PROJECT_NAME: nexus_diag_${{ github.run_id }}
-      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-diagnostic-55ee9165
-      RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
-      RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
-      DIAGNOSTIC_DIR: artifacts/exact-main-rc-runtime-diagnostic
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
-          fetch-depth: 0
           persist-credentials: false
-
-      - name: Require unchanged exact main
+      - name: Print bounded token-authority excerpts
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git fetch --no-tags origin main
-          test "$(git rev-parse origin/main)" = "$TARGET_SHA"
-          test -z "$(git status --porcelain)"
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: "3.11"
-
-      - uses: actions/setup-node@04be95cf3511ea51ebf9f224ddfb99cc7ab87cd4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: webapp/package-lock.json
-
-      - name: Install locked browser dependencies
-        working-directory: webapp
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          npm ci
-          npx playwright install --with-deps chromium
-
-      - name: Reproduce exact-main RC browser failure
-        id: reproduce
-        shell: bash
-        run: |
-          set +e
-          bash scripts/release/run_controlled_rc_gate.sh
-          code=$?
-          set -e
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          test "$code" -ne 0
-
-      - name: Build bounded redacted runtime diagnostic
-        if: always()
-        shell: bash
-        env:
-          RC_EXIT_CODE: ${{ steps.reproduce.outputs.exit_code }}
-        run: |
-          set -Eeuo pipefail
-          rm -rf "$DIAGNOSTIC_DIR"
-          mkdir -p "$DIAGNOSTIC_DIR"
-          for file in \
-            status.json \
-            failure-summary.json \
-            browser-smoke.txt \
-            app-rc.log \
-            nginx-rc.log \
-            postgres-rc.log \
-            compose-ps-final.txt \
-            cleanup.txt; do
-            if [[ -f "$RC_EVIDENCE_DIR/$file" ]]; then
-              cp "$RC_EVIDENCE_DIR/$file" "$DIAGNOSTIC_DIR/$file"
-            fi
-          done
-          printf 'source_sha=%s\nexit_code=%s\n' "$SOURCE_SHA" "${RC_EXIT_CODE:-unknown}" > "$DIAGNOSTIC_DIR/metadata.txt"
-          test -f "$DIAGNOSTIC_DIR/status.json"
-          test -f "$DIAGNOSTIC_DIR/app-rc.log"
-          test -f "$DIAGNOSTIC_DIR/nginx-rc.log"
-          test -f "$DIAGNOSTIC_DIR/browser-smoke.txt"
-          mapfile -t evidence < <(find "$DIAGNOSTIC_DIR" -maxdepth 1 -type f -print | sort)
-          python scripts/security/scan_artifacts.py \
-            --root . \
-            --output "$DIAGNOSTIC_DIR/artifact-scan.json" \
-            "${evidence[@]}"
-          test "$(jq -r '.status' "$DIAGNOSTIC_DIR/artifact-scan.json")" = "pass"
-
-      - name: Upload exact-main runtime diagnostic
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: exact-main-rc-runtime-diagnostic-55ee9165
-          path: artifacts/exact-main-rc-runtime-diagnostic
-          retention-days: 3
-          if-no-files-found: error
+          file=backend/app/static/webchat/widget.js
+          grep -n -E 'legacyVisitorToken[[:space:]]*=|rememberPublicSession|recoverLegacySession|pollLegacy\(' "$file"
+          while IFS=: read -r line _; do
+            start=$(( line > 8 ? line - 8 : 1 ))
+            end=$(( line + 12 ))
+            echo "--- lines ${start}-${end}"
+            sed -n "${start},${end}p" "$file"
+          done < <(grep -n -E 'legacyVisitorToken[[:space:]]*=|rememberPublicSession' "$file")
