@@ -20,33 +20,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Execute staged remediation and remove all temporary files
+      - name: Apply root-cause remediation
         shell: bash
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          source = Path('.github/workflows/_one_shot_898_remediation.yml').read_text(encoding='utf-8')
-          start_marker = '      - name: Apply coherent root-cause remediation\n        shell: bash\n        run: |\n'
-          end_marker = '\n      - name: Commit final tree without executor residue\n'
-          start = source.index(start_marker) + len(start_marker)
-          end = source.index(end_marker, start)
-          lines = source[start:end].splitlines()
-          extracted = []
-          for line in lines:
-              if line.startswith('          '):
-                  extracted.append(line[10:])
-              elif line:
-                  raise SystemExit(f'unexpected staged script indentation: {line!r}')
-              else:
-                  extracted.append('')
-          Path('/tmp/apply-898.sh').write_text('\n'.join(extracted) + '\n', encoding='utf-8')
-          PY
-          bash /tmp/apply-898.sh
-          rm -f .github/workflows/_one_shot_898_pr_kick.yml
+          python scripts/_one_shot_898_fix.py
+          node --check backend/app/static/webchat/widget.js
+          python -m compileall -q backend/tests
+          git diff --check
           test ! -e .github/workflows/_one_shot_898_remediation.yml
           test ! -e .github/workflows/_one_shot_898_pr_kick.yml
+          test ! -e scripts/_one_shot_898_fix.py
+          test "$(grep -R --fixed-strings 'webchat-session-recovery-v2' backend/app/static/webchat backend/tests/test_webchat_ws_static_contracts.py | wc -l)" = "0"
+          test "$(grep -R --fixed-strings 'Promise.resolve(false)' backend/app/static/webchat/widget.js | wc -l)" = "0"
 
       - name: Commit final remediation tree
         shell: bash
