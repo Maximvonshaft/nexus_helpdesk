@@ -51,15 +51,12 @@ def set_user_ui_locale(
     *,
     user_id: int,
     ui_locale: str,
-) -> UserUILocaleState:
+) -> tuple[str, str]:
     normalized = normalize_ui_locale(ui_locale)
     row = db.get(UserUIPreference, int(user_id))
-    previous = UserUILocaleState(
-        ui_locale=row.ui_locale if row is not None else DEFAULT_UI_LOCALE,
-        configured=row is not None,
-    )
+    was_configured = row is not None
+    previous = row.ui_locale if row is not None else DEFAULT_UI_LOCALE
     now = utc_now()
-
     if row is None:
         row = UserUIPreference(
             user_id=int(user_id),
@@ -68,28 +65,21 @@ def set_user_ui_locale(
             updated_at=now,
         )
         db.add(row)
-    elif row.ui_locale != normalized:
+    else:
         row.ui_locale = normalized
         row.updated_at = now
+    db.flush()
 
-    current = UserUILocaleState(ui_locale=normalized, configured=True)
-    if previous != current:
-        db.flush()
+    if not was_configured and previous == normalized:
         log_admin_audit(
             db,
             actor_id=int(user_id),
             action="auth.ui_locale_changed",
             target_type="user_ui_preference",
             target_id=int(user_id),
-            old_value={
-                "ui_locale": previous.ui_locale,
-                "configured": previous.configured,
-            },
-            new_value={
-                "ui_locale": current.ui_locale,
-                "configured": current.configured,
-            },
+            old_value={"ui_locale": previous, "configured": False},
+            new_value={"ui_locale": normalized, "configured": True},
         )
         db.flush()
 
-    return current
+    return previous, normalized
