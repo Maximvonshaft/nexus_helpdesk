@@ -24,32 +24,15 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python - <<'PY'
-          from pathlib import Path
-
-          source = Path('.github/workflows/_one_shot_898_transport_authority.yml').read_text(encoding='utf-8')
-          start_marker = "          python - <<'PY'\n"
-          end_marker = "\n          PY\n\n          node --check"
-          start = source.index(start_marker) + len(start_marker)
-          end = source.index(end_marker, start)
-          lines = source[start:end].splitlines()
-          extracted = []
-          for line in lines:
-              if line.startswith('          '):
-                  extracted.append(line[10:])
-              elif line:
-                  raise SystemExit(f'unexpected patch indentation: {line!r}')
-              else:
-                  extracted.append('')
-          Path('/tmp/apply_transport_fix.py').write_text('\n'.join(extracted) + '\n', encoding='utf-8')
-          PY
-          python /tmp/apply_transport_fix.py
+          python scripts/_apply_898_transport_authority.py
           node --check backend/app/static/webchat/widget.js
           python -m compileall -q backend/tests scripts/release
           python -m unittest -v scripts.release.tests.test_capture_controlled_rc_failure
           python -m pytest -q backend/tests/test_webchat_ws_static_contracts.py
           git diff --check
           ! grep -F "recoverLegacySession(session).catch" backend/app/static/webchat/widget.js
+          test -f webapp/e2e/webchat-realtime-fallback.spec.ts
+          git rm scripts/_apply_898_transport_authority.py
 
       - name: Commit only final product and test changes
         shell: bash
@@ -63,6 +46,8 @@ jobs:
             backend/tests/test_webchat_ws_static_contracts.py \
             webapp/e2e/webchat-realtime-fallback.spec.ts \
             scripts/release/capture_controlled_rc_failure.py \
-            scripts/release/tests/test_capture_controlled_rc_failure.py
+            scripts/release/tests/test_capture_controlled_rc_failure.py \
+            scripts/_apply_898_transport_authority.py
+          git diff --cached --check
           git commit -m "fix(webchat): keep HTTP session authoritative on realtime failure"
           git push origin HEAD:fix/898-webchat-transport-authority
