@@ -18,33 +18,61 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
       TARGET_SHA: 55ee9165b6623fbe5d6b68ba215cfe2a28efa8d1
-      OUTPUT_DIR: artifacts/final-main-diagnostic
+      FAILED_JOB_ID: "91348977561"
+      OUTPUT_DIR: artifacts/final-main-browser-diagnostic
     steps:
-      - name: Extract exact controlled-candidate failure
+      - name: Download and redact exact failed job log
         shell: bash
         run: |
           set -Eeuo pipefail
           test "$(gh api "repos/${REPOSITORY}/commits/main" --jq '.sha')" = "$TARGET_SHA"
           mkdir -p "$OUTPUT_DIR"
-          gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=workflow_run&per_page=100" \
-            --jq '[.workflow_runs[] | select(.name == "controlled-candidate-convergence" and .head_sha == env.TARGET_SHA and .head_branch == "main" and .event == "workflow_run")][0] | {id, name, status, conclusion, event, head_branch, head_sha, html_url, jobs_url, artifacts_url, created_at, updated_at}' \
-            > "$OUTPUT_DIR/run.json"
-          run_id="$(jq -r '.id' "$OUTPUT_DIR/run.json")"
-          [[ "$run_id" =~ ^[0-9]+$ ]]
-          gh api "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?filter=latest&per_page=100" \
-            --jq '{jobs: [.jobs[] | {id, name, status, conclusion, started_at, completed_at, steps: [.steps[] | {name, status, conclusion, number}]}]}' \
-            > "$OUTPUT_DIR/jobs.json"
-          gh api "repos/${REPOSITORY}/actions/runs/${run_id}/artifacts?per_page=100" \
-            --jq '{artifacts: [.artifacts[] | {id, name, size_in_bytes, expired, created_at, expires_at, digest}]}' \
-            > "$OUTPUT_DIR/artifacts.json"
-          jq . "$OUTPUT_DIR/run.json"
-          jq -r '.jobs[] | [.id, .name, .status, (.conclusion // "")] | @tsv' "$OUTPUT_DIR/jobs.json"
-          jq -r '.artifacts[] | [.id, .name, .size_in_bytes, (.digest // "")] | @tsv' "$OUTPUT_DIR/artifacts.json"
+          gh api "repos/${REPOSITORY}/actions/jobs/${FAILED_JOB_ID}/logs" > /tmp/job-log-download
+          if file /tmp/job-log-download | grep -qi 'zip archive'; then
+            unzip -p /tmp/job-log-download > /tmp/job.log
+          else
+            cp /tmp/job-log-download /tmp/job.log
+          fi
+          python - <<'PY'
+          import re
+          from pathlib import Path
 
-      - name: Upload bounded diagnostic metadata
+          raw = Path('/tmp/job.log').read_text(encoding='utf-8', errors='replace')
+          patterns = [
+              (re.compile(r'(?i)(authorization:\s*(?:bearer|basic)\s+)[^\s]+'), r'\1[REDACTED]'),
+              (re.compile(r'(?i)(postgresql(?:\+psycopg)?://[^:\s]+:)[^@\s]+@'), r'\1[REDACTED]@'),
+              (re.compile(r'(?i)(password|secret|token|api[_-]?key)([=:]\s*)[^\s]+'), r'\1\2[REDACTED]'),
+              (re.compile(r'gh[pousr]_[A-Za-z0-9_]{20,}'), '[REDACTED_GITHUB_TOKEN]'),
+              (re.compile(r'sk-[A-Za-z0-9_-]{16,}'), '[REDACTED_API_KEY]'),
+              (re.compile(r'(?m)^.*::add-mask::.*$'), '[MASK_COMMAND_REDACTED]'),
+          ]
+          text = raw
+          for pattern, replacement in patterns:
+              text = pattern.sub(replacement, text)
+          lines = text.splitlines()
+          keywords = re.compile(
+              r'(?i)(browser-smoke|rc-live|public-send|conversation|expected|received|error:|failed|failure|'
+              r'traceback|playwright|test-results|attachment|strict mode|timeout|assert|toContain|toBe|npm ERR|'
+              r'RC0_TEST_DEPLOYABLE|FAILED_STAGE)'
+          )
+          selected = set(range(max(0, len(lines) - 700), len(lines)))
+          for index, line in enumerate(lines):
+              if keywords.search(line):
+                  selected.update(range(max(0, index - 20), min(len(lines), index + 45)))
+          reduced = '\n'.join(f'{index + 1:06d}: {lines[index]}' for index in sorted(selected)) + '\n'
+          out = Path('artifacts/final-main-browser-diagnostic')
+          (out / 'reduced-redacted.log').write_text(reduced, encoding='utf-8')
+          (out / 'metadata.txt').write_text(
+              f'job_id=91348977561\nsource_lines={len(lines)}\nselected_lines={len(selected)}\n',
+              encoding='utf-8',
+          )
+          PY
+          test -s "$OUTPUT_DIR/reduced-redacted.log"
+
+      - name: Upload bounded browser diagnostic
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: final-main-diagnostic-55ee9165
-          path: artifacts/final-main-diagnostic
+          name: final-main-browser-diagnostic-55ee9165
+          path: artifacts/final-main-browser-diagnostic
           retention-days: 3
           if-no-files-found: error
