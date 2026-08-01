@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.orm import Session
 
 from ..models_user_ui_preferences import SUPPORTED_UI_LOCALES, UserUIPreference
 from ..utils.time import utc_now
 
 DEFAULT_UI_LOCALE = "zh-CN"
+
+
+@dataclass(frozen=True)
+class UserUILocaleState:
+    ui_locale: str
+    configured: bool
 
 
 def normalize_ui_locale(value: str | None) -> str:
@@ -26,9 +34,15 @@ def normalize_ui_locale(value: str | None) -> str:
     return normalized
 
 
-def read_user_ui_locale(db: Session, user_id: int) -> str:
+def read_user_ui_locale_state(db: Session, user_id: int) -> UserUILocaleState:
     row = db.get(UserUIPreference, int(user_id))
-    return row.ui_locale if row is not None else DEFAULT_UI_LOCALE
+    if row is None:
+        return UserUILocaleState(ui_locale=DEFAULT_UI_LOCALE, configured=False)
+    return UserUILocaleState(ui_locale=row.ui_locale, configured=True)
+
+
+def read_user_ui_locale(db: Session, user_id: int) -> str:
+    return read_user_ui_locale_state(db, user_id).ui_locale
 
 
 def set_user_ui_locale(
