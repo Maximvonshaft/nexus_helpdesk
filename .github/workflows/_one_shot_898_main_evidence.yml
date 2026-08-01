@@ -1,0 +1,104 @@
+name: one-shot-898-main-evidence
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify-exact-main:
+    if: github.head_ref == 'fix/898-webchat-recovery-final'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 125
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      TARGET_SHA: ee507716ed40d4ec49102ee4f73f51dbf65bd721
+      EVIDENCE_DIR: artifacts/exact-main-evidence
+    steps:
+      - name: Wait for exact-main Canonical and Controlled Candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          deadline=$((SECONDS + 7200))
+          while (( SECONDS < deadline )); do
+            main_sha="$(gh api --method GET "repos/${REPOSITORY}/commits/main" --jq '.sha')"
+            runs="$(gh api --method GET "repos/${REPOSITORY}/actions/runs" -f head_sha="$TARGET_SHA" -F per_page=100)"
+            canonical="$(jq -c --arg sha "$TARGET_SHA" '
+              [.workflow_runs[]
+                | select(.head_sha == $sha)
+                | select(.name == "Canonical Acceptance")
+                | select(.event == "push")
+                | select(.head_branch == "main")]
+              | sort_by(.created_at)
+              | last // empty
+            ' <<<"$runs")"
+            controlled="$(jq -c --arg sha "$TARGET_SHA" '
+              [.workflow_runs[]
+                | select(.head_sha == $sha)
+                | select(.name == "controlled-candidate-convergence")
+                | select(.event == "workflow_run")]
+              | sort_by(.created_at)
+              | last // empty
+            ' <<<"$runs")"
+
+            jq -n \
+              --arg target_sha "$TARGET_SHA" \
+              --arg main_sha "$main_sha" \
+              --argjson canonical "${canonical:-null}" \
+              --argjson controlled "${controlled:-null}" \
+              '{schema:"nexus.exact-main-evidence-probe.v1",target_sha:$target_sha,current_main_sha:$main_sha,canonical:$canonical,controlled_candidate:$controlled}' \
+              > "$EVIDENCE_DIR/status.json"
+
+            test "$main_sha" = "$TARGET_SHA"
+
+            if [[ -z "$canonical" ]]; then
+              echo "Exact-main Canonical Acceptance has not appeared yet."
+              sleep 15
+              continue
+            fi
+            canonical_status="$(jq -r '.status' <<<"$canonical")"
+            canonical_conclusion="$(jq -r '.conclusion // ""' <<<"$canonical")"
+            echo "Canonical: id=$(jq -r '.id' <<<"$canonical") status=${canonical_status} conclusion=${canonical_conclusion}"
+            if [[ "$canonical_status" != "completed" ]]; then
+              sleep 15
+              continue
+            fi
+            test "$canonical_conclusion" = "success"
+
+            if [[ -z "$controlled" ]]; then
+              echo "Controlled Candidate has not appeared yet."
+              sleep 15
+              continue
+            fi
+            controlled_status="$(jq -r '.status' <<<"$controlled")"
+            controlled_conclusion="$(jq -r '.conclusion // ""' <<<"$controlled")"
+            echo "Controlled: id=$(jq -r '.id' <<<"$controlled") status=${controlled_status} conclusion=${controlled_conclusion}"
+            if [[ "$controlled_status" != "completed" ]]; then
+              sleep 15
+              continue
+            fi
+            test "$controlled_conclusion" = "success"
+
+            jq '. + {status:"pass"}' "$EVIDENCE_DIR/status.json" > "$EVIDENCE_DIR/final.json"
+            cat "$EVIDENCE_DIR/final.json"
+            exit 0
+          done
+
+          jq '. + {status:"timeout"}' "$EVIDENCE_DIR/status.json" > "$EVIDENCE_DIR/final.json"
+          cat "$EVIDENCE_DIR/final.json"
+          exit 1
+
+      - name: Upload exact-main evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: exact-main-evidence-ee507716ed40d4ec49102ee4f73f51dbf65bd721
+          path: artifacts/exact-main-evidence
+          retention-days: 7
+          if-no-files-found: error
