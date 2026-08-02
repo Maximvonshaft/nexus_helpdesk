@@ -233,7 +233,7 @@ def test_rate_limit_bucket_uses_verified_server_tenant(
     monkeypatch.setattr(
         webchat_rate_limit,
         "_enforce_database",
-        lambda _db, _key: None,
+        lambda _db, _key, *, policy: None,
     )
     monkeypatch.setattr(webchat_rate_limit.settings, "app_env", "production")
     monkeypatch.setattr(
@@ -345,9 +345,17 @@ def test_authorized_voice_bucket_uses_verified_conversation_scope(
         return "authorized-voice-bucket"
 
     monkeypatch.setattr(webchat_rate_limit, "_bucket_key", capture_bucket)
-    monkeypatch.setattr(webchat_rate_limit, "_enforce_database", lambda _db, _key: None)
+    monkeypatch.setattr(
+        webchat_rate_limit,
+        "_enforce_database",
+        lambda _db, _key, *, policy: None,
+    )
     monkeypatch.setattr(webchat_rate_limit.settings, "app_env", "production")
-    monkeypatch.setattr(webchat_rate_limit.settings, "webchat_rate_limit_backend", "database")
+    monkeypatch.setattr(
+        webchat_rate_limit.settings,
+        "webchat_rate_limit_backend",
+        "database",
+    )
 
     webchat_rate_limit.enforce_webchat_rate_limit(
         db,
