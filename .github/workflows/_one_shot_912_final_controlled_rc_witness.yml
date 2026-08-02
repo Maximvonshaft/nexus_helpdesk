@@ -1,0 +1,122 @@
+name: one-shot-912-final-controlled-rc-witness
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  witness:
+    if: github.head_ref == 'audit/912-final-controlled-rc-witness-20260802'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      EXPECTED_MAIN_SHA: 43932bb093b75fed955c4eabc49b05a0bbb6be6e
+      SOURCE_SHA: 1335172b36431857206ee949811b97ff228e6b83
+      RC_SOURCE_SHA: 1335172b36431857206ee949811b97ff228e6b83
+      RC_ENV_FILE: deploy/.env.rc-test
+      RC_EVIDENCE_DIR: artifacts/pr912-controlled-rc-witness
+      RC_RUN_BROWSER_SMOKE: "true"
+      RC_BASE_URL: http://127.0.0.1:18083
+      RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
+      COMPOSE_PROJECT_NAME: nexus_pr912_${{ github.run_id }}
+      CANDIDATE_IMAGE: nexusdesk/helpdesk:pr912-rc-1335172b36431857206ee949811b97ff228e6b83
+      RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+      RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    steps:
+      - name: Checkout exact final product Head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 1335172b36431857206ee949811b97ff228e6b83
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove frozen identity and current-main ancestry
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git fetch --no-tags origin main
+          observed_main="$(git rev-parse origin/main)"
+          test "$observed_main" = "$EXPECTED_MAIN_SHA"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_MAIN_SHA"
+          git merge-base --is-ancestor origin/main HEAD
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RC_EVIDENCE_DIR"
+          jq -n \
+            --arg checkout_sha "$(git rev-parse HEAD)" \
+            --arg expected_main_sha "$EXPECTED_MAIN_SHA" \
+            --arg observed_main_sha "$observed_main" \
+            --arg parent_sha "$(git rev-parse HEAD^)" \
+            --arg image_tag "$CANDIDATE_IMAGE" \
+            --arg workflow_run_id "${{ github.run_id }}" \
+            '{
+              schema: "nexus.pr912.controlled_rc_witness.v1",
+              checkout_sha: $checkout_sha,
+              expected_main_sha: $expected_main_sha,
+              observed_main_sha: $observed_main_sha,
+              parent_sha: $parent_sha,
+              current_main_is_ancestor: true,
+              image_tag: $image_tag,
+              workflow_run_id: $workflow_run_id,
+              build_count: 1,
+              gate_execution_count: 1,
+              publish: false
+            }' > "$RC_EVIDENCE_DIR/witness-manifest.json"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@04be95cf3511ea51ebf9f224ddfb99cc7ab87cd4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install locked browser dependencies
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run exact one-build Controlled RC once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/release/run_controlled_rc_gate.sh
+          test -f "$RC_EVIDENCE_DIR/status.json"
+          test "$(jq -r '.status' "$RC_EVIDENCE_DIR/status.json")" = "pass"
+
+      - name: Verify bounded redacted evidence
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f "$RC_EVIDENCE_DIR/witness-manifest.json"
+          test -f "$RC_EVIDENCE_DIR/status.json"
+          mapfile -t evidence < <(
+            find "$RC_EVIDENCE_DIR" -maxdepth 1 -type f \
+              \( -name '*.json' -o -name '*.txt' -o -name '*.log' \) \
+              ! -name 'artifact-scan.json' -print | sort
+          )
+          test "${#evidence[@]}" -gt 1
+          python scripts/security/scan_artifacts.py \
+            --root . \
+            --output "$RC_EVIDENCE_DIR/artifact-scan.json" \
+            "${evidence[@]}"
+          test "$(jq -r '.status' "$RC_EVIDENCE_DIR/artifact-scan.json")" = "pass"
+
+      - name: Upload exact pre-merge Controlled RC witness
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr912-controlled-rc-witness-1335172b
+          path: artifacts/pr912-controlled-rc-witness
+          retention-days: 7
+          if-no-files-found: error
