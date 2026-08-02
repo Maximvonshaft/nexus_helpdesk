@@ -113,6 +113,7 @@ def test_retired_telephony_paths_are_permanently_gated():
 
 def test_database_rate_limit_normalizes_and_resets_expired_bucket_without_duplicate_insert():
     rate_limit = RATE_LIMIT.read_text(encoding="utf-8")
+    compact_rate_limit = " ".join(rate_limit.split())
 
     assert "def _normalize_database_window_start(" in rate_limit
     assert "return ensure_utc(value)" in rate_limit
@@ -124,10 +125,14 @@ def test_database_rate_limit_normalizes_and_resets_expired_bucket_without_duplic
         "if existing_window_start is None or "
         "existing_window_start < window_start:"
     )
-    assert expiry_guard in rate_limit
-    assert "SET window_start = :window_start, request_count = 1, updated_at = :updated_at" in rate_limit
-    assert "UPDATE webchat_rate_limits" in rate_limit
-    reset_block = rate_limit.split(expiry_guard, 1)[1].split(
+    assert expiry_guard in compact_rate_limit
+    assert (
+        '"UPDATE webchat_rate_limits " '
+        '"SET window_start = :window_start, request_count = 1, " '
+        '"updated_at = :updated_at WHERE id = :id"'
+        in compact_rate_limit
+    )
+    reset_block = compact_rate_limit.split(expiry_guard, 1)[1].split(
         "request_count = int",
         1,
     )[0]
