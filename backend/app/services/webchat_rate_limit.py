@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import text
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..settings import get_settings
 from ..utils.client_ip import get_client_ip
-from ..utils.time import utc_now
+from ..utils.time import ensure_utc, utc_now
 from ..webchat_models import WebchatConversation
 from .webchat_rate_limit_policy import (
     WebchatRateLimitPolicy,
@@ -59,6 +59,26 @@ def _enforce_memory(
         )
     bucket.append(now)
     _MEMORY_BUCKETS[bucket_key] = bucket
+
+
+def _normalize_database_window_start(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return ensure_utc(value)
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate.endswith("Z"):
+            candidate = f"{candidate[:-1]}+00:00"
+        try:
+            return ensure_utc(datetime.fromisoformat(candidate))
+        except ValueError as exc:
+            raise RuntimeError(
+                "invalid webchat rate-limit window_start timestamp"
+            ) from exc
+    raise RuntimeError(
+        "unsupported webchat rate-limit window_start timestamp type"
+    )
 
 
 def _enforce_database(
@@ -125,7 +145,10 @@ def _enforce_database(
         db.flush()
         return
 
-    if existing["window_start"] is None or existing["window_start"] < window_start:
+    existing_window_start = _normalize_database_window_start(
+        existing["window_start"]
+    )
+    if existing_window_start is None or existing_window_start < window_start:
         db.execute(
             text(
                 "UPDATE webchat_rate_limits "
