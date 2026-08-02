@@ -15,11 +15,13 @@ import type { SelectChangeEvent } from '@mui/material/Select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   type ChangeEvent,
   type ReactNode,
 } from 'react'
+import { refreshOperatorWorkspaceAssignmentState } from '@/features/operator-workspace/operatorWorkspaceState'
 import {
   agentRoutingApi,
   type AgentPresenceStatus,
@@ -78,9 +80,13 @@ export function AgentPresenceProvider({
     refetchInterval: 30_000,
     retry: false,
   })
+  const applyAgentState = useCallback(async (next: AgentState) => {
+    queryClient.setQueryData(STATE_QUERY_KEY, next)
+    await refreshOperatorWorkspaceAssignmentState(queryClient)
+  }, [queryClient])
   const update = useMutation({
     mutationFn: (request: AgentStateUpdate) => agentRoutingApi.updateState(request),
-    onSuccess: (next) => queryClient.setQueryData(STATE_QUERY_KEY, next),
+    onSuccess: applyAgentState,
   })
   const status = state.data?.status
 
@@ -88,11 +94,11 @@ export function AgentPresenceProvider({
     if (!enabled || !status || status === 'offline') return undefined
     const timer = window.setInterval(() => {
       void agentRoutingApi.heartbeat()
-        .then((next) => queryClient.setQueryData(STATE_QUERY_KEY, next))
+        .then(applyAgentState)
         .catch(() => undefined)
     }, 30_000)
     return () => window.clearInterval(timer)
-  }, [enabled, queryClient, status])
+  }, [applyAgentState, enabled, status])
 
   const value: AgentPresenceRuntimeValue = {
     enabled,

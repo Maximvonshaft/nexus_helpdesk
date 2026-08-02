@@ -238,6 +238,18 @@ def _release_one(
     db.flush()
 
 
+def _lock_candidate_rows(db: Session, query):
+    if not db.bind or not db.bind.dialect.name.startswith("postgresql"):
+        return query
+    # An unqualified PostgreSQL FOR UPDATE expands to every joined relation and
+    # is invalid for the nullable side of the OperatorAgentState outer join.
+    # Lock only the authoritative rows this reconciliation can mutate.
+    return query.with_for_update(
+        of=(WebchatHandoffRequest, WebchatConversation),
+        skip_locked=True,
+    )
+
+
 def reconcile_stale_text_handoffs(
     db: Session,
     *,
@@ -316,8 +328,7 @@ def reconcile_stale_text_handoffs(
         acceptance_clock.asc(),
         WebchatHandoffRequest.id.asc(),
     )
-    if db.bind and db.bind.dialect.name.startswith("postgresql"):
-        query = query.with_for_update(skip_locked=True)
+    query = _lock_candidate_rows(db, query)
     rows = query.limit(max(1, min(int(limit or 100), 500))).all()
 
     inspected = 0

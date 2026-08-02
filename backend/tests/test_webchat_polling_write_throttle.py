@@ -16,11 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT.parent))
 
-from app.api.webchat_public import (  # noqa: E402
-    hash_webchat_visitor_token,
-    validate_webchat_visitor_token,
-)
 from app.services.webchat_performance import list_public_messages_throttled  # noqa: E402
+from app.services.webchat_session_identity import (  # noqa: E402
+    hash_token,
+    validate_visitor_token,
+)
 from app.utils.time import utc_now  # noqa: E402
 
 
@@ -71,7 +71,7 @@ class FakeConversation:
         self.status = "open"
         self.last_seen_at = last_seen_at
         self.updated_at = last_seen_at
-        self.visitor_token_hash = hash_webchat_visitor_token("good-token")
+        self.visitor_token_hash = hash_token("good-token")
         self.visitor_token_expires_at = utc_now() + timedelta(days=1)
 
 
@@ -189,6 +189,6 @@ def test_token_mismatch_still_fails():
     conversation = FakeConversation(last_seen_at=utc_now())
 
     with pytest.raises(HTTPException) as exc:
-        validate_webchat_visitor_token(conversation, "wrong-token")
+        validate_visitor_token(conversation, "wrong-token")
 
     assert exc.value.status_code == 403

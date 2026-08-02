@@ -152,6 +152,19 @@ def isolate_runtime_settings(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_process_local_webchat_rate_limits():
+    """Prevent order-dependent leakage from the in-memory test limiter."""
+
+    from app.services import webchat_rate_limit
+
+    webchat_rate_limit._MEMORY_BUCKETS.clear()
+    try:
+        yield
+    finally:
+        webchat_rate_limit._MEMORY_BUCKETS.clear()
+
+
+@pytest.fixture(autouse=True)
 def migrate_legacy_fixture_tenant_ownership(request: pytest.FixtureRequest):
     """Migrate named legacy test factories to current relational authorities."""
 
