@@ -67,6 +67,7 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
   const [historyError, setHistoryError] = useState<unknown>(null)
   const pendingReplyActionRef = useRef<(() => void) | null>(null)
+  const previousMobileViewRef = useRef<WorkspaceMobileView>(mobileView)
   const [retainedSelectedItem, setRetainedSelectedItem] = useState<UnifiedOperatorQueueItem | null>(null)
 
   useEffect(() => {
@@ -76,7 +77,9 @@ export function OperatorWorkspacePage({ scope }: { scope: WorkspaceScope }) {
     return () => window.removeEventListener('beforeunload', protectDraft)
   }, [replyDraftDirty])
   useLayoutEffect(() => {
-    if (desktopLayout) return
+    const previousMobileView = previousMobileViewRef.current
+    previousMobileViewRef.current = mobileView
+    if (desktopLayout || previousMobileView === mobileView) return
     const targetId: Record<WorkspaceMobileView, string> = {
       queue: 'workspace-queue',
       case: 'workspace-case',
