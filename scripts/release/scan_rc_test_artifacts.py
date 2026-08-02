@@ -54,7 +54,6 @@ MIGRATION_KEYS_BY_PATH = {
 }
 
 LOOPBACK_URL_KEYS = {"origin", "browser_origin", "page_url"}
-NETWORK_KEYS = {"app_networks", "nginx_networks", "internal_network", "loopback_gateway_network"}
 
 
 def _is_loopback_url(value: str) -> bool:
