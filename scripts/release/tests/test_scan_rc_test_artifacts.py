@@ -21,20 +21,28 @@ class RcArtifactScannerTests(unittest.TestCase):
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return relative
 
+    def _network_payload(self, *, project: str = "nexus_pr912_rc_30732266088") -> dict[str, object]:
+        internal = f"{project}_rc"
+        edge = f"{project}_edge"
+        return {
+            "app_networks": [internal],
+            "internal_network": internal,
+            "loopback_gateway_network": edge,
+            "nginx_networks": [edge, internal],
+            "production_network_joined": False,
+            "schema": "nexus.osr.rc-test-network-safety.v1",
+            "status": "pass",
+        }
+
     def test_strict_synthetic_metadata_suppresses_only_technical_pii_fingerprints(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            relative = self._write(
+            readyz = self._write(
                 root,
                 {
                     "origin": "http://127.0.0.1:18083",
                     "page_url": "http://127.0.0.1:18083/webchat/demo/",
                     "conversation_id": "wc_1234abcd5678efgh",
-                    "app_networks": ["nexus_rc_test_29199983935_rc"],
-                    "nginx_networks": [
-                        "nexus_rc_test_29199983935_edge",
-                        "nexus_rc_test_29199983935_rc",
-                    ],
                     "app_version": "rc-test-17cd31ad15f3",
                     "image_tag": "nexusdesk/helpdesk:rc-test-" + "a1b2" * 10,
                     "build_time": "20260712T161615Z",
@@ -46,11 +54,81 @@ class RcArtifactScannerTests(unittest.TestCase):
                 },
                 name="readyz.json",
             )
+            network = self._write(
+                root,
+                self._network_payload(),
+                name="network-safety.json",
+            )
 
-            findings, suppressed = MODULE.scan_rc_artifact_files(root, [relative])
+            findings, suppressed = MODULE.scan_rc_artifact_files(root, [readyz, network])
 
             self.assertEqual(findings, [])
             self.assertGreater(suppressed, 0)
+
+    def test_controlled_and_pr_witness_network_names_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = []
+            for index, project in enumerate(
+                (
+                    "nexus_rc_test_29199983935",
+                    "nexus_controlled_29199983935",
+                    "nexus_pr912_rc_30732266088",
+                )
+            ):
+                paths.append(
+                    self._write(
+                        root,
+                        self._network_payload(project=project),
+                        name="network-safety.json" if index == 0 else f"network-safety-{index}.json",
+                    )
+                )
+
+            canonical_findings, canonical_suppressed = MODULE.scan_rc_artifact_files(root, [paths[0]])
+            self.assertEqual(canonical_findings, [])
+            self.assertGreater(canonical_suppressed, 0)
+
+            for noncanonical_path in paths[1:]:
+                findings, suppressed = MODULE.scan_rc_artifact_files(root, [noncanonical_path])
+                self.assertEqual(suppressed, 0)
+                self.assertIn("artifact:tracking", {finding.rule for finding in findings})
+
+            for project in ("nexus_controlled_29199983935", "nexus_pr912_rc_30732266088"):
+                relative = self._write(
+                    root,
+                    self._network_payload(project=project),
+                    name="network-safety.json",
+                )
+                findings, suppressed = MODULE.scan_rc_artifact_files(root, [relative])
+                self.assertEqual(findings, [])
+                self.assertGreater(suppressed, 0)
+
+    def test_network_suppression_requires_complete_safe_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unsafe_cases = []
+
+            production_joined = self._network_payload()
+            production_joined["production_network_joined"] = True
+            unsafe_cases.append(production_joined)
+
+            mismatched = self._network_payload()
+            mismatched["nginx_networks"] = [
+                "nexus_pr912_rc_30732266088_edge",
+                "nexus_pr913_rc_30732266088_rc",
+            ]
+            unsafe_cases.append(mismatched)
+
+            malformed = self._network_payload()
+            malformed["internal_network"] = "customer-TRACK1234567890"
+            malformed["app_networks"] = ["customer-TRACK1234567890"]
+            unsafe_cases.append(malformed)
+
+            for payload in unsafe_cases:
+                relative = self._write(root, payload, name="network-safety.json")
+                findings, suppressed = MODULE.scan_rc_artifact_files(root, [relative])
+                self.assertEqual(suppressed, 0)
+                self.assertIn("artifact:tracking", {finding.rule for finding in findings})
 
     def test_canonical_migration_suppression_is_limited_to_exact_rc_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

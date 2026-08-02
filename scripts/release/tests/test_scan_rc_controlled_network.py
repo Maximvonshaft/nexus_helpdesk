@@ -23,27 +23,29 @@ class ControlledNetworkScannerTests(unittest.TestCase):
             path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
             return MODULE.scan_rc_artifact_files(root, [relative])
 
+    def _safe_network_payload(self, project: str) -> dict[str, object]:
+        internal = f"{project}_rc"
+        edge = f"{project}_edge"
+        return {
+            "app_networks": [internal],
+            "internal_network": internal,
+            "loopback_gateway_network": edge,
+            "nginx_networks": [edge, internal],
+            "production_network_joined": False,
+            "schema": "nexus.osr.rc-test-network-safety.v1",
+            "status": "pass",
+        }
+
     def test_exact_controlled_network_names_are_safe_technical_metadata(self) -> None:
         findings, suppressed = self._scan(
-            {
-                "app_networks": ["nexus_controlled_29287748431_rc"],
-                "nginx_networks": [
-                    "nexus_controlled_29287748431_edge",
-                    "nexus_controlled_29287748431_rc",
-                ],
-                "internal_network": "nexus_controlled_29287748431_rc",
-                "loopback_gateway_network": "nexus_controlled_29287748431_edge",
-            }
+            self._safe_network_payload("nexus_controlled_29287748431")
         )
         self.assertEqual(findings, [])
         self.assertGreater(suppressed, 0)
 
     def test_existing_rc_test_network_names_remain_safe(self) -> None:
         findings, suppressed = self._scan(
-            {
-                "internal_network": "nexus_rc_test_29287363236_rc",
-                "loopback_gateway_network": "nexus_rc_test_29287363236_edge",
-            }
+            self._safe_network_payload("nexus_rc_test_29287363236")
         )
         self.assertEqual(findings, [])
         self.assertGreater(suppressed, 0)
@@ -62,7 +64,7 @@ class ControlledNetworkScannerTests(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True)
             path.write_text(
-                json.dumps({"internal_network": "nexus_controlled_29287748431_rc"}) + "\n",
+                json.dumps(self._safe_network_payload("nexus_controlled_29287748431")) + "\n",
                 encoding="utf-8",
             )
             findings, suppressed = MODULE.scan_rc_artifact_files(root, [relative])
