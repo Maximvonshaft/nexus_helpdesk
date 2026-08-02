@@ -15,13 +15,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
-      MAIN_SHA: 617bc8b30b75dbc1f0fc5ae9dab7a1e8862cc917
+      MAIN_SHA: dbc64cde9b448a49763ef5d4339a4e4a3e8542c4
       EVIDENCE_DIR: artifacts/final-postmerge-observer
     steps:
       - name: Checkout exact current main
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 617bc8b30b75dbc1f0fc5ae9dab7a1e8862cc917
+          ref: dbc64cde9b448a49763ef5d4339a4e4a3e8542c4
           fetch-depth: 0
           persist-credentials: false
 
@@ -199,7 +199,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: final-postmerge-observer-617bc8b3
+          name: final-postmerge-observer-dbc64cde
           path: artifacts/final-postmerge-observer
           retention-days: 14
           if-no-files-found: error
