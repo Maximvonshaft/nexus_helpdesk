@@ -51,16 +51,16 @@ jobs:
             --arg expected_main_sha "$EXPECTED_MAIN_SHA" \
             --arg observed_main_sha "$observed_main" \
             --arg parent_sha "$(git rev-parse HEAD^)" \
-            --arg image_tag "$CANDIDATE_IMAGE" \
+            --arg requested_image_tag "$CANDIDATE_IMAGE" \
             --arg workflow_run_id "${{ github.run_id }}" \
             '{
-              schema: "nexus.pr912.controlled_rc_witness.v1",
+              schema: "nexus.pr912.controlled_rc_witness.v2",
               checkout_sha: $checkout_sha,
               expected_main_sha: $expected_main_sha,
               observed_main_sha: $observed_main_sha,
               parent_sha: $parent_sha,
               current_main_is_ancestor: true,
-              image_tag: $image_tag,
+              requested_image_tag: $requested_image_tag,
               workflow_run_id: $workflow_run_id,
               build_count: 1,
               gate_execution_count: 1,
@@ -90,8 +90,34 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash scripts/release/run_controlled_rc_gate.sh
-          test -f "$RC_EVIDENCE_DIR/status.json"
-          test "$(jq -r '.status' "$RC_EVIDENCE_DIR/status.json")" = "pass"
+
+          manifest="$RC_EVIDENCE_DIR/candidate-manifest.json"
+          test -f "$manifest"
+          test "$(jq -r '.decision' "$manifest")" = "RC0_TEST_DEPLOYABLE"
+          test "$(jq -r '.candidate.source_sha' "$manifest")" = "$SOURCE_SHA"
+          test "$(jq -r '.candidate.frontend_build_sha' "$manifest")" = "$SOURCE_SHA"
+          test "$(jq -r '[.checks[]] | all(. == "pass")' "$manifest")" = "true"
+          test "$(jq -r '.safety.test_environment_isolated' "$manifest")" = "true"
+          test "$(jq -r '.safety.production_ready' "$manifest")" = "false"
+          test "$(jq -r '.safety.real_outbound_enabled' "$manifest")" = "false"
+          test "$(cat "$RC_EVIDENCE_DIR/source-sha.txt")" = "$SOURCE_SHA"
+          test "$(cat "$RC_EVIDENCE_DIR/image-id.txt")" = "$(jq -r '.candidate.image_id' "$manifest")"
+
+          jq -n \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg decision "$(jq -r '.decision' "$manifest")" \
+            --arg image_id "$(jq -r '.candidate.image_id' "$manifest")" \
+            --arg image_tag "$(jq -r '.candidate.image_tag' "$manifest")" \
+            '{
+              schema: "nexus.pr912.controlled_rc_witness_result.v1",
+              status: "pass",
+              source_sha: $source_sha,
+              decision: $decision,
+              image_id: $image_id,
+              image_tag: $image_tag,
+              gate_execution_count: 1,
+              publish: false
+            }' > "$RC_EVIDENCE_DIR/witness-result.json"
 
       - name: Verify bounded redacted evidence
         if: always()
@@ -99,13 +125,15 @@ jobs:
         run: |
           set -Eeuo pipefail
           test -f "$RC_EVIDENCE_DIR/witness-manifest.json"
-          test -f "$RC_EVIDENCE_DIR/status.json"
+          test -f "$RC_EVIDENCE_DIR/candidate-manifest.json"
+          test -f "$RC_EVIDENCE_DIR/witness-result.json"
+          test "$(jq -r '.status' "$RC_EVIDENCE_DIR/witness-result.json")" = "pass"
           mapfile -t evidence < <(
             find "$RC_EVIDENCE_DIR" -maxdepth 1 -type f \
               \( -name '*.json' -o -name '*.txt' -o -name '*.log' \) \
               ! -name 'artifact-scan.json' -print | sort
           )
-          test "${#evidence[@]}" -gt 1
+          test "${#evidence[@]}" -gt 2
           python scripts/security/scan_artifacts.py \
             --root . \
             --output "$RC_EVIDENCE_DIR/artifact-scan.json" \
