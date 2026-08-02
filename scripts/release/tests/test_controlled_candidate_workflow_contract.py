@@ -87,13 +87,13 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             WORKFLOW.index("  guard-main:") : WORKFLOW.index("  build-assure-publish:")
         ]
         job_if = guard[
-            guard.index("    if: >-") : guard.index("    permissions:")
+            guard.index("    if:") : guard.index("    permissions:")
         ]
         self.assertIn(
             "github.event.workflow_run.conclusion == 'success'",
             job_if,
         )
-        self.assertIn("github.event.workflow_run.event == 'push'", job_if)
+        self.assertNotIn("github.event.workflow_run.event", job_if)
         self.assertNotIn("github.event.workflow_run.head_branch", job_if)
         self.assertIn('test "$TRIGGER_BRANCH" = "main"', guard)
         self.assertIn(
