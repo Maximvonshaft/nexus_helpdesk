@@ -23,6 +23,7 @@ from .webchat_message_service import (
     get_authorized_webchat_conversation,
     message_payload,
     submit_card_action,
+    submit_card_action_to_conversation,
 )
 from .webchat_session_identity import (
     MAX_FIELD_CHARS,
@@ -45,4 +46,5 @@ __all__ = [
     "get_authorized_webchat_conversation",
     "message_payload",
     "submit_card_action",
+    "submit_card_action_to_conversation",
 ]

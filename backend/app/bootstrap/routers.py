@@ -52,7 +52,11 @@ from ..api.ticket_perf import router as ticket_perf_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
-from ..api.webchat_voice import router as webchat_voice_router
+from ..api.webchat_preauth import enforce_webchat_conversation_preauth
+from ..api.webchat_voice import (
+    router as webchat_voice_router,
+    unthrottled_router as webchat_voice_unthrottled_router,
+)
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_integration import router as whatsapp_integration_router
 from ..api.whatsapp_media_integration import router as whatsapp_media_integration_router
@@ -157,6 +161,7 @@ def register_api_routers(app: FastAPI) -> None:
         webchat_events_router,
         telephony_router,
         webchat_ws_router,
+        webchat_voice_unthrottled_router,
         webchat_voice_router,
         # Static shared WABA authority must be registered before the dynamic
         # /meta/{connection_id}/webhook route or "webhook" can be consumed as a
@@ -167,4 +172,11 @@ def register_api_routers(app: FastAPI) -> None:
         whatsapp_media_operator_router,
         webchat_router,
     ):
-        app.include_router(router)
+        app.include_router(
+            router,
+            dependencies=(
+                [Depends(enforce_webchat_conversation_preauth)]
+                if router is webchat_voice_router
+                else None
+            ),
+        )

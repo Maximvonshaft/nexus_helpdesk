@@ -842,6 +842,7 @@ def create_public_voice_session(
         request,
         tenant_key=control.tenant_key,
         conversation_id=f"{conversation.public_id}:voice",
+        authorized_conversation=conversation,
     )
     account, channel_config = _voice_channel(
         db,
