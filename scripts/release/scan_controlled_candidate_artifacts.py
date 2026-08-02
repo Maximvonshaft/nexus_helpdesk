@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import date
@@ -40,6 +41,7 @@ SIDECAR_MANIFEST = FINAL_PREFIX + "sidecar-image-manifest.json"
 SIDECAR_PUBLISH_RECEIPT = (
     FINAL_PREFIX + "whatsapp-sidecar-registry-publish-receipt.json"
 )
+CANONICAL_ACCEPTANCE_RECEIPT = FINAL_PREFIX + "canonical-acceptance-receipt.json"
 
 ATTESTATION_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -55,6 +57,16 @@ IMAGE_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:rc-test-[0-9a-f]{40}$")
 SIDECAR_IMAGE_TAG_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._/-]*:controlled-[0-9a-f]{40}$"
 )
+GITHUB_PATH_PART_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+CANONICAL_RECEIPT_KEYS = {
+    "schema",
+    "workflow",
+    "event",
+    "conclusion",
+    "source_sha",
+    "run_id",
+    "run_url",
+}
 
 
 def _load_json(root: Path, relative: str) -> dict[str, object] | None:
@@ -92,6 +104,72 @@ def _attestation_url_is_bound(value: str, attestation_id: str) -> bool:
         and parts[3] == attestation_id
         and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", part) for part in parts[:2])
     )
+
+
+def _expected_github_repository() -> tuple[str, str] | None:
+    raw = os.environ.get("GITHUB_REPOSITORY", "")
+    parts = raw.split("/")
+    if (
+        len(parts) != 2
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(not GITHUB_PATH_PART_RE.fullmatch(part) for part in parts)
+    ):
+        return None
+    return parts[0], parts[1]
+
+
+def _canonical_acceptance_run_url_is_bound(
+    value: str,
+    payload: dict[str, object],
+) -> bool:
+    if set(payload) != CANONICAL_RECEIPT_KEYS:
+        return False
+    expected_repository = _expected_github_repository()
+    if expected_repository is None:
+        return False
+    expected_owner, expected_repo = expected_repository
+    run_id = payload.get("run_id")
+    source_sha = payload.get("source_sha")
+    if (
+        not isinstance(run_id, int)
+        or isinstance(run_id, bool)
+        or run_id <= 0
+        or run_id > 9_223_372_036_854_775_807
+        or not isinstance(source_sha, str)
+        or not SHA40_RE.fullmatch(source_sha)
+        or payload.get("workflow") != "Canonical Acceptance"
+        or payload.get("event") != "push"
+        or payload.get("conclusion") != "success"
+        or len(value) > 500
+        or any(character in value for character in "\x00\r\n")
+    ):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != "github.com"
+        or parsed.port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    parts = [part for part in parsed.path.split("/") if part]
+    if (
+        len(parts) != 5
+        or parts[0] != expected_owner
+        or parts[1] != expected_repo
+        or parts[2:4] != ["actions", "runs"]
+        or parts[4] != str(run_id)
+        or not GITHUB_PATH_PART_RE.fullmatch(parts[0])
+        or not GITHUB_PATH_PART_RE.fullmatch(parts[1])
+    ):
+        return False
+    return parsed.path == f"/{expected_owner}/{expected_repo}/actions/runs/{run_id}"
 
 
 def _evaluated_on_is_bound(value: str) -> bool:
@@ -210,6 +288,15 @@ def _safe_value(
             return bool(SIDECAR_APP_VERSION_RE.fullmatch(value)) and value == (
                 f"controlled-{source_sha}"
             )
+
+    if (
+        relative == CANONICAL_ACCEPTANCE_RECEIPT
+        and schema == "nexus.canonical-acceptance-receipt.v1"
+    ):
+        return key_path == ("run_url",) and _canonical_acceptance_run_url_is_bound(
+            value,
+            payload,
+        )
 
     return False
 
