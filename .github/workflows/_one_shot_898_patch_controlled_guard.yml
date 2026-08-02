@@ -30,44 +30,57 @@ jobs:
 
           workflow_path = Path('.github/workflows/controlled-candidate-convergence.yml')
           workflow = workflow_path.read_text(encoding='utf-8')
-          old_guard = """    if: >-
-              github.event.workflow_run.conclusion == 'success' &&
-              github.event.workflow_run.event == 'push' &&
-              github.event.workflow_run.head_branch == 'main'
-          """
-          new_guard = """    if: >-
-              github.event.workflow_run.conclusion == 'success' &&
-              github.event.workflow_run.event == 'push'
-          """
-          if workflow.count(old_guard) != 1:
-              raise SystemExit('controlled guard source contract did not match exactly once')
-          workflow_path.write_text(workflow.replace(old_guard, new_guard), encoding='utf-8')
+          old_fragment = (
+              "      github.event.workflow_run.event == 'push' &&\n"
+              "      github.event.workflow_run.head_branch == 'main'\n"
+          )
+          new_fragment = "      github.event.workflow_run.event == 'push'\n"
+          if workflow.count(old_fragment) != 1:
+              raise SystemExit('controlled guard source fragment did not match exactly once')
+          workflow_path.write_text(
+              workflow.replace(old_fragment, new_fragment),
+              encoding='utf-8',
+          )
 
           test_path = Path('scripts/release/tests/test_controlled_candidate_workflow_contract.py')
           tests = test_path.read_text(encoding='utf-8')
-          anchor = """    def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
-          """
-          inserted = """    def test_guard_runs_for_successful_push_and_checks_main_inside_job(self) -> None:
-              guard = WORKFLOW[
-                  WORKFLOW.index(\"  guard-main:\") : WORKFLOW.index(\"  build-assure-publish:\")
-              ]
-              job_if = guard[guard.index(\"    if: >-\") : guard.index(\"    permissions:\")]
-              self.assertIn(
-                  \"github.event.workflow_run.conclusion == 'success'\",
-                  job_if,
-              )
-              self.assertIn(\"github.event.workflow_run.event == 'push'\", job_if)
-              self.assertNotIn(\"github.event.workflow_run.head_branch\", job_if)
-              self.assertIn('test \"$TRIGGER_BRANCH\" = \"main\"', guard)
-              self.assertIn(
-                  'test \"$(git rev-parse origin/main)\" = \"$SOURCE_SHA\"',
-                  guard,
-              )
+          retired_marker = (
+              "            \"github.event.workflow_run.head_branch == 'main'\",\n"
+          )
+          if tests.count(retired_marker) != 1:
+              raise SystemExit('retired job-level branch marker did not match exactly once')
+          tests = tests.replace(retired_marker, '')
 
-          """
+          anchor = (
+              "    def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:\n"
+          )
+          inserted = (
+              "    def test_guard_runs_for_successful_push_and_checks_main_inside_job(self) -> None:\n"
+              "        guard = WORKFLOW[\n"
+              "            WORKFLOW.index(\"  guard-main:\") : WORKFLOW.index(\"  build-assure-publish:\")\n"
+              "        ]\n"
+              "        job_if = guard[\n"
+              "            guard.index(\"    if: >-\") : guard.index(\"    permissions:\")\n"
+              "        ]\n"
+              "        self.assertIn(\n"
+              "            \"github.event.workflow_run.conclusion == 'success'\",\n"
+              "            job_if,\n"
+              "        )\n"
+              "        self.assertIn(\"github.event.workflow_run.event == 'push'\", job_if)\n"
+              "        self.assertNotIn(\"github.event.workflow_run.head_branch\", job_if)\n"
+              "        self.assertIn('test \"$TRIGGER_BRANCH\" = \"main\"', guard)\n"
+              "        self.assertIn(\n"
+              "            'test \"$(git rev-parse origin/main)\" = \"$SOURCE_SHA\"',\n"
+              "            guard,\n"
+              "        )\n"
+              "\n"
+          )
           if tests.count(anchor) != 1:
               raise SystemExit('workflow contract test insertion anchor did not match exactly once')
-          test_path.write_text(tests.replace(anchor, inserted + anchor), encoding='utf-8')
+          test_path.write_text(
+              tests.replace(anchor, inserted + anchor),
+              encoding='utf-8',
+          )
 
           Path('.github/workflows/_one_shot_898_patch_controlled_guard.yml').unlink()
           PY
