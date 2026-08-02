@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require successful exact-main Canonical Acceptance
+      - name: Require successful exact-main Canonical Acceptance — github.event.workflow_run.head_branch == 'main'
         env:
           SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
           TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
