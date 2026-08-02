@@ -303,7 +303,7 @@ jobs:
             --arg sbom_digest "$sbom_digest" \
             --argjson critical_count "$critical_count" \
             --argjson high_count "$high_count" \
-            '{schema:"nexus.whatsapp-sidecar.image-assurance.v1",status:"pass",source_sha:$source_sha,image_id:$image_id,image_tag:$image_tag,revision:$revision,build_time:$created,app_version:$version,runtime_user:$user,critical_count:$critical_count,high_count:$high_count,sbom_digest:$sbom_digest,image_pushed:false,deployment_performed:false}' \
+            '{schema:"nexus.whatsapp-sidecar.image-assurance.v1",status:"pass",source_sha:$source_sha,image_id:$image_id,image_tag:$image_tag,revision:$revision,build_time:$build_time,app_version:$app_version,runtime_user:$runtime_user,critical_count:$critical_count,high_count:$high_count,sbom_digest:$sbom_digest,image_pushed:false,deployment_performed:false}' \
             > "$SIDECAR_RELEASE_DIR/sidecar-image-manifest.json"
 
       - name: Reconfirm exact current main before registry publication
