@@ -1,0 +1,393 @@
+name: one-shot-898-final-postmerge-observer
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    if: github.head_ref == 'audit/898-final-postmerge-observer-20260803'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      MAIN_SHA: 2c4b5bed52609f3be110a8e4b53895722d76f10c
+      EVIDENCE_DIR: artifacts/final-postmerge-observer
+    steps:
+      - name: Checkout exact current main
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 2c4b5bed52609f3be110a8e4b53895722d76f10c
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove exact current main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$MAIN_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$MAIN_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Observe official exact-main workflow chain
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["MAIN_SHA"]
+          token = os.environ["GH_TOKEN"]
+          out = Path(os.environ["EVIDENCE_DIR"])
+          api = "https://api.github.com"
+
+          def get(path: str) -> dict:
+              req = urllib.request.Request(
+                  api + path,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "nexus-final-postmerge-observer",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          def compact(run: dict | None) -> dict | None:
+              if run is None:
+                  return None
+              return {
+                  key: run.get(key)
+                  for key in (
+                      "id", "name", "event", "status", "conclusion",
+                      "head_branch", "head_sha", "run_number", "run_attempt",
+                      "created_at", "updated_at", "html_url", "path",
+                  )
+              }
+
+          canonical = None
+          controlled = None
+          required_jobs = {
+              "guard-main",
+              "build-assure-publish",
+              "recovery",
+              "bind-and-attest",
+          }
+          final_jobs = None
+
+          for _ in range(390):
+              encoded = urllib.parse.quote(sha, safe="")
+              payload = get(f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100")
+              runs = [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == sha]
+
+              canonicals = [
+                  run for run in runs
+                  if run.get("name") == "Canonical Acceptance"
+                  and run.get("event") == "push"
+                  and run.get("head_branch") == "main"
+              ]
+              canonicals.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              canonical = canonicals[-1] if canonicals else None
+
+              controlled_runs = [
+                  run for run in runs
+                  if run.get("name") == "controlled-candidate-convergence"
+                  and run.get("event") == "workflow_run"
+              ]
+              controlled_runs.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              controlled = controlled_runs[-1] if controlled_runs else None
+
+              observation = {
+                  "schema": "nexus.final_postmerge_workflow_observation.v1",
+                  "observed_at": datetime.now(timezone.utc).isoformat(),
+                  "main_sha": sha,
+                  "canonical": compact(canonical),
+                  "controlled": compact(controlled),
+              }
+              (out / "workflow-observation.json").write_text(
+                  json.dumps(observation, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+
+              if canonical and canonical.get("status") == "completed":
+                  if canonical.get("conclusion") != "success":
+                      raise SystemExit(
+                          f"exact-main Canonical failed: {canonical.get('id')} {canonical.get('conclusion')}"
+                      )
+                  if controlled and controlled.get("status") == "completed":
+                      if controlled.get("conclusion") != "success":
+                          raise SystemExit(
+                              f"Controlled Convergence did not succeed: {controlled.get('id')} {controlled.get('conclusion')}"
+                          )
+                      jobs_payload = get(
+                          f"/repos/{repo}/actions/runs/{controlled['id']}/jobs?per_page=100"
+                      )
+                      jobs = jobs_payload.get("jobs", [])
+                      by_name = {job.get("name"): job for job in jobs}
+                      missing = sorted(required_jobs - set(by_name))
+                      failed = {
+                          name: (by_name.get(name) or {}).get("conclusion")
+                          for name in sorted(required_jobs)
+                          if (by_name.get(name) or {}).get("conclusion") != "success"
+                      }
+                      if missing or failed:
+                          raise SystemExit(
+                              f"Controlled jobs invalid; missing={missing}; failed={failed}"
+                          )
+                      final_jobs = {
+                          name: {
+                              "id": by_name[name].get("id"),
+                              "status": by_name[name].get("status"),
+                              "conclusion": by_name[name].get("conclusion"),
+                          }
+                          for name in sorted(required_jobs)
+                      }
+                      break
+              time.sleep(20)
+          else:
+              raise SystemExit("exact-main workflow chain did not reach terminal success")
+
+          result = {
+              "schema": "nexus.final_postmerge_workflow_result.v1",
+              "status": "pass",
+              "main_sha": sha,
+              "canonical": compact(canonical),
+              "controlled": compact(controlled),
+              "controlled_jobs": final_jobs,
+          }
+          (out / "workflow-result.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Download official controlled evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          run_id="$(jq -r '.controlled.id' "$EVIDENCE_DIR/workflow-result.json")"
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+            > "$EVIDENCE_DIR/artifacts.raw.json"
+          jq --arg sha "$MAIN_SHA" '
+            {
+              build: ([.artifacts[] | select(.name == ("controlled-build-" + $sha) and .expired == false)] | last),
+              recovery: ([.artifacts[] | select(.name == ("controlled-recovery-" + $sha) and .expired == false)] | last),
+              candidate: ([.artifacts[] | select(.name == ("controlled-candidate-" + $sha) and .expired == false)] | last)
+            }
+          ' "$EVIDENCE_DIR/artifacts.raw.json" > "$EVIDENCE_DIR/artifacts.json"
+          for key in build recovery candidate; do
+            artifact_id="$(jq -r --arg key "$key" '.[$key].id // empty' "$EVIDENCE_DIR/artifacts.json")"
+            [[ "$artifact_id" =~ ^[0-9]+$ ]]
+          done
+          mkdir -p "$EVIDENCE_DIR/build" "$EVIDENCE_DIR/recovery" "$EVIDENCE_DIR/final"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "controlled-build-$MAIN_SHA" --dir "$EVIDENCE_DIR/build"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "controlled-recovery-$MAIN_SHA" --dir "$EVIDENCE_DIR/recovery"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+            --name "controlled-candidate-$MAIN_SHA" --dir "$EVIDENCE_DIR/final"
+
+      - name: Validate immutable production-candidate evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import shutil
+          from pathlib import Path
+
+          sha = os.environ["MAIN_SHA"]
+          root = Path(os.environ["EVIDENCE_DIR"])
+
+          def load(path: Path) -> dict:
+              if not path.is_file():
+                  raise SystemExit(f"missing evidence: {path}")
+              value = json.loads(path.read_text(encoding="utf-8"))
+              if not isinstance(value, dict):
+                  raise SystemExit(f"object required: {path}")
+              return value
+
+          workflow = load(root / "workflow-result.json")
+          if workflow.get("status") != "pass" or workflow.get("main_sha") != sha:
+              raise SystemExit("workflow result mismatch")
+
+          candidate = load(root / "build/rc-test/candidate-manifest.json")
+          rc_identity = candidate.get("candidate") or {}
+          checks = candidate.get("checks") or {}
+          safety = candidate.get("safety") or {}
+          if candidate.get("decision") != "RC0_TEST_DEPLOYABLE":
+              raise SystemExit("RC decision mismatch")
+          if rc_identity.get("source_sha") != sha or rc_identity.get("frontend_build_sha") != sha:
+              raise SystemExit("RC source mismatch")
+          if not isinstance(checks, dict) or not checks or any(value != "pass" for value in checks.values()):
+              raise SystemExit("RC checks not all pass")
+          if safety.get("test_environment_isolated") is not True:
+              raise SystemExit("RC isolation missing")
+          if safety.get("real_outbound_enabled") is not False:
+              raise SystemExit("unexpected real outbound")
+          if load(root / "build/rc-test/artifact-scan.json").get("status") != "pass":
+              raise SystemExit("RC scan failed")
+
+          release = load(root / "build/release-image/release-image-manifest.json")
+          sidecar = load(root / "build/sidecar-image/sidecar-image-manifest.json")
+          app_receipt = load(root / "build/controlled/registry-publish-receipt.json")
+          sidecar_receipt = load(root / "build/controlled/whatsapp-sidecar-registry-publish-receipt.json")
+          recovery = load(root / "recovery/recovery-evidence.json")
+          final = load(root / "final/controlled-candidate-manifest.json")
+          final_scan = load(root / "final/artifact-scan.json")
+          canonical_receipt = load(root / "final/canonical-acceptance-receipt.json")
+          artifacts = load(root / "artifacts.json")
+
+          digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+          if release.get("status") != "pass" or release.get("source_sha") != sha:
+              raise SystemExit("application assurance failed")
+          if release.get("image_id") != rc_identity.get("image_id"):
+              raise SystemExit("application image identity mismatch")
+          if sidecar.get("status") != "pass" or sidecar.get("source_sha") != sha:
+              raise SystemExit("Sidecar assurance failed")
+          if recovery.get("status") != "pass" or recovery.get("source_sha") != sha:
+              raise SystemExit("recovery evidence failed")
+          if recovery.get("production_data_used") is not False or recovery.get("production_mutation_performed") is not False:
+              raise SystemExit("recovery safety mismatch")
+
+          for receipt, expected_id in (
+              (app_receipt, release.get("image_id")),
+              (sidecar_receipt, sidecar.get("image_id")),
+          ):
+              if receipt.get("status") != "pass" or receipt.get("source_sha") != sha:
+                  raise SystemExit("registry receipt mismatch")
+              if receipt.get("image_pushed") is not True or receipt.get("deployment_performed") is not False:
+                  raise SystemExit("publication/deployment semantics mismatch")
+              if receipt.get("local_image_id") != expected_id or receipt.get("pulled_image_id") != expected_id:
+                  raise SystemExit("registry pullback identity mismatch")
+              if not digest_re.fullmatch(str(receipt.get("registry_digest") or "")):
+                  raise SystemExit("registry digest invalid")
+
+          if final.get("status") != "pass":
+              raise SystemExit("final candidate manifest failed")
+          final_safety = final.get("safety") or {}
+          if final_safety.get("production_ready") is not False:
+              raise SystemExit("final safety production_ready mismatch")
+          if final_safety.get("external_effects_authorized") is not False:
+              raise SystemExit("external effects unexpectedly authorized")
+          if final_scan.get("status") != "pass":
+              raise SystemExit("final artifact scan failed")
+          if canonical_receipt.get("source_sha") != sha or canonical_receipt.get("conclusion") != "success":
+              raise SystemExit("Canonical receipt mismatch")
+          if canonical_receipt.get("run_id") != workflow["canonical"]["id"]:
+              raise SystemExit("Canonical run binding mismatch")
+
+          final_candidate = final.get("candidate") or {}
+          if final_candidate.get("source_sha") != sha:
+              raise SystemExit("final source mismatch")
+          if final_candidate.get("registry_digest") != app_receipt.get("registry_digest"):
+              raise SystemExit("final application digest mismatch")
+          final_sidecar = final_candidate.get("whatsapp_sidecar") or {}
+          if final_sidecar.get("registry_digest") != sidecar_receipt.get("registry_digest"):
+              raise SystemExit("final Sidecar digest mismatch")
+
+          result = {
+              "schema": "nexus.production_candidate_go.v1",
+              "status": "pass",
+              "main_sha": sha,
+              "canonical_run_id": workflow["canonical"]["id"],
+              "controlled_run_id": workflow["controlled"]["id"],
+              "controlled_jobs": workflow["controlled_jobs"],
+              "controlled_artifact_ids": {
+                  key: artifacts[key]["id"] for key in ("build", "recovery", "candidate")
+              },
+              "rc_decision": candidate["decision"],
+              "application_image_id": release.get("image_id"),
+              "application_registry_reference": app_receipt.get("registry_reference"),
+              "application_registry_digest": app_receipt.get("registry_digest"),
+              "sidecar_image_id": sidecar.get("image_id"),
+              "sidecar_registry_reference": sidecar_receipt.get("registry_reference"),
+              "sidecar_registry_digest": sidecar_receipt.get("registry_digest"),
+              "recovery_status": recovery.get("status"),
+              "image_pushed": True,
+              "deployment_performed": False,
+              "external_effects_authorized": False,
+          }
+          (root / "production-candidate-go.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          selected = root / "selected-official-evidence"
+          selected.mkdir(parents=True, exist_ok=True)
+          for path in (
+              root / "build/rc-test/candidate-manifest.json",
+              root / "build/rc-test/artifact-scan.json",
+              root / "build/release-image/release-image-manifest.json",
+              root / "build/sidecar-image/sidecar-image-manifest.json",
+              root / "build/controlled/registry-publish-receipt.json",
+              root / "build/controlled/whatsapp-sidecar-registry-publish-receipt.json",
+              root / "recovery/recovery-evidence.json",
+              root / "final/controlled-candidate-manifest.json",
+              root / "final/canonical-acceptance-receipt.json",
+              root / "final/artifact-scan.json",
+          ):
+              shutil.copy2(path, selected / path.name)
+          PY
+
+      - name: Verify observer metadata contains no credentials
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          root = Path("artifacts/final-postmerge-observer")
+          patterns = (
+              re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+              re.compile(r"\bgh[opsu]_[A-Za-z0-9_]{20,}\b"),
+              re.compile(r"(?i)\b(?:password|secret|token)\s*[:=]\s*[^\s\"']{8,}"),
+          )
+          findings = []
+          for path in root.glob("*.json"):
+              text = path.read_text(encoding="utf-8", errors="replace")
+              if any(pattern.search(text) for pattern in patterns):
+                  findings.append(str(path))
+          if findings:
+              raise SystemExit("credential-like material found: " + ", ".join(findings))
+          PY
+
+      - name: Upload final production-candidate observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: final-postmerge-observer-2c4b5bed
+          path: |
+            artifacts/final-postmerge-observer/workflow-observation.json
+            artifacts/final-postmerge-observer/workflow-result.json
+            artifacts/final-postmerge-observer/artifacts.json
+            artifacts/final-postmerge-observer/production-candidate-go.json
+            artifacts/final-postmerge-observer/selected-official-evidence
+          retention-days: 14
+          if-no-files-found: warn
