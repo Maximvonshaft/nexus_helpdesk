@@ -14,22 +14,22 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
-      TARGET_SHA: 9b40253593463ac308e663ef9e0f96c3d87be113
-      SOURCE_SHA: 9b40253593463ac308e663ef9e0f96c3d87be113
-      RC_SOURCE_SHA: 9b40253593463ac308e663ef9e0f96c3d87be113
+      TARGET_SHA: 4bc36c05500dc97f30be75c6869802b4a511a9fe
+      SOURCE_SHA: 4bc36c05500dc97f30be75c6869802b4a511a9fe
+      RC_SOURCE_SHA: 4bc36c05500dc97f30be75c6869802b4a511a9fe
       RC_ENV_FILE: deploy/.env.rc-test
       RC_EVIDENCE_DIR: artifacts/rc-test
       RC_RUN_BROWSER_SMOKE: "true"
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
       COMPOSE_PROJECT_NAME: nexus_pr912_rc_${{ github.run_id }}
-      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-9b40253593463ac308e663ef9e0f96c3d87be113
+      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-4bc36c05500dc97f30be75c6869802b4a511a9fe
       RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
       RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: 9b40253593463ac308e663ef9e0f96c3d87be113
+          ref: 4bc36c05500dc97f30be75c6869802b4a511a9fe
           fetch-depth: 0
           persist-credentials: false
 
@@ -73,7 +73,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pr912-controlled-rc-9b402535-${{ github.run_attempt }}
+          name: pr912-controlled-rc-4bc36c05-${{ github.run_attempt }}
           path: artifacts/rc-test
           retention-days: 3
           if-no-files-found: warn
