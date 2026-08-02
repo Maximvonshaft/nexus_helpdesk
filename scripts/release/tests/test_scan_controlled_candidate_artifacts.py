@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,18 @@ SPEC.loader.exec_module(MODULE)
 class ControlledCandidateArtifactScannerTests(unittest.TestCase):
     source = "f2aa9f0346abf6465551de507b0b8a2dfc3be6bc"
     final_prefix = Path("artifacts/final-controlled-candidate")
+    canonical_run_id = 30760307852
+    expected_repository = "Maximvonshaft/nexus_helpdesk"
+
+    def setUp(self) -> None:
+        self.previous_repository = os.environ.get("GITHUB_REPOSITORY")
+        os.environ["GITHUB_REPOSITORY"] = self.expected_repository
+
+    def tearDown(self) -> None:
+        if self.previous_repository is None:
+            os.environ.pop("GITHUB_REPOSITORY", None)
+        else:
+            os.environ["GITHUB_REPOSITORY"] = self.previous_repository
 
     def _write(self, root: Path, name: str, payload: dict) -> str:
         path = root / self.final_prefix / name
@@ -93,6 +106,18 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             "build_time": "2026-07-14T00:19:28Z",
             "app_version": "controlled-" + self.source,
         }
+        canonical_receipt = {
+            "schema": "nexus.canonical-acceptance-receipt.v1",
+            "workflow": "Canonical Acceptance",
+            "event": "push",
+            "conclusion": "success",
+            "source_sha": self.source,
+            "run_id": self.canonical_run_id,
+            "run_url": (
+                "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/"
+                + str(self.canonical_run_id)
+            ),
+        }
         final["candidate"]["whatsapp_sidecar"] = {
             "app_version": "controlled-" + self.source,
         }
@@ -107,6 +132,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
                 "whatsapp-sidecar-registry-publish-receipt.json",
                 sidecar_receipt,
             ),
+            self._write(root, "canonical-acceptance-receipt.json", canonical_receipt),
         ]
 
     def test_suppresses_only_validated_release_metadata_false_positives(self) -> None:
@@ -115,7 +141,7 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             paths = self._fixtures(root)
             findings, suppressed = MODULE.scan_controlled_candidate_files(root, paths)
             self.assertEqual(findings, [])
-            self.assertGreaterEqual(suppressed, 10)
+            self.assertGreaterEqual(suppressed, 11)
 
     def test_secret_finding_is_never_suppressed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -184,6 +210,78 @@ class ControlledCandidateArtifactScannerTests(unittest.TestCase):
             payload = json.loads(binding_path.read_text(encoding="utf-8"))
             payload["evaluated_on"] = "2026-02-31"
             binding_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_canonical_run_url_must_match_numeric_run_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            receipt_path = root / paths[6]
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            payload["run_url"] = (
+                "https://github.com/Maximvonshaft/nexus_helpdesk/actions/runs/12025550123"
+            )
+            receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_canonical_run_url_owner_must_match_workflow_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            receipt_path = root / paths[6]
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            payload["run_url"] = (
+                "https://github.com/12025550123/nexus_helpdesk/actions/runs/"
+                + str(self.canonical_run_id)
+            )
+            receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_canonical_run_url_repo_must_match_workflow_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            receipt_path = root / paths[6]
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            payload["run_url"] = (
+                "https://github.com/Maximvonshaft/12025550123/actions/runs/"
+                + str(self.canonical_run_id)
+            )
+            receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_canonical_run_url_fails_closed_without_workflow_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            os.environ.pop("GITHUB_REPOSITORY", None)
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            self.assertIn("artifact:phone", {finding.rule for finding in findings})
+
+    def test_canonical_receipt_must_keep_exact_governed_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            receipt_path = root / paths[6]
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            payload["operator_contact"] = "+382 67 123 456"
+            receipt_path.write_text(json.dumps(payload), encoding="utf-8")
+            findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
+            phone_findings = [finding for finding in findings if finding.rule == "artifact:phone"]
+            self.assertGreaterEqual(len(phone_findings), 2)
+
+    def test_canonical_receipt_requires_successful_push_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._fixtures(root)
+            receipt_path = root / paths[6]
+            payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+            payload["event"] = "pull_request"
+            receipt_path.write_text(json.dumps(payload), encoding="utf-8")
             findings, _ = MODULE.scan_controlled_candidate_files(root, paths)
             self.assertIn("artifact:phone", {finding.rule for finding in findings})
 
