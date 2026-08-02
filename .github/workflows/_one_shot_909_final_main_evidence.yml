@@ -23,7 +23,7 @@ jobs:
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
       COMPOSE_PROJECT_NAME: nexus_pr912_rc_${{ github.run_id }}
-      CANDIDATE_IMAGE: nexusdesk/helpdesk:pr912-rc-9b402535
+      CANDIDATE_IMAGE: nexusdesk/helpdesk:rc-test-9b40253593463ac308e663ef9e0f96c3d87be113
       RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
       RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     steps:
