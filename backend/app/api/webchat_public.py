@@ -28,11 +28,11 @@ from ..services.webchat_public_payload import parse_public_webchat_json, public_
 from ..services.webchat_rate_limit import enforce_webchat_rate_limit
 from ..services.webchat_origin_policy import public_cors_headers, set_public_cors
 from ..services.webchat_service import (
-    _hash_token as hash_webchat_visitor_token,
     _validate_token as validate_webchat_visitor_token,
-    add_visitor_message,
-    submit_card_action,
+    add_visitor_message_to_conversation,
+    submit_card_action_to_conversation,
 )
+from ..services.webchat_session_identity import origin_from_request
 from ..settings import get_settings
 from ..unit_of_work import managed_session
 from ..utils.time import utc_now
@@ -315,22 +315,9 @@ def _schedule_ai_turn_for_result(
 def _find_existing_action_response(
     db: Session,
     *,
-    public_conversation_id: str,
-    visitor_token: str,
+    conversation: WebchatConversation,
     payload: WebChatActionSubmitRequest,
 ) -> dict[str, Any] | None:
-    conversation = (
-        db.query(WebchatConversation)
-        .filter(WebchatConversation.public_id == public_conversation_id)
-        .first()
-    )
-    if (
-        not conversation
-        or hash_webchat_visitor_token(visitor_token)
-        != conversation.visitor_token_hash
-    ):
-        return None
-
     candidates = (
         db.query(WebchatCardAction)
         .filter(
@@ -447,19 +434,24 @@ def send_webchat_message(
                 status_code=404,
                 detail="webchat conversation not found",
             )
+        validate_webchat_visitor_token(
+            conversation,
+            visitor_token,
+        )
         enforce_webchat_rate_limit(
             db,
             request,
             tenant_key=conversation.tenant_key,
             conversation_id=conversation_id,
+            authorized_conversation=conversation,
         )
-        result = add_visitor_message(
+        result = add_visitor_message_to_conversation(
             db,
-            conversation_id,
-            visitor_token,
-            payload.body,
-            request,
+            conversation=conversation,
+            body=payload.body,
             client_message_id=payload.client_message_id,
+            message_type="text",
+            origin=origin_from_request(request),
         )
         result = _schedule_ai_turn_for_result(
             db,
@@ -533,6 +525,7 @@ def poll_webchat_messages(
             request,
             tenant_key=conversation.tenant_key,
             conversation_id=conversation_id,
+            authorized_conversation=conversation,
         )
         reconcile_webchat_ai_state(
             db,
@@ -584,25 +577,28 @@ def submit_webchat_action(
                 status_code=404,
                 detail="webchat conversation not found",
             )
+        validate_webchat_visitor_token(
+            conversation,
+            visitor_token,
+        )
         enforce_webchat_rate_limit(
             db,
             request,
             tenant_key=conversation.tenant_key,
             conversation_id=conversation_id,
+            authorized_conversation=conversation,
         )
         existing = _find_existing_action_response(
             db,
-            public_conversation_id=conversation_id,
-            visitor_token=visitor_token,
+            conversation=conversation,
             payload=payload,
         )
         if existing:
             return existing
-        result = submit_card_action(
+        result = submit_card_action_to_conversation(
             db,
-            conversation_id,
-            visitor_token,
-            payload,
-            request,
+            conversation=conversation,
+            payload=payload,
+            request=request,
         )
     return result

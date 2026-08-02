@@ -251,6 +251,118 @@ def test_rate_limit_bucket_uses_verified_server_tenant(
     assert captured["tenant_key"] == "tenant-a"
 
 
+def _authorized_conversation(db) -> WebchatConversation:
+    conversation = WebchatConversation(
+        public_id="wc_authorized_scope",
+        visitor_token_hash=hashlib.sha256(b"authorized-token").hexdigest(),
+        tenant_key="tenant-a",
+        channel_key="webchat",
+        origin="https://tenant-a.example",
+        status="open",
+    )
+    db.add(conversation)
+    db.flush()
+    db.add(
+        ConversationControl(
+            conversation_id=conversation.id,
+            tenant_key="tenant-a",
+            country_code="CH",
+            channel_key="webchat",
+        )
+    )
+    db.commit()
+    return conversation
+
+
+def test_authorized_followup_uses_persisted_scope_without_browser_origin(db) -> None:
+    binding = _binding(db)
+    conversation = _authorized_conversation(db)
+
+    scope = resolve_public_webchat_scope(
+        db,
+        request=_request(None),
+        requested_tenant_key=conversation.tenant_key,
+        requested_channel_key=conversation.channel_key,
+        conversation_id=conversation.public_id,
+        authorized_conversation=conversation,
+        app_env="production",
+    )
+
+    assert scope.tenant_key == conversation.tenant_key
+    assert scope.channel_key == conversation.channel_key
+    assert scope.country_code == "CH"
+    assert scope.normalized_origin == conversation.origin
+    assert scope.binding_id == binding.id
+    assert scope.authority == "server_origin_binding"
+
+
+def test_authorized_followup_rejects_explicit_forged_origin(db) -> None:
+    _binding(db)
+    conversation = _authorized_conversation(db)
+
+    with pytest.raises(HTTPException) as exc:
+        resolve_public_webchat_scope(
+            db,
+            request=_request("https://tenant-b.example"),
+            requested_tenant_key=conversation.tenant_key,
+            requested_channel_key=conversation.channel_key,
+            conversation_id=conversation.public_id,
+            authorized_conversation=conversation,
+            app_env="production",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "webchat_public_scope_mismatch"
+
+
+def test_unauthenticated_no_origin_request_still_requires_binding(db) -> None:
+    with pytest.raises(HTTPException) as exc:
+        resolve_public_webchat_scope(
+            db,
+            request=_request(None),
+            requested_tenant_key="default",
+            requested_channel_key="default",
+            conversation_id="wc_unknown",
+            app_env="production",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "webchat_public_binding_required"
+
+
+def test_authorized_voice_bucket_uses_verified_conversation_scope(
+    db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _binding(db)
+    conversation = _authorized_conversation(db)
+    captured: dict[str, str] = {}
+
+    def capture_bucket(*, request, tenant_key, conversation_id):
+        del request
+        captured["tenant_key"] = tenant_key
+        captured["conversation_id"] = str(conversation_id)
+        return "authorized-voice-bucket"
+
+    monkeypatch.setattr(webchat_rate_limit, "_bucket_key", capture_bucket)
+    monkeypatch.setattr(webchat_rate_limit, "_enforce_database", lambda _db, _key: None)
+    monkeypatch.setattr(webchat_rate_limit.settings, "app_env", "production")
+    monkeypatch.setattr(webchat_rate_limit.settings, "webchat_rate_limit_backend", "database")
+
+    webchat_rate_limit.enforce_webchat_rate_limit(
+        db,
+        _request(None),
+        tenant_key=conversation.tenant_key,
+        conversation_id=f"{conversation.public_id}:voice",
+        authorized_conversation=conversation,
+    )
+
+    assert captured == {
+        "tenant_key": "tenant-a",
+        "conversation_id": "wc_authorized_scope:voice",
+    }
+
+
 def test_nonproduction_client_scope_is_explicit(db) -> None:
     scope = resolve_public_webchat_scope(
         db,

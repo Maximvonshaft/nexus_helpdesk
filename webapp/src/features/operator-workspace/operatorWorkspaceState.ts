@@ -1,5 +1,12 @@
+import type { QueryClient } from '@tanstack/react-query'
 import type { OperatorWorkspaceThread } from '@/lib/operatorWorkspaceApi'
 import type { WebchatMessage } from '@/lib/types'
+
+const OPERATOR_WORKSPACE_ASSIGNMENT_QUERY_ROOTS = [
+  ['operatorWorkspaceSessionDeepLink'],
+  ['operatorWorkspaceQueue'],
+  ['operatorWorkspaceThread'],
+] as const
 
 export function initialWorkspaceQueueId() {
   if (typeof window === 'undefined') return null
@@ -13,6 +20,14 @@ export function initialWorkspaceSessionKey() {
 
 export function hasWorkspaceCapability(capabilities: Set<string>, ...values: string[]) {
   return values.some((value) => capabilities.has(value))
+}
+
+export async function refreshOperatorWorkspaceAssignmentState(queryClient: QueryClient) {
+  await Promise.all(
+    OPERATOR_WORKSPACE_ASSIGNMENT_QUERY_ROOTS.map((queryKey) => (
+      queryClient.invalidateQueries({ queryKey })
+    )),
+  )
 }
 
 function mergeMessages(...groups: WebchatMessage[][]) {

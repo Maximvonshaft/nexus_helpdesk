@@ -108,6 +108,29 @@ def _binding_for_origin(db: Session, origin: str) -> WebchatPublicOriginBinding 
     )
 
 
+def _conversation_country_code(
+    db: Session,
+    conversation: WebchatConversation,
+) -> str | None:
+    ticket = (
+        db.get(Ticket, conversation.ticket_id)
+        if conversation.ticket_id is not None
+        else None
+    )
+    control = (
+        db.query(ConversationControl)
+        .filter(ConversationControl.conversation_id == conversation.id)
+        .first()
+    )
+    return normalize_country_code(
+        ticket.country_code
+        if ticket is not None
+        else control.country_code
+        if control is not None
+        else None
+    )
+
+
 def resolve_public_webchat_scope(
     db: Session,
     *,
@@ -116,27 +139,65 @@ def resolve_public_webchat_scope(
     requested_channel_key: str | None,
     conversation_id: str | None = None,
     app_env: str | None = None,
+    authorized_conversation: WebchatConversation | None = None,
 ) -> VerifiedWebchatPublicScope:
     environment = str(app_env or settings.app_env or "production").strip().lower()
-    origin = request_public_origin(request)
+    request_origin = request_public_origin(request)
+    existing = authorized_conversation
+    if existing is None and conversation_id:
+        existing = (
+            db.query(WebchatConversation)
+            .filter(WebchatConversation.public_id == str(conversation_id).strip())
+            .first()
+        )
+
+    if authorized_conversation is not None:
+        persisted_origin = (
+            normalize_public_origin(existing.origin)
+            if existing is not None and existing.origin
+            else None
+        )
+        if request_origin is not None and request_origin != persisted_origin:
+            raise _scope_mismatch()
+        origin = persisted_origin
+    else:
+        origin = request_origin
     binding = _binding_for_origin(db, origin) if origin else None
 
     if binding is None:
-        if environment not in _NON_PRODUCTION_ENVS:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="webchat_public_binding_required",
+        if authorized_conversation is not None and environment in _NON_PRODUCTION_ENVS:
+            scope = VerifiedWebchatPublicScope(
+                tenant_key=_normalize_scope_key(
+                    authorized_conversation.tenant_key,
+                    field="tenant",
+                    default="default",
+                ),
+                country_code=_conversation_country_code(db, authorized_conversation),
+                channel_key=_normalize_scope_key(
+                    authorized_conversation.channel_key,
+                    field="channel",
+                    default="default",
+                ),
+                normalized_origin=origin,
+                binding_id=None,
+                authority="authorized_conversation",
             )
-        tenant = _normalize_scope_key(requested_tenant_key, field="tenant", default="default")
-        channel = _normalize_scope_key(requested_channel_key, field="channel", default="default")
-        scope = VerifiedWebchatPublicScope(
-            tenant_key=tenant,
-            country_code=None,
-            channel_key=channel,
-            normalized_origin=origin,
-            binding_id=None,
-            authority="non_production_legacy",
-        )
+        else:
+            if environment not in _NON_PRODUCTION_ENVS:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="webchat_public_binding_required",
+                )
+            tenant = _normalize_scope_key(requested_tenant_key, field="tenant", default="default")
+            channel = _normalize_scope_key(requested_channel_key, field="channel", default="default")
+            scope = VerifiedWebchatPublicScope(
+                tenant_key=tenant,
+                country_code=None,
+                channel_key=channel,
+                normalized_origin=origin,
+                binding_id=None,
+                authority="non_production_legacy",
+            )
     else:
         tenant = _normalize_scope_key(binding.tenant_key, field="tenant", default="default")
         country = normalize_country_code(binding.country_code)
@@ -161,34 +222,16 @@ def resolve_public_webchat_scope(
             authority="server_origin_binding",
         )
 
-    if conversation_id:
-        existing = (
-            db.query(WebchatConversation)
-            .filter(WebchatConversation.public_id == str(conversation_id).strip())
-            .first()
-        )
-        if existing is not None:
-            existing_origin = normalize_public_origin(existing.origin) if existing.origin else None
-            ticket = db.get(Ticket, existing.ticket_id) if existing.ticket_id is not None else None
-            control = (
-                db.query(ConversationControl)
-                .filter(ConversationControl.conversation_id == existing.id)
-                .first()
-            )
-            existing_country = normalize_country_code(
-                ticket.country_code
-                if ticket is not None
-                else control.country_code
-                if control is not None
-                else None
-            )
-            if (
-                existing.tenant_key != scope.tenant_key
-                or existing.channel_key != scope.channel_key
-                or existing_origin != scope.normalized_origin
-                or existing_country != scope.country_code
-            ):
-                raise _scope_mismatch()
+    if existing is not None:
+        existing_origin = normalize_public_origin(existing.origin) if existing.origin else None
+        existing_country = _conversation_country_code(db, existing)
+        if (
+            existing.tenant_key != scope.tenant_key
+            or existing.channel_key != scope.channel_key
+            or existing_origin != scope.normalized_origin
+            or existing_country != scope.country_code
+        ):
+            raise _scope_mismatch()
     db.info[_SESSION_SCOPE_KEY] = scope
     return scope
 

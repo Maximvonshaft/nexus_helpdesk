@@ -52,6 +52,7 @@ from ..api.ticket_perf import router as ticket_perf_router
 from ..api.tickets import router as tickets_router
 from ..api.webchat import router as webchat_router
 from ..api.webchat_events import router as webchat_events_router
+from ..api.webchat_preauth import enforce_webchat_conversation_preauth
 from ..api.webchat_voice import router as webchat_voice_router
 from ..api.webchat_ws import router as webchat_ws_router
 from ..api.whatsapp_integration import router as whatsapp_integration_router
@@ -167,4 +168,11 @@ def register_api_routers(app: FastAPI) -> None:
         whatsapp_media_operator_router,
         webchat_router,
     ):
-        app.include_router(router)
+        app.include_router(
+            router,
+            dependencies=(
+                [Depends(enforce_webchat_conversation_preauth)]
+                if router is webchat_voice_router
+                else None
+            ),
+        )
