@@ -23,7 +23,7 @@ jobs:
       RC_RUN_BROWSER_SMOKE: "true"
       RC_BASE_URL: http://127.0.0.1:18083
       RC_PUBLIC_ORIGIN: http://127.0.0.1:18083
-      COMPOSE_PROJECT_NAME: nexus_pr912_${{ github.run_id }}
+      COMPOSE_PROJECT_NAME: nexus_pr912_rc_${{ github.run_id }}
       CANDIDATE_IMAGE: nexusdesk/helpdesk:pr912-rc-1335172b36431857206ee949811b97ff228e6b83
       RC_POSTGRES_IMAGE_PIN: pgvector/pgvector@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
       RC_NGINX_IMAGE_PIN: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
@@ -54,7 +54,7 @@ jobs:
             --arg parent_sha "$(git rev-parse HEAD^)" \
             --argjson workflow_run_id "${{ github.run_id }}" \
             '{
-              schema: "nexus.pr912.controlled_rc_witness.v3",
+              schema: "nexus.controlled_rc_witness.v3",
               checkout_sha: $checkout_sha,
               expected_main_sha: $expected_main_sha,
               observed_main_sha: $observed_main_sha,
@@ -108,7 +108,7 @@ jobs:
             --arg decision "$(jq -r '.decision' "$manifest")" \
             --arg image_digest "$(jq -r '.candidate.image_id' "$manifest")" \
             '{
-              schema: "nexus.pr912.controlled_rc_witness_result.v2",
+              schema: "nexus.controlled_rc_witness_result.v2",
               status: "pass",
               source_sha: $source_sha,
               decision: $decision,
