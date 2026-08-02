@@ -326,6 +326,21 @@ def submit_card_action(
         public_id=public_id,
         visitor_token=visitor_token,
     )
+    return submit_card_action_to_conversation(
+        db,
+        conversation=conversation,
+        payload=payload,
+        request=request,
+    )
+
+
+def submit_card_action_to_conversation(
+    db: Session,
+    *,
+    conversation: WebchatConversation,
+    payload: WebChatActionSubmitRequest,
+    request: Request,
+) -> dict[str, Any]:
     card_message = (
         db.query(WebchatMessage)
         .filter(

@@ -13,6 +13,7 @@ const paths = {
   actions: 'src/features/operator-workspace/OperatorWorkspaceActions.tsx',
   closure: 'src/features/operator-workspace/OperatorWorkspaceClosure.tsx',
   state: 'src/features/operator-workspace/operatorWorkspaceState.ts',
+  presence: 'src/app/AgentPresenceControl.tsx',
   api: 'src/lib/operatorWorkspaceApi.ts',
 }
 for (const path of Object.values(paths)) assert.equal(existsSync(resolve(root, path)), true, path)
@@ -58,6 +59,23 @@ test('workspace preserves drafts, deep links and mobile reachability', () => {
   for (const label of ['待处理', '任务详情', '客户沟通', '操作']) assert.match(source, new RegExp(label))
   assert.match(read(paths.queue), /<Tabs/)
   assert.match(read(paths.conversation), /newMessageCount/)
+})
+
+test('every assignment-capable presence response refreshes workspace projections', () => {
+  const presence = read(paths.presence)
+  const state = read(paths.state)
+  assert.match(presence, /refreshOperatorWorkspaceAssignmentState/)
+  assert.doesNotMatch(presence, /assignmentProjectionChanged/)
+  assert.match(presence, /queryClient\.setQueryData\(STATE_QUERY_KEY, next\)[\s\S]*await refreshOperatorWorkspaceAssignmentState\(queryClient\)/)
+  assert.match(presence, /onSuccess:\s*applyAgentState/)
+  assert.match(presence, /\.then\(applyAgentState\)/)
+  assert.match(state, /refreshOperatorWorkspaceAssignmentState/)
+  assert.match(state, /Promise\.all/)
+  assert.match(state, /invalidateQueries/)
+  for (const queryRoot of ['operatorWorkspaceSessionDeepLink', 'operatorWorkspaceQueue', 'operatorWorkspaceThread']) {
+    assert.match(page, new RegExp(queryRoot))
+    assert.match(state, new RegExp(queryRoot))
+  }
 })
 
 test('workspace keeps truthful progress, action safety and operator language', () => {
