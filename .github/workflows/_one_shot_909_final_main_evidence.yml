@@ -70,9 +70,10 @@ jobs:
           test "$(jq -r '.candidate.source_sha' artifacts/rc-test/candidate-manifest.json)" = "$TARGET_SHA"
 
       - name: Upload scanned RC evidence
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pr912-controlled-rc-8df0c97b
+          name: pr912-controlled-rc-8df0c97b-${{ github.run_attempt }}
           path: artifacts/rc-test
           retention-days: 3
-          if-no-files-found: error
+          if-no-files-found: warn
