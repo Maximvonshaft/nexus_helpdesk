@@ -111,15 +111,24 @@ def test_retired_telephony_paths_are_permanently_gated():
         assert marker in gate
 
 
-def test_database_rate_limit_resets_expired_bucket_instead_of_duplicate_insert():
+def test_database_rate_limit_normalizes_and_resets_expired_bucket_without_duplicate_insert():
     rate_limit = RATE_LIMIT.read_text(encoding="utf-8")
 
+    assert "def _normalize_database_window_start(" in rate_limit
+    assert "return ensure_utc(value)" in rate_limit
+    assert "datetime.fromisoformat(candidate)" in rate_limit
     assert "if existing is None:" in rate_limit
-    assert 'if existing["window_start"] is None or existing["window_start"] < window_start:' in rate_limit
+    assert "existing_window_start = _normalize_database_window_start(" in rate_limit
+    assert 'existing["window_start"]' in rate_limit
+    expiry_guard = (
+        "if existing_window_start is None or "
+        "existing_window_start < window_start:"
+    )
+    assert expiry_guard in rate_limit
     assert "SET window_start = :window_start, request_count = 1, updated_at = :updated_at" in rate_limit
     assert "UPDATE webchat_rate_limits" in rate_limit
-    reset_block = rate_limit.split(
-        'if existing["window_start"] is None or existing["window_start"] < window_start:',
+    reset_block = rate_limit.split(expiry_guard, 1)[1].split(
+        "request_count = int",
         1,
-    )[1].split("request_count = int", 1)[0]
+    )[0]
     assert "INSERT INTO webchat_rate_limits" not in reset_block
