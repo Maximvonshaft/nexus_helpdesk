@@ -64,7 +64,6 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         for marker in (
             "github.event.workflow_run.conclusion == 'success'",
             "github.event.workflow_run.event == 'push'",
-            "github.event.workflow_run.head_branch == 'main'",
             "CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}",
             'test "$TRIGGER_NAME" = "Canonical Acceptance"',
             'test "$TRIGGER_EVENT" = "push"',
@@ -82,6 +81,25 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
             "development-fast:",
         ):
             self.assertIn(marker, CANONICAL)
+
+    def test_guard_runs_for_successful_push_and_checks_main_inside_job(self) -> None:
+        guard = WORKFLOW[
+            WORKFLOW.index("  guard-main:") : WORKFLOW.index("  build-assure-publish:")
+        ]
+        job_if = guard[
+            guard.index("    if: >-") : guard.index("    permissions:")
+        ]
+        self.assertIn(
+            "github.event.workflow_run.conclusion == 'success'",
+            job_if,
+        )
+        self.assertIn("github.event.workflow_run.event == 'push'", job_if)
+        self.assertNotIn("github.event.workflow_run.head_branch", job_if)
+        self.assertIn('test "$TRIGGER_BRANCH" = "main"', guard)
+        self.assertIn(
+            'test "$(git rev-parse origin/main)" = "$SOURCE_SHA"',
+            guard,
+        )
 
     def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
