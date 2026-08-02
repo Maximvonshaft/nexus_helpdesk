@@ -1,0 +1,87 @@
+name: one-shot-898-patch-controlled-guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/898-controlled-convergence-trigger-guard'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/898-controlled-convergence-trigger-guard
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply fail-closed trigger repair and remove one-shot workflow
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow_path = Path('.github/workflows/controlled-candidate-convergence.yml')
+          workflow = workflow_path.read_text(encoding='utf-8')
+          old_guard = """    if: >-
+              github.event.workflow_run.conclusion == 'success' &&
+              github.event.workflow_run.event == 'push' &&
+              github.event.workflow_run.head_branch == 'main'
+          """
+          new_guard = """    if: >-
+              github.event.workflow_run.conclusion == 'success' &&
+              github.event.workflow_run.event == 'push'
+          """
+          if workflow.count(old_guard) != 1:
+              raise SystemExit('controlled guard source contract did not match exactly once')
+          workflow_path.write_text(workflow.replace(old_guard, new_guard), encoding='utf-8')
+
+          test_path = Path('scripts/release/tests/test_controlled_candidate_workflow_contract.py')
+          tests = test_path.read_text(encoding='utf-8')
+          anchor = """    def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
+          """
+          inserted = """    def test_guard_runs_for_successful_push_and_checks_main_inside_job(self) -> None:
+              guard = WORKFLOW[
+                  WORKFLOW.index(\"  guard-main:\") : WORKFLOW.index(\"  build-assure-publish:\")
+              ]
+              job_if = guard[guard.index(\"    if: >-\") : guard.index(\"    permissions:\")]
+              self.assertIn(
+                  \"github.event.workflow_run.conclusion == 'success'\",
+                  job_if,
+              )
+              self.assertIn(\"github.event.workflow_run.event == 'push'\", job_if)
+              self.assertNotIn(\"github.event.workflow_run.head_branch\", job_if)
+              self.assertIn('test \"$TRIGGER_BRANCH\" = \"main\"', guard)
+              self.assertIn(
+                  'test \"$(git rev-parse origin/main)\" = \"$SOURCE_SHA\"',
+                  guard,
+              )
+
+          """
+          if tests.count(anchor) != 1:
+              raise SystemExit('workflow contract test insertion anchor did not match exactly once')
+          test_path.write_text(tests.replace(anchor, inserted + anchor), encoding='utf-8')
+
+          Path('.github/workflows/_one_shot_898_patch_controlled_guard.yml').unlink()
+          PY
+
+          python scripts/release/tests/test_controlled_candidate_workflow_contract.py
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'.github/workflows/_one_shot_898_patch_controlled_guard.yml\n.github/workflows/controlled-candidate-convergence.yml\nscripts/release/tests/test_controlled_candidate_workflow_contract.py'
+
+      - name: Commit clean repair candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ci: make exact-main controlled convergence guard executable"
+          git push origin HEAD:fix/898-controlled-convergence-trigger-guard
