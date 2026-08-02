@@ -46,7 +46,12 @@ from ..services.voice_session_service import (
 from .deps import get_current_user
 
 logger = logging.getLogger(__name__)
+# Only visitor Conversation routes live on ``router``. Bootstrap attaches the
+# pre-auth admission authority to this router and nowhere else.
 router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
+# Authenticated operator APIs and the public runtime capability document must
+# remain outside the anonymous client-IP admission budget.
+unthrottled_router = APIRouter(prefix="/api/webchat", tags=["webchat-voice"])
 
 _EMPTY_CREDENTIAL_FIELDS = {
     "participant_token",
@@ -159,7 +164,7 @@ def end_visitor_voice_session(
             )
 
 
-@router.get("/admin/tickets/{ticket_id}/voice/sessions")
+@unthrottled_router.get("/admin/tickets/{ticket_id}/voice/sessions")
 def list_ticket_voice_sessions(
     ticket_id: int,
     db: Session = Depends(get_db),
@@ -174,7 +179,7 @@ def list_ticket_voice_sessions(
     )
 
 
-@router.get("/admin/voice/sessions")
+@unthrottled_router.get("/admin/voice/sessions")
 def list_incoming_voice_sessions(
     status: str = "ringing",
     limit: int = 50,
@@ -192,7 +197,7 @@ def list_incoming_voice_sessions(
         )
 
 
-@router.get(
+@unthrottled_router.get(
     "/admin/voice/{voice_session_id}/evidence",
     response_model=WebchatVoiceEvidenceResponse,
 )
@@ -210,7 +215,7 @@ def read_voice_evidence(
     )
 
 
-@router.get(
+@unthrottled_router.get(
     "/admin/voice/{voice_session_id}/actions",
     response_model=WebchatVoiceActionList,
 )
@@ -228,7 +233,7 @@ def read_voice_actions(
     )
 
 
-@router.post("/admin/voice/{voice_session_id}/accept")
+@unthrottled_router.post("/admin/voice/{voice_session_id}/accept")
 def accept_voice_session(
     voice_session_id: str,
     db: Session = Depends(get_db),
@@ -263,7 +268,7 @@ def accept_voice_session(
         ) from None
 
 
-@router.post("/admin/voice/{voice_session_id}/reject")
+@unthrottled_router.post("/admin/voice/{voice_session_id}/reject")
 def reject_voice_session(
     voice_session_id: str,
     payload: WebchatVoiceRejectRequest | None = None,
@@ -281,7 +286,7 @@ def reject_voice_session(
         )
 
 
-@router.post(
+@unthrottled_router.post(
     "/admin/voice/{voice_session_id}/notes",
     response_model=WebchatVoiceNoteResponse,
 )
@@ -301,7 +306,7 @@ def save_voice_note(
         )
 
 
-@router.post(
+@unthrottled_router.post(
     "/admin/voice/{voice_session_id}/actions",
     response_model=WebchatVoiceActionResponse,
 )
@@ -336,7 +341,7 @@ def create_voice_action(
         ) from None
 
 
-@router.post(
+@unthrottled_router.post(
     "/admin/voice/{voice_session_id}/speedaf/callback",
     response_model=SpeedafVoiceCallbackResponse,
 )
@@ -359,7 +364,7 @@ def queue_voice_speedaf_callback(
         )
 
 
-@router.post("/admin/voice/{voice_session_id}/end")
+@unthrottled_router.post("/admin/voice/{voice_session_id}/end")
 def end_voice_session(
     voice_session_id: str,
     db: Session = Depends(get_db),
@@ -375,7 +380,7 @@ def end_voice_session(
         )
 
 
-@router.get("/voice/runtime-config")
+@unthrottled_router.get("/voice/runtime-config")
 def voice_runtime_config() -> dict:
     config = load_webchat_voice_runtime_config()
     return {
