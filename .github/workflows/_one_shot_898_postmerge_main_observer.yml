@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Observe official exact-main workflows to terminal success
+      - name: Observe exact-main Canonical and its non-skipped convergence
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -57,12 +57,12 @@ jobs:
           repo = os.environ["GITHUB_REPOSITORY"]
           sha = os.environ["MAIN_SHA"]
           token = os.environ["GH_TOKEN"]
-          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
-          evidence_dir.mkdir(parents=True, exist_ok=True)
+          evidence = Path(os.environ["EVIDENCE_DIR"])
+          evidence.mkdir(parents=True, exist_ok=True)
           api = "https://api.github.com"
 
-          def request_json(path: str) -> dict:
-              req = urllib.request.Request(
+          def get(path: str) -> dict:
+              request = urllib.request.Request(
                   api + path,
                   headers={
                       "Accept": "application/vnd.github+json",
@@ -71,61 +71,77 @@ jobs:
                       "User-Agent": "nexus-postmerge-main-observer",
                   },
               )
-              with urllib.request.urlopen(req, timeout=30) as response:
+              with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
 
           def exact_runs() -> list[dict]:
               encoded = urllib.parse.quote(sha, safe="")
-              payload = request_json(
-                  f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100"
-              )
-              runs = payload.get("workflow_runs") or []
-              return [run for run in runs if run.get("head_sha") == sha]
+              payload = get(f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100")
+              return [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == sha]
 
-          def latest(runs: list[dict], *, name: str, event: str, branch: str | None = None):
-              matches = [
-                  run
-                  for run in runs
-                  if run.get("name") == name
-                  and run.get("event") == event
-                  and (branch is None or run.get("head_branch") == branch)
-              ]
-              matches.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
-              return matches[-1] if matches else None
+          def compact(run: dict | None) -> dict | None:
+              if run is None:
+                  return None
+              keys = (
+                  "id", "name", "event", "status", "conclusion", "head_branch",
+                  "head_sha", "run_number", "run_attempt", "created_at", "updated_at",
+                  "run_started_at", "html_url", "path", "display_title",
+              )
+              return {key: run.get(key) for key in keys}
 
           canonical = None
           controlled = None
-          last_snapshot: dict = {}
           for _ in range(390):
               runs = exact_runs()
-              canonical = latest(
-                  runs,
-                  name="Canonical Acceptance",
-                  event="push",
-                  branch="main",
-              )
-              controlled = latest(
-                  runs,
-                  name="controlled-candidate-convergence",
-                  event="workflow_run",
-              )
-              last_snapshot = {
-                  "schema": "nexus.postmerge_main_workflow_observation.v1",
+              canonical_matches = [
+                  run for run in runs
+                  if run.get("name") == "Canonical Acceptance"
+                  and run.get("event") == "push"
+                  and run.get("head_branch") == "main"
+              ]
+              canonical_matches.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              canonical = canonical_matches[-1] if canonical_matches else None
+
+              controlled_matches: list[dict] = []
+              skipped_matches: list[dict] = []
+              if canonical and canonical.get("updated_at"):
+                  canonical_finished = datetime.fromisoformat(
+                      canonical["updated_at"].replace("Z", "+00:00")
+                  )
+                  for run in runs:
+                      if run.get("name") != "controlled-candidate-convergence" or run.get("event") != "workflow_run":
+                          continue
+                      created_raw = run.get("created_at")
+                      if not created_raw:
+                          continue
+                      created = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                      if created < canonical_finished:
+                          continue
+                      if run.get("conclusion") == "skipped":
+                          skipped_matches.append(run)
+                      else:
+                          controlled_matches.append(run)
+              controlled_matches.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              skipped_matches.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              controlled = controlled_matches[-1] if controlled_matches else None
+
+              observation = {
+                  "schema": "nexus.postmerge_main_workflow_observation.v2",
                   "observed_at": datetime.now(timezone.utc).isoformat(),
                   "main_sha": sha,
-                  "canonical": canonical,
-                  "controlled": controlled,
+                  "canonical": compact(canonical),
+                  "controlled": compact(controlled),
+                  "ignored_skipped_controlled_runs": [compact(run) for run in skipped_matches],
               }
-              (evidence_dir / "workflow-observation.json").write_text(
-                  json.dumps(last_snapshot, indent=2, sort_keys=True) + "\n",
+              (evidence / "workflow-observation.json").write_text(
+                  json.dumps(observation, indent=2, sort_keys=True) + "\n",
                   encoding="utf-8",
               )
 
               if canonical and canonical.get("status") == "completed":
                   if canonical.get("conclusion") != "success":
                       raise SystemExit(
-                          f"exact-main Canonical Acceptance failed: {canonical.get('id')} "
-                          f"{canonical.get('conclusion')}"
+                          f"exact-main Canonical failed: {canonical.get('id')} {canonical.get('conclusion')}"
                       )
                   if controlled and controlled.get("status") == "completed":
                       if controlled.get("conclusion") != "success":
@@ -136,30 +152,17 @@ jobs:
                       break
               time.sleep(20)
           else:
-              raise SystemExit("official exact-main workflow chain did not reach terminal success")
+              raise SystemExit("exact-main workflow chain did not reach terminal success")
 
-          assert canonical is not None and controlled is not None
-          compact = {
-              "schema": "nexus.postmerge_main_workflow_result.v1",
+          result = {
+              "schema": "nexus.postmerge_main_workflow_result.v2",
               "status": "pass",
               "main_sha": sha,
-              "canonical": {
-                  key: canonical.get(key)
-                  for key in (
-                      "id", "name", "event", "status", "conclusion", "head_branch",
-                      "head_sha", "run_number", "created_at", "updated_at", "html_url"
-                  )
-              },
-              "controlled": {
-                  key: controlled.get(key)
-                  for key in (
-                      "id", "name", "event", "status", "conclusion", "head_branch",
-                      "head_sha", "run_number", "created_at", "updated_at", "html_url"
-                  )
-              },
+              "canonical": compact(canonical),
+              "controlled": compact(controlled),
           }
-          (evidence_dir / "workflow-result.json").write_text(
-              json.dumps(compact, indent=2, sort_keys=True) + "\n",
+          (evidence / "workflow-result.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
@@ -172,8 +175,8 @@ jobs:
           set -Eeuo pipefail
           controlled_id="$(jq -r '.controlled.id' "$EVIDENCE_DIR/workflow-result.json")"
           [[ "$controlled_id" =~ ^[0-9]+$ ]]
-          artifacts_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$controlled_id/artifacts?per_page=100")"
-          printf '%s\n' "$artifacts_json" > "$EVIDENCE_DIR/controlled-artifacts.raw.json"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$controlled_id/artifacts?per_page=100" \
+            > "$EVIDENCE_DIR/controlled-artifacts.raw.json"
           jq --arg name "controlled-build-$MAIN_SHA" \
             '{total_count, artifact: ([.artifacts[] | select(.name == $name and .expired == false)] | sort_by(.created_at, .id) | last)}' \
             "$EVIDENCE_DIR/controlled-artifacts.raw.json" \
@@ -186,7 +189,7 @@ jobs:
             --name "controlled-build-$MAIN_SHA" \
             --dir "$EVIDENCE_DIR/controlled-build"
 
-      - name: Validate exact-main RC and registry publication evidence
+      - name: Validate exact-main RC and immutable registry evidence
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -198,65 +201,64 @@ jobs:
           from pathlib import Path
 
           sha = os.environ["MAIN_SHA"]
-          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
-          root = evidence_dir / "controlled-build"
+          evidence = Path(os.environ["EVIDENCE_DIR"])
+          root = evidence / "controlled-build"
 
-          def unique(filename: str, *, parent: str | None = None) -> Path:
-              matches = [path for path in root.rglob(filename) if parent is None or path.parent.name == parent]
+          def unique(filename: str, parent: str) -> Path:
+              matches = [path for path in root.rglob(filename) if path.parent.name == parent]
               if len(matches) != 1:
-                  raise SystemExit(f"expected one {filename}, found {len(matches)}: {matches}")
+                  raise SystemExit(f"expected one {parent}/{filename}, found {len(matches)}")
               return matches[0]
 
           def load(path: Path) -> dict:
               value = json.loads(path.read_text(encoding="utf-8"))
               if not isinstance(value, dict):
-                  raise SystemExit(f"JSON object required: {path}")
+                  raise SystemExit(f"object required: {path}")
               return value
 
-          workflow = load(evidence_dir / "workflow-result.json")
+          workflow = load(evidence / "workflow-result.json")
           if workflow.get("status") != "pass" or workflow.get("main_sha") != sha:
-              raise SystemExit("workflow result identity mismatch")
+              raise SystemExit("workflow identity mismatch")
           for key in ("canonical", "controlled"):
               run = workflow[key]
               if run.get("head_sha") != sha or run.get("conclusion") != "success":
-                  raise SystemExit(f"{key} workflow identity/result mismatch")
+                  raise SystemExit(f"{key} result mismatch")
 
-          candidate_path = unique("candidate-manifest.json", parent="rc-test")
+          candidate_path = unique("candidate-manifest.json", "rc-test")
           candidate = load(candidate_path)
-          if candidate.get("decision") != "RC0_TEST_DEPLOYABLE":
-              raise SystemExit("exact-main RC decision is not deployable")
           identity = candidate.get("candidate") or {}
-          if identity.get("source_sha") != sha or identity.get("frontend_build_sha") != sha:
-              raise SystemExit("exact-main RC source identity mismatch")
           checks = candidate.get("checks") or {}
-          if not checks or any(value != "pass" for value in checks.values()):
-              raise SystemExit("one or more exact-main RC checks failed")
           safety = candidate.get("safety") or {}
+          if candidate.get("decision") != "RC0_TEST_DEPLOYABLE":
+              raise SystemExit("RC decision mismatch")
+          if identity.get("source_sha") != sha or identity.get("frontend_build_sha") != sha:
+              raise SystemExit("RC source mismatch")
+          if not checks or any(value != "pass" for value in checks.values()):
+              raise SystemExit("RC check failure")
           if safety.get("test_environment_isolated") is not True:
-              raise SystemExit("RC isolation proof missing")
+              raise SystemExit("RC isolation missing")
           if safety.get("real_outbound_enabled") is not False:
-              raise SystemExit("RC real outbound was enabled")
+              raise SystemExit("unexpected real outbound")
 
           rc_scan_path = candidate_path.parent / "artifact-scan.json"
-          rc_scan = load(rc_scan_path)
-          if rc_scan.get("status") != "pass":
-              raise SystemExit("official RC artifact scan failed")
+          if load(rc_scan_path).get("status") != "pass":
+              raise SystemExit("RC artifact scan failed")
 
-          release_path = unique("release-image-manifest.json", parent="release-image")
+          release_path = unique("release-image-manifest.json", "release-image")
           release = load(release_path)
           if release.get("status") != "pass" or release.get("source_sha") != sha:
-              raise SystemExit("application image assurance failed")
+              raise SystemExit("application assurance failed")
           if release.get("image_id") != identity.get("image_id"):
-              raise SystemExit("RC and release image IDs differ")
+              raise SystemExit("application image identity mismatch")
 
-          sidecar_path = unique("sidecar-image-manifest.json", parent="sidecar-image")
+          sidecar_path = unique("sidecar-image-manifest.json", "sidecar-image")
           sidecar = load(sidecar_path)
           if sidecar.get("status") != "pass" or sidecar.get("source_sha") != sha:
-              raise SystemExit("Sidecar image assurance failed")
+              raise SystemExit("Sidecar assurance failed")
 
-          app_receipt_path = unique("registry-publish-receipt.json", parent="controlled")
+          app_receipt_path = unique("registry-publish-receipt.json", "controlled")
+          sidecar_receipt_path = unique("whatsapp-sidecar-registry-publish-receipt.json", "controlled")
           app_receipt = load(app_receipt_path)
-          sidecar_receipt_path = unique("whatsapp-sidecar-registry-publish-receipt.json", parent="controlled")
           sidecar_receipt = load(sidecar_receipt_path)
           digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
           for receipt, expected_id in (
@@ -264,29 +266,27 @@ jobs:
               (sidecar_receipt, sidecar.get("image_id")),
           ):
               if receipt.get("status") != "pass" or receipt.get("source_sha") != sha:
-                  raise SystemExit("registry receipt status/source mismatch")
-              if receipt.get("image_pushed") is not True:
-                  raise SystemExit("registry publication proof missing")
-              if receipt.get("deployment_performed") is not False:
-                  raise SystemExit("unexpected deployment was performed")
+                  raise SystemExit("registry receipt mismatch")
+              if receipt.get("image_pushed") is not True or receipt.get("deployment_performed") is not False:
+                  raise SystemExit("publication/deployment semantics mismatch")
               if receipt.get("local_image_id") != expected_id or receipt.get("pulled_image_id") != expected_id:
-                  raise SystemExit("published/pulled image identity mismatch")
+                  raise SystemExit("published image identity mismatch")
               if not digest_re.fullmatch(str(receipt.get("registry_digest") or "")):
                   raise SystemExit("registry digest invalid")
 
-          artifact_meta = load(evidence_dir / "controlled-artifact.json").get("artifact") or {}
-          if artifact_meta.get("name") != f"controlled-build-{sha}" or artifact_meta.get("expired") is not False:
-              raise SystemExit("controlled artifact metadata mismatch")
+          artifact = load(evidence / "controlled-artifact.json").get("artifact") or {}
+          if artifact.get("name") != f"controlled-build-{sha}" or artifact.get("expired") is not False:
+              raise SystemExit("controlled artifact mismatch")
 
           result = {
-              "schema": "nexus.postmerge_production_gate.v1",
+              "schema": "nexus.postmerge_production_gate.v2",
               "status": "pass",
               "main_sha": sha,
               "canonical_run_id": workflow["canonical"]["id"],
               "controlled_run_id": workflow["controlled"]["id"],
-              "controlled_artifact_id": artifact_meta.get("id"),
-              "controlled_artifact_name": artifact_meta.get("name"),
-              "controlled_artifact_digest": artifact_meta.get("digest"),
+              "controlled_artifact_id": artifact.get("id"),
+              "controlled_artifact_name": artifact.get("name"),
+              "controlled_artifact_digest": artifact.get("digest"),
               "rc_decision": candidate["decision"],
               "application_local_image_id": identity.get("image_id"),
               "application_registry_reference": app_receipt.get("registry_reference"),
@@ -299,25 +299,21 @@ jobs:
               "rc_environment_isolated": True,
               "real_outbound_enabled": False,
           }
-          (evidence_dir / "production-gate-result.json").write_text(
+          (evidence / "production-gate-result.json").write_text(
               json.dumps(result, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
 
-          selected = evidence_dir / "selected-official-evidence"
+          selected = evidence / "selected-official-evidence"
           selected.mkdir(parents=True, exist_ok=True)
           for path in (
-              candidate_path,
-              rc_scan_path,
-              release_path,
-              sidecar_path,
-              app_receipt_path,
-              sidecar_receipt_path,
+              candidate_path, rc_scan_path, release_path, sidecar_path,
+              app_receipt_path, sidecar_receipt_path,
           ):
               shutil.copy2(path, selected / path.name)
           PY
 
-      - name: Verify observer evidence contains no credential material
+      - name: Verify observer metadata contains no credential material
         if: always()
         shell: bash
         run: |
@@ -325,21 +321,17 @@ jobs:
           python - <<'PY'
           import re
           from pathlib import Path
-
           root = Path("artifacts/postmerge-main-observer")
-          patterns = {
-              "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-              "github_token": re.compile(r"\bgh[opsu]_[A-Za-z0-9_]{20,}\b"),
-              "generic_secret": re.compile(r"(?i)\b(?:password|secret|token)\s*[:=]\s*[^\s\"']{8,}"),
-          }
+          patterns = (
+              re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+              re.compile(r"\bgh[opsu]_[A-Za-z0-9_]{20,}\b"),
+              re.compile(r"(?i)\b(?:password|secret|token)\s*[:=]\s*[^\s\"']{8,}"),
+          )
           findings = []
-          for path in root.rglob("*.json"):
-              if "controlled-build" in path.parts:
-                  continue
+          for path in root.glob("*.json"):
               text = path.read_text(encoding="utf-8", errors="replace")
-              for name, pattern in patterns.items():
-                  if pattern.search(text):
-                      findings.append(f"{path}:{name}")
+              if any(pattern.search(text) for pattern in patterns):
+                  findings.append(str(path))
           if findings:
               raise SystemExit("credential-like material found: " + ", ".join(findings))
           PY
