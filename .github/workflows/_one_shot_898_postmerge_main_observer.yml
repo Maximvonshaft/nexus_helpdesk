@@ -1,0 +1,359 @@
+name: one-shot-898-postmerge-main-observer
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    if: github.head_ref == 'audit/898-postmerge-main-observer-20260803'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    env:
+      MAIN_SHA: 39bacd0109174b549f742bf36b18218ff36300a8
+      EVIDENCE_DIR: artifacts/postmerge-main-observer
+    steps:
+      - name: Checkout exact merged main
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 39bacd0109174b549f742bf36b18218ff36300a8
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove exact current main
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$MAIN_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$MAIN_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Observe official exact-main workflows to terminal success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          sha = os.environ["MAIN_SHA"]
+          token = os.environ["GH_TOKEN"]
+          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
+          evidence_dir.mkdir(parents=True, exist_ok=True)
+          api = "https://api.github.com"
+
+          def request_json(path: str) -> dict:
+              req = urllib.request.Request(
+                  api + path,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "nexus-postmerge-main-observer",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          def exact_runs() -> list[dict]:
+              encoded = urllib.parse.quote(sha, safe="")
+              payload = request_json(
+                  f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100"
+              )
+              runs = payload.get("workflow_runs") or []
+              return [run for run in runs if run.get("head_sha") == sha]
+
+          def latest(runs: list[dict], *, name: str, event: str, branch: str | None = None):
+              matches = [
+                  run
+                  for run in runs
+                  if run.get("name") == name
+                  and run.get("event") == event
+                  and (branch is None or run.get("head_branch") == branch)
+              ]
+              matches.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              return matches[-1] if matches else None
+
+          canonical = None
+          controlled = None
+          last_snapshot: dict = {}
+          for _ in range(390):
+              runs = exact_runs()
+              canonical = latest(
+                  runs,
+                  name="Canonical Acceptance",
+                  event="push",
+                  branch="main",
+              )
+              controlled = latest(
+                  runs,
+                  name="controlled-candidate-convergence",
+                  event="workflow_run",
+              )
+              last_snapshot = {
+                  "schema": "nexus.postmerge_main_workflow_observation.v1",
+                  "observed_at": datetime.now(timezone.utc).isoformat(),
+                  "main_sha": sha,
+                  "canonical": canonical,
+                  "controlled": controlled,
+              }
+              (evidence_dir / "workflow-observation.json").write_text(
+                  json.dumps(last_snapshot, indent=2, sort_keys=True) + "\n",
+                  encoding="utf-8",
+              )
+
+              if canonical and canonical.get("status") == "completed":
+                  if canonical.get("conclusion") != "success":
+                      raise SystemExit(
+                          f"exact-main Canonical Acceptance failed: {canonical.get('id')} "
+                          f"{canonical.get('conclusion')}"
+                      )
+                  if controlled and controlled.get("status") == "completed":
+                      if controlled.get("conclusion") != "success":
+                          raise SystemExit(
+                              f"exact-main controlled convergence failed: {controlled.get('id')} "
+                              f"{controlled.get('conclusion')}"
+                          )
+                      break
+              time.sleep(20)
+          else:
+              raise SystemExit("official exact-main workflow chain did not reach terminal success")
+
+          assert canonical is not None and controlled is not None
+          compact = {
+              "schema": "nexus.postmerge_main_workflow_result.v1",
+              "status": "pass",
+              "main_sha": sha,
+              "canonical": {
+                  key: canonical.get(key)
+                  for key in (
+                      "id", "name", "event", "status", "conclusion", "head_branch",
+                      "head_sha", "run_number", "created_at", "updated_at", "html_url"
+                  )
+              },
+              "controlled": {
+                  key: controlled.get(key)
+                  for key in (
+                      "id", "name", "event", "status", "conclusion", "head_branch",
+                      "head_sha", "run_number", "created_at", "updated_at", "html_url"
+                  )
+              },
+          }
+          (evidence_dir / "workflow-result.json").write_text(
+              json.dumps(compact, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Download official exact-main controlled artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          controlled_id="$(jq -r '.controlled.id' "$EVIDENCE_DIR/workflow-result.json")"
+          [[ "$controlled_id" =~ ^[0-9]+$ ]]
+          artifacts_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$controlled_id/artifacts?per_page=100")"
+          printf '%s\n' "$artifacts_json" > "$EVIDENCE_DIR/controlled-artifacts.raw.json"
+          jq --arg name "controlled-build-$MAIN_SHA" \
+            '{total_count, artifact: ([.artifacts[] | select(.name == $name and .expired == false)] | sort_by(.created_at, .id) | last)}' \
+            "$EVIDENCE_DIR/controlled-artifacts.raw.json" \
+            > "$EVIDENCE_DIR/controlled-artifact.json"
+          artifact_id="$(jq -r '.artifact.id // empty' "$EVIDENCE_DIR/controlled-artifact.json")"
+          [[ "$artifact_id" =~ ^[0-9]+$ ]]
+          mkdir -p "$EVIDENCE_DIR/controlled-build"
+          gh run download "$controlled_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "controlled-build-$MAIN_SHA" \
+            --dir "$EVIDENCE_DIR/controlled-build"
+
+      - name: Validate exact-main RC and registry publication evidence
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import shutil
+          from pathlib import Path
+
+          sha = os.environ["MAIN_SHA"]
+          evidence_dir = Path(os.environ["EVIDENCE_DIR"])
+          root = evidence_dir / "controlled-build"
+
+          def unique(filename: str, *, parent: str | None = None) -> Path:
+              matches = [path for path in root.rglob(filename) if parent is None or path.parent.name == parent]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected one {filename}, found {len(matches)}: {matches}")
+              return matches[0]
+
+          def load(path: Path) -> dict:
+              value = json.loads(path.read_text(encoding="utf-8"))
+              if not isinstance(value, dict):
+                  raise SystemExit(f"JSON object required: {path}")
+              return value
+
+          workflow = load(evidence_dir / "workflow-result.json")
+          if workflow.get("status") != "pass" or workflow.get("main_sha") != sha:
+              raise SystemExit("workflow result identity mismatch")
+          for key in ("canonical", "controlled"):
+              run = workflow[key]
+              if run.get("head_sha") != sha or run.get("conclusion") != "success":
+                  raise SystemExit(f"{key} workflow identity/result mismatch")
+
+          candidate_path = unique("candidate-manifest.json", parent="rc-test")
+          candidate = load(candidate_path)
+          if candidate.get("decision") != "RC0_TEST_DEPLOYABLE":
+              raise SystemExit("exact-main RC decision is not deployable")
+          identity = candidate.get("candidate") or {}
+          if identity.get("source_sha") != sha or identity.get("frontend_build_sha") != sha:
+              raise SystemExit("exact-main RC source identity mismatch")
+          checks = candidate.get("checks") or {}
+          if not checks or any(value != "pass" for value in checks.values()):
+              raise SystemExit("one or more exact-main RC checks failed")
+          safety = candidate.get("safety") or {}
+          if safety.get("test_environment_isolated") is not True:
+              raise SystemExit("RC isolation proof missing")
+          if safety.get("real_outbound_enabled") is not False:
+              raise SystemExit("RC real outbound was enabled")
+
+          rc_scan_path = candidate_path.parent / "artifact-scan.json"
+          rc_scan = load(rc_scan_path)
+          if rc_scan.get("status") != "pass":
+              raise SystemExit("official RC artifact scan failed")
+
+          release_path = unique("release-image-manifest.json", parent="release-image")
+          release = load(release_path)
+          if release.get("status") != "pass" or release.get("source_sha") != sha:
+              raise SystemExit("application image assurance failed")
+          if release.get("image_id") != identity.get("image_id"):
+              raise SystemExit("RC and release image IDs differ")
+
+          sidecar_path = unique("sidecar-image-manifest.json", parent="sidecar-image")
+          sidecar = load(sidecar_path)
+          if sidecar.get("status") != "pass" or sidecar.get("source_sha") != sha:
+              raise SystemExit("Sidecar image assurance failed")
+
+          app_receipt_path = unique("registry-publish-receipt.json", parent="controlled")
+          app_receipt = load(app_receipt_path)
+          sidecar_receipt_path = unique("whatsapp-sidecar-registry-publish-receipt.json", parent="controlled")
+          sidecar_receipt = load(sidecar_receipt_path)
+          digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+          for receipt, expected_id in (
+              (app_receipt, identity.get("image_id")),
+              (sidecar_receipt, sidecar.get("image_id")),
+          ):
+              if receipt.get("status") != "pass" or receipt.get("source_sha") != sha:
+                  raise SystemExit("registry receipt status/source mismatch")
+              if receipt.get("image_pushed") is not True:
+                  raise SystemExit("registry publication proof missing")
+              if receipt.get("deployment_performed") is not False:
+                  raise SystemExit("unexpected deployment was performed")
+              if receipt.get("local_image_id") != expected_id or receipt.get("pulled_image_id") != expected_id:
+                  raise SystemExit("published/pulled image identity mismatch")
+              if not digest_re.fullmatch(str(receipt.get("registry_digest") or "")):
+                  raise SystemExit("registry digest invalid")
+
+          artifact_meta = load(evidence_dir / "controlled-artifact.json").get("artifact") or {}
+          if artifact_meta.get("name") != f"controlled-build-{sha}" or artifact_meta.get("expired") is not False:
+              raise SystemExit("controlled artifact metadata mismatch")
+
+          result = {
+              "schema": "nexus.postmerge_production_gate.v1",
+              "status": "pass",
+              "main_sha": sha,
+              "canonical_run_id": workflow["canonical"]["id"],
+              "controlled_run_id": workflow["controlled"]["id"],
+              "controlled_artifact_id": artifact_meta.get("id"),
+              "controlled_artifact_name": artifact_meta.get("name"),
+              "controlled_artifact_digest": artifact_meta.get("digest"),
+              "rc_decision": candidate["decision"],
+              "application_local_image_id": identity.get("image_id"),
+              "application_registry_reference": app_receipt.get("registry_reference"),
+              "application_registry_digest": app_receipt.get("registry_digest"),
+              "sidecar_local_image_id": sidecar.get("image_id"),
+              "sidecar_registry_reference": sidecar_receipt.get("registry_reference"),
+              "sidecar_registry_digest": sidecar_receipt.get("registry_digest"),
+              "image_pushed": True,
+              "deployment_performed": False,
+              "rc_environment_isolated": True,
+              "real_outbound_enabled": False,
+          }
+          (evidence_dir / "production-gate-result.json").write_text(
+              json.dumps(result, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          selected = evidence_dir / "selected-official-evidence"
+          selected.mkdir(parents=True, exist_ok=True)
+          for path in (
+              candidate_path,
+              rc_scan_path,
+              release_path,
+              sidecar_path,
+              app_receipt_path,
+              sidecar_receipt_path,
+          ):
+              shutil.copy2(path, selected / path.name)
+          PY
+
+      - name: Verify observer evidence contains no credential material
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          root = Path("artifacts/postmerge-main-observer")
+          patterns = {
+              "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+              "github_token": re.compile(r"\bgh[opsu]_[A-Za-z0-9_]{20,}\b"),
+              "generic_secret": re.compile(r"(?i)\b(?:password|secret|token)\s*[:=]\s*[^\s\"']{8,}"),
+          }
+          findings = []
+          for path in root.rglob("*.json"):
+              if "controlled-build" in path.parts:
+                  continue
+              text = path.read_text(encoding="utf-8", errors="replace")
+              for name, pattern in patterns.items():
+                  if pattern.search(text):
+                      findings.append(f"{path}:{name}")
+          if findings:
+              raise SystemExit("credential-like material found: " + ", ".join(findings))
+          PY
+
+      - name: Upload post-merge exact-main observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: postmerge-main-observer-39bacd01
+          path: |
+            artifacts/postmerge-main-observer/workflow-result.json
+            artifacts/postmerge-main-observer/workflow-observation.json
+            artifacts/postmerge-main-observer/controlled-artifact.json
+            artifacts/postmerge-main-observer/production-gate-result.json
+            artifacts/postmerge-main-observer/selected-official-evidence
+          retention-days: 14
+          if-no-files-found: warn
