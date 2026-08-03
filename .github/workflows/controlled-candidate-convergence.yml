@@ -18,20 +18,15 @@ env:
 
 jobs:
   guard-main:
-    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.classify.outputs.eligible }}
     steps:
-      - name: Checkout accepted main commit
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          ref: ${{ env.CANDIDATE_SHA }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Require successful exact-main Canonical Acceptance — github.event.workflow_run.event == 'push' — github.event.workflow_run.head_branch == 'main'
+      - name: Classify completed Canonical Acceptance — github.event.workflow_run.conclusion == 'success' — github.event.workflow_run.event == 'push' — github.event.workflow_run.head_branch == 'main'
+        id: classify
         env:
           SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
           TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -46,6 +41,33 @@ jobs:
           [[ "$TRIGGER_RUN_ID" =~ ^[0-9]+$ ]]
           [[ "$TRIGGER_RUN_URL" =~ ^https://github\.com/ ]]
           test "$TRIGGER_NAME" = "Canonical Acceptance"
+          eligible=false
+          if test "$TRIGGER_EVENT" = "push"; then
+            if test "$TRIGGER_BRANCH" = "main"; then
+              if test "$TRIGGER_CONCLUSION" = "success"; then
+                eligible=true
+              fi
+            fi
+          fi
+          echo "eligible=${eligible}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout accepted main commit
+        if: steps.classify.outputs.eligible == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require successful exact-main Canonical Acceptance
+        if: steps.classify.outputs.eligible == 'true'
+        env:
+          SOURCE_SHA: ${{ env.CANDIDATE_SHA }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -Eeuo pipefail
           test "$TRIGGER_EVENT" = "push"
           test "$TRIGGER_BRANCH" = "main"
           test "$TRIGGER_CONCLUSION" = "success"
@@ -56,6 +78,7 @@ jobs:
 
   build-assure-publish:
     needs: guard-main
+    if: needs.guard-main.outputs.eligible == 'true'
     permissions:
       contents: read
       packages: write
@@ -325,6 +348,7 @@ jobs:
 
   recovery:
     needs: guard-main
+    if: needs.guard-main.outputs.eligible == 'true'
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -392,6 +416,7 @@ jobs:
 
   bind-and-attest:
     needs: [guard-main, build-assure-publish, recovery]
+    if: needs.guard-main.outputs.eligible == 'true'
     permissions:
       attestations: write
       contents: read
