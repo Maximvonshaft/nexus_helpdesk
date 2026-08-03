@@ -1,0 +1,103 @@
+name: one-shot-898-controlled-binding-inventory
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inventory:
+    if: github.head_ref == 'audit/898-final-postmerge-observer-20260803'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Inventory Controlled trigger bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts/controlled-binding-inventory
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "nexus-controlled-binding-inventory",
+          }
+
+          def get_json(path):
+              request = urllib.request.Request("https://api.github.com" + path, headers=headers)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          def get_text(path):
+              request = urllib.request.Request("https://api.github.com" + path, headers=headers)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return response.read().decode("utf-8", errors="replace")
+
+          payload = get_json(f"/repos/{repo}/actions/runs?event=workflow_run&per_page=100")
+          runs = [
+              run for run in payload.get("workflow_runs", [])
+              if run.get("name") == "controlled-candidate-convergence"
+              and run.get("created_at", "") >= "2026-08-03T02:42:00Z"
+          ]
+          rows = []
+          for run in sorted(runs, key=lambda item: int(item["id"])):
+              jobs_payload = get_json(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+              jobs = jobs_payload.get("jobs", [])
+              guard = next((job for job in jobs if job.get("name") == "guard-main"), None)
+              row = {
+                  "run_id": run.get("id"),
+                  "created_at": run.get("created_at"),
+                  "status": run.get("status"),
+                  "conclusion": run.get("conclusion"),
+                  "jobs": {job.get("name"): job.get("conclusion") for job in jobs},
+                  "guard_job_id": guard.get("id") if guard else None,
+                  "trigger": None,
+              }
+              if guard and guard.get("status") == "completed":
+                  try:
+                      log = get_text(f"/repos/{repo}/actions/jobs/{guard['id']}/logs")
+                  except urllib.error.HTTPError:
+                      log = ""
+                  fields = {}
+                  for key in (
+                      "CANDIDATE_SHA",
+                      "SOURCE_SHA",
+                      "TRIGGER_RUN_ID",
+                      "TRIGGER_NAME",
+                      "TRIGGER_EVENT",
+                      "TRIGGER_BRANCH",
+                      "TRIGGER_CONCLUSION",
+                  ):
+                      marker = f"  {key}: "
+                      matches = [line.split(marker, 1)[1] for line in log.splitlines() if marker in line]
+                      fields[key.lower()] = matches[-1] if matches else None
+                  row["trigger"] = fields
+              rows.append(row)
+          Path("artifacts/controlled-binding-inventory/inventory.json").write_text(
+              json.dumps({"schema":"nexus.controlled_binding_inventory.v1","runs":rows}, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload binding inventory
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: controlled-binding-inventory
+          path: artifacts/controlled-binding-inventory/inventory.json
+          retention-days: 3
+          if-no-files-found: error
