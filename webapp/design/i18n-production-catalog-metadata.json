@@ -1,0 +1,56 @@
+{
+  "base_override_counts": {
+    "cnr": 655,
+    "de": 655,
+    "en": 655
+  },
+  "base_override_sha256": "ed6d9db7e85aeac51fda2c0babbbfa132d6fca430959b423d7e6a48fd3a42d9c",
+  "catalog_sha256": {
+    "cnr": "b4df6f4948394d48b7c10f3ed3b1d4b1ecd26cfb1f826acc0d42bc64466094ec",
+    "de": "e7a39d93aa39f1affec8ecc124fe072c2fc357245c5d81748b640bb2a9d951e9",
+    "en": "72e8fa8208d583ccf00ea814b25adf2fbd87b10738c3b487fb71987ce9225a3f"
+  },
+  "combined_override_sha256": "026b85774503ec6568a8e83d734b41cd6176f14e89e9b0f61d4d9e4abb38539e",
+  "critical_override_counts": {
+    "cnr": 38,
+    "de": 38,
+    "en": 38
+  },
+  "critical_override_sha256": "b46f127dea2291617c77cebc16a2a3eebe56bcecaebdc9e79a2df6b7bd6382b8",
+  "fallback_counts": {
+    "cnr": 2,
+    "de": 1,
+    "en": 3
+  },
+  "inventory_messages": 2565,
+  "inventory_sha256": "cb51d56839f5042e68d412809ae2395cf7a7c965f70037cb4468d91bd1742bad",
+  "models": {
+    "cnr": {
+      "license": "apache-2.0",
+      "model_id": "Helsinki-NLP/opus-mt-en-zls",
+      "requested_revision": null,
+      "resolved_revision": "f127a88f95d3550a38f6fe8075f91d0548220f3a"
+    },
+    "de": {
+      "license": "cc-by-4.0",
+      "model_id": "Helsinki-NLP/opus-mt-en-de",
+      "requested_revision": "6183067f769a302e3861815543b9f312c71b0ca4",
+      "resolved_revision": "6183067f769a302e3861815543b9f312c71b0ca4"
+    },
+    "en": {
+      "license": "cc-by-4.0",
+      "model_id": "Helsinki-NLP/opus-mt-zh-en",
+      "requested_revision": "cf109095479db38d6df799875e34039d4938aaa6",
+      "resolved_revision": "cf109095479db38d6df799875e34039d4938aaa6"
+    }
+  },
+  "override_counts": {
+    "cnr": 664,
+    "de": 664,
+    "en": 664
+  },
+  "override_sha256": "026b85774503ec6568a8e83d734b41cd6176f14e89e9b0f61d4d9e4abb38539e",
+  "policy": "production_candidate_requires_human_semantic_review_and_exact_head_acceptance",
+  "schema_version": 1,
+  "unique_sources": 1903
+}
