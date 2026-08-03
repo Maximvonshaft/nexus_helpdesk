@@ -22,6 +22,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { OperatorEmptyState, OperatorErrorNotice, OperatorTechnicalDisclosure } from '@/app/OperatorPresentation'
+import { formatDateTime, formatNumber, formatPercent } from '@/lib/format'
 import { governanceApi } from '@/lib/governanceApi'
 import type { AgentControlSnapshot, AgentDeployment } from '@/lib/types'
 
@@ -106,7 +107,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
             <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>
               <Chip label={`正式版本 ${activeRelease ? `v${activeRelease.version}` : '未知'}`} color="success" />
               <Chip label={trialActive ? `小范围版本 ${trialRelease ? `v${trialRelease.version}` : '未知'}` : '无小范围版本'} color={trialActive ? 'warning' : 'default'} />
-              <Chip label={`生效比例 ${delivery.data?.deployment.canary_percent ?? selected.canary_percent}%`} />
+              <Chip label={`生效比例 ${formatPercent((delivery.data?.deployment.canary_percent ?? selected.canary_percent) / 100, 0)}`} />
               <Chip label={environmentLabel(selected.environment)} />
             </Stack>
           ) : null}
@@ -150,9 +151,9 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
       {delivery.data ? (
         <>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-            <Metric title="最近 24 小时运行总量" value={delivery.data.traffic_24h.total} />
-            <Metric title="正式 / 小范围流量" value={`${delivery.data.traffic_24h.stable} / ${delivery.data.traffic_24h.trial}`} />
-            <Metric title="小范围失败 / 降级" value={`${delivery.data.health_24h.trial.failed} / ${delivery.data.health_24h.trial.fallback}`} />
+            <Metric title="最近 24 小时运行总量" value={formatNumber(delivery.data.traffic_24h.total)} />
+            <Metric title="正式 / 小范围流量" value={`${formatNumber(delivery.data.traffic_24h.stable)} / ${formatNumber(delivery.data.traffic_24h.trial)}`} />
+            <Metric title="小范围失败 / 降级" value={`${formatNumber(delivery.data.health_24h.trial.failed)} / ${formatNumber(delivery.data.health_24h.trial.fallback)}`} />
           </Box>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Typography variant="h3">最近发布记录</Typography>
@@ -165,7 +166,7 @@ export function ReleaseDeliveryPanel({ snapshot, canDeploy }: { snapshot: AgentC
                       <Typography variant="subtitle2">{revisionActionLabel(row.action)}</Typography>
                       <Typography variant="body2">{row.reason || '未填写原因'}</Typography>
                     </Box>
-                    <Typography variant="caption" color="text.secondary">{new Date(row.created_at).toLocaleString()}</Typography>
+                    <Typography variant="caption" color="text.secondary">{formatDateTime(row.created_at)}</Typography>
                   </Stack>
                 </Paper>
               ))}

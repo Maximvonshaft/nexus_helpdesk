@@ -1,0 +1,91 @@
+{
+  "schema": "nexus.i18n-critical-catalog.v1",
+  "policy": "Every occurrence of a critical repository-owned UI source must match the reviewed product-language value. Runtime customer messages, notes, knowledge and evidence payloads remain outside this static catalog and are covered by source-preservation browser tests.",
+  "messages": {
+    "登录": {
+      "en": "Sign in",
+      "de": "Anmelden",
+      "cnr": "Prijava"
+    },
+    "账号": {
+      "en": "Account",
+      "de": "Konto",
+      "cnr": "Nalog"
+    },
+    "密码": {
+      "en": "Password",
+      "de": "Passwort",
+      "cnr": "Lozinka"
+    },
+    "正在登录…": {
+      "en": "Signing in…",
+      "de": "Anmeldung läuft…",
+      "cnr": "Prijavljivanje…"
+    },
+    "账户设置": {
+      "en": "Account settings",
+      "de": "Kontoeinstellungen",
+      "cnr": "Podešavanja naloga"
+    },
+    "登录失败，请检查账号或密码": {
+      "en": "Sign-in failed. Check the account and password.",
+      "de": "Anmeldung fehlgeschlagen. Prüfen Sie Konto und Passwort.",
+      "cnr": "Prijava nije uspjela. Provjerite nalog i lozinku."
+    },
+    "登录状态已失效，请重新登录": {
+      "en": "Your session has expired. Sign in again.",
+      "de": "Ihre Sitzung ist abgelaufen. Melden Sie sich erneut an.",
+      "cnr": "Vaša sesija je istekla. Prijavite se ponovo."
+    },
+    "退出登录": {
+      "en": "Sign out",
+      "de": "Abmelden",
+      "cnr": "Odjavi se"
+    },
+    "工单": {
+      "en": "Ticket",
+      "de": "Ticket",
+      "cnr": "Tiket"
+    },
+    "任务队列": {
+      "en": "Task queue",
+      "de": "Aufgabenwarteschlange",
+      "cnr": "Red zadataka"
+    },
+    "客户消息": {
+      "en": "Customer message",
+      "de": "Kundennachricht",
+      "cnr": "Poruka korisnika"
+    },
+    "内部备注": {
+      "en": "Internal note",
+      "de": "Interne Notiz",
+      "cnr": "Interna napomena"
+    },
+    "证据来源": {
+      "en": "Evidence source",
+      "de": "Nachweisquelle",
+      "cnr": "Izvor dokaza"
+    },
+    "LiveKit 会话凭证不可用": {
+      "en": "LiveKit session credentials are unavailable",
+      "de": "LiveKit-Sitzungszugangsdaten sind nicht verfügbar",
+      "cnr": "LiveKit akreditivi sesije nijesu dostupni"
+    },
+    "Provider 回执": {
+      "en": "Provider receipt",
+      "de": "Provider-Rückmeldung",
+      "cnr": "Potvrda Provider-a"
+    },
+    "网络请求失败，请稍后重试": {
+      "en": "Network request failed. Try again later.",
+      "de": "Netzwerkanfrage fehlgeschlagen. Versuchen Sie es später erneut.",
+      "cnr": "Mrežni zahtjev nije uspio. Pokušajte ponovo kasnije."
+    },
+    "请求超时，请稍后重试": {
+      "en": "Request timed out. Try again later.",
+      "de": "Zeitüberschreitung der Anfrage. Versuchen Sie es später erneut.",
+      "cnr": "Zahtjev je istekao. Pokušajte ponovo kasnije."
+    }
+  }
+}

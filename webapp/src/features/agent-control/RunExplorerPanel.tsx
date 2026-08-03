@@ -24,6 +24,7 @@ import {
   OperatorErrorNotice,
   OperatorTechnicalDisclosure,
 } from '@/app/OperatorPresentation'
+import { formatDateTime, formatNumber } from '@/lib/format'
 import {
   agentRuntimeApi,
   type AgentRun,
@@ -164,7 +165,7 @@ export function RunExplorerPanel({
                     <Chip size="small" color={runColor(run.status)} label={runStatusLabel(run.status)} />
                   </Stack>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                    用时 {run.elapsed_ms} ms
+                    用时 {formatNumber(run.elapsed_ms)} ms
                   </Typography>
                   {run.parent_run_id ? (
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
@@ -172,7 +173,7 @@ export function RunExplorerPanel({
                     </Typography>
                   ) : null}
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                    {new Date(run.started_at).toLocaleString()}
+                    {formatDateTime(run.started_at)}
                   </Typography>
                 </ListItemButton>
               ))}
@@ -320,7 +321,7 @@ export function RunExplorerPanel({
                       <Chip size="small" variant="outlined" label={eventStatusLabel(event.status)} />
                     </Stack>
                     <Typography variant="caption" color="text.secondary">
-                      {event.duration_ms} ms · {new Date(event.created_at).toLocaleString()}
+                      {formatNumber(event.duration_ms)} ms · {formatDateTime(event.created_at)}
                     </Typography>
                   </Stack>
                   {Object.keys(event.safe_payload || {}).length ? (

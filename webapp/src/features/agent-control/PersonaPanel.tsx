@@ -25,6 +25,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { OperatorEmptyState, OperatorErrorNotice, OperatorTechnicalDisclosure } from '@/app/OperatorPresentation'
 import { agentControlApi, type PersonaDraft } from '@/lib/agentControlApi'
+import { formatDateTime } from '@/lib/format'
 import type { AgentControlSnapshot, AgentPersona, PersonaReview } from '@/lib/types'
 import { asString, lineText, lines } from './formUtils'
 
@@ -347,7 +348,7 @@ export function PersonaPanel({
             <Typography variant="subtitle2">版本状态</Typography>
             <Divider sx={{ my: 1.5 }} />
             <Typography variant="body2">已发布版本：v{selected.published_version}</Typography>
-            <Typography variant="body2">最后更新：{new Date(selected.updated_at).toLocaleString()}</Typography>
+            <Typography variant="body2">最后更新：{formatDateTime(selected.updated_at)}</Typography>
           </Paper>
         ) : null}
       </Stack>

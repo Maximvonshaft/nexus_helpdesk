@@ -37,7 +37,7 @@ export function VoiceOffer({ seconds, count }) {
 }
 `
 
-test('transforms static presentation copy and preserves runtime customer content', () => {
+test('transforms static presentation copy and preserves runtime customer and control values', () => {
   const entries = []
   const transformed = transformPresentationSource(
     source,
@@ -52,6 +52,7 @@ test('transforms static presentation copy and preserves runtime customer content
   assert.match(code, /__nexusTranslateStatic\(/)
   assert.match(code, /__nexusTranslateTemplate\(/)
   assert.match(code, /customerText/)
+  assert.match(code, /const status = ['"]已关闭['"]/)
   assert.match(code, /status === ['"]已关闭['"]/)
   assert.match(code, /['"] ['"] \+ __nexusTranslateStatic\(/)
   assert.equal(map.version, 3)
@@ -60,7 +61,6 @@ test('transforms static presentation copy and preserves runtime customer content
     new Set(entries.map((entry) => entry.source)),
     new Set([
       '案例处理',
-      '已关闭',
       '主导航',
       '当前账号：{{0}}',
       '页面不存在',
@@ -71,6 +71,30 @@ test('transforms static presentation copy and preserves runtime customer content
   )
   assert.equal(new Set(entries.map((entry) => entry.key)).size, entries.length)
   assert.ok(entries.every((entry) => entry.file === 'src/Demo.tsx'))
+})
+
+test('preserves inline and variable-backed API payload facts', () => {
+  const apiSource = `
+import { supportApi } from './supportApi'
+const payload = { status: '处理中', customer_note: '客户要求改址' }
+export async function save() {
+  await supportApi.updateTicket(payload)
+  await supportApi.createTicket({ status: '待处理', reason: '客户催派' })
+  return <span>保存成功</span>
+}
+`
+  const entries = []
+  const transformed = transformPresentationSource(
+    apiSource,
+    '/repo/webapp/src/save.tsx',
+    (entry) => entries.push(entry),
+  )
+  assert.ok(transformed)
+  assert.match(transformed.code, /status: ['"]处理中['"]/)
+  assert.match(transformed.code, /customer_note: ['"]客户要求改址['"]/)
+  assert.match(transformed.code, /status: ['"]待处理['"]/)
+  assert.match(transformed.code, /reason: ['"]客户催派['"]/)
+  assert.deepEqual(entries.map((entry) => entry.source), ['保存成功'])
 })
 
 test('preserves JSX separator spaces around multiline expressions', () => {

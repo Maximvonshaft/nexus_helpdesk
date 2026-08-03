@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync } from 'node:fs'
+import { copyFileSync, createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -16,6 +16,7 @@ const stages = [
   ['unit-tests', npm, ['test']],
   ['build', npm, ['run', 'build']],
   ['i18n-inventory', process.execPath, ['scripts/assert-i18n-inventory.mjs']],
+  ['i18n-catalogs', process.execPath, ['scripts/assert-i18n-catalogs.mjs']],
   ['route-splitting', process.execPath, ['scripts/assert-route-splitting.mjs']],
   ['size-report', npm, ['run', 'size-report']],
   ['draft-focused-browser', process.execPath, ['scripts/run-draft-focused-browser.mjs']],
@@ -23,6 +24,17 @@ const stages = [
 
 function write(chunk) {
   log.write(chunk)
+}
+
+function captureLocalizationEvidence() {
+  const inventoryPath = join(process.cwd(), '..', 'frontend_dist', 'i18n-inventory.json')
+  const metadataPath = join(process.cwd(), 'design', 'i18n-production-catalog-metadata.json')
+  if (existsSync(inventoryPath)) {
+    copyFileSync(inventoryPath, join(evidenceDir, 'i18n-inventory.json'))
+  }
+  if (existsSync(metadataPath)) {
+    copyFileSync(metadataPath, join(evidenceDir, 'i18n-production-catalog-metadata.json'))
+  }
 }
 
 async function runStage(name, command, args) {
@@ -62,5 +74,6 @@ try {
   process.stdout.write(success)
   write(success)
 } finally {
+  captureLocalizationEvidence()
   await new Promise((resolve) => log.end(resolve))
 }

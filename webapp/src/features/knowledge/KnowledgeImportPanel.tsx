@@ -15,7 +15,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { OperatorErrorNotice } from '@/app/OperatorPresentation'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatNumber } from '@/lib/format'
 import { governanceApi, type KnowledgeImportBatch } from '@/lib/governanceApi'
 import { supportApi } from '@/lib/supportApi'
 import { channelPresentation } from '@/lib/supportStatus'
@@ -88,7 +88,7 @@ export function KnowledgeImportPanel({ canManage }: { canManage: boolean }) {
             />
           </Button>
           <Typography variant="caption" color="text.secondary">
-            已选择 {files.length} 个文件，共 {(selectedBytes / 1024 / 1024).toFixed(2)} MB。
+            已选择 {files.length} 个文件，共 {formatNumber(selectedBytes / 1024 / 1024, { maximumFractionDigits: 2 })} MB。
           </Typography>
           {files.length ? (
             <Stack direction="row" useFlexGap spacing={1} sx={{ flexWrap: 'wrap' }}>

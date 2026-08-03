@@ -22,6 +22,7 @@ import type { SelectChangeEvent } from '@mui/material/Select'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { LanguageControl } from '@/i18n/LanguageControl'
 import { operatorTimeZone } from '@/lib/format'
 import type { AuthorizedWorkspaceScope } from '@/lib/operatorWorkspaceTypes'
 import { channelPresentation } from '@/lib/supportStatus'
@@ -265,6 +266,7 @@ function AppShellContent({
                   <AgentPresenceControl />
                   <IncomingVoiceCallControl />
                   <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} />
+                  <LanguageControl authenticated compact />
                   <Typography variant="caption" color="text.secondary" title="页面中的时间按此时区显示" sx={{ display: { lg: 'none', xl: 'block' }, whiteSpace: 'nowrap' }}>
                     {timeZone}
                   </Typography>
@@ -323,6 +325,7 @@ function AppShellContent({
                 <AgentPresenceControl presentation="drawer" />
                 <IncomingVoiceCallControl />
                 <WorkScopeControl scopes={scopes} selectedScope={selectedScope} onScopeChange={onScopeChange} compact />
+                <LanguageControl authenticated fullWidth />
               </Stack>
               <Box sx={{ flex: 1 }} />
               <Divider />

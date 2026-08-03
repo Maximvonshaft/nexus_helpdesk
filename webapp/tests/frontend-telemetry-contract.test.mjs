@@ -5,6 +5,7 @@ import test from 'node:test'
 const telemetry = fs.readFileSync(new URL('../src/lib/frontendTelemetry.ts', import.meta.url), 'utf8')
 const apiClient = fs.readFileSync(new URL('../src/lib/apiClient.ts', import.meta.url), 'utf8')
 const main = fs.readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
+const application = fs.readFileSync(new URL('../src/application.tsx', import.meta.url), 'utf8')
 const webVitals = fs.readFileSync(new URL('../src/lib/webVitals.ts', import.meta.url), 'utf8')
 
 test('frontend telemetry reuses the canonical transport and cannot recursively observe itself', () => {
@@ -28,9 +29,11 @@ test('HTTP responses and transport failures produce one latency outcome per atte
   assert.match(apiClient, /if \(!retryable \|\| attempt > 0 \|\| handledResponseError\) break/)
 })
 
-test('web vitals and API latency initialize once at the application root', () => {
-  assert.match(main, /initFrontendTelemetry\(\)/)
-  assert.match(main, /initWebVitals\(\)/)
+test('catalog bootstrap imports the one application root before telemetry starts', () => {
+  assert.match(main, /await import\('\.\/application'\)/)
+  assert.doesNotMatch(main, /initFrontendTelemetry\(\)|initWebVitals\(\)/)
+  assert.equal((application.match(/initFrontendTelemetry\(\)/g) ?? []).length, 1)
+  assert.equal((application.match(/initWebVitals\(\)/g) ?? []).length, 1)
   assert.match(webVitals, /VITE_WEB_VITALS_ENABLED \|\| 'true'/)
   assert.match(webVitals, /LCP/)
   assert.match(webVitals, /CLS/)

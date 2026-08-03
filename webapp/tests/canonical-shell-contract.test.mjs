@@ -50,11 +50,14 @@ test('one MUI application shell owns product identity, navigation, session and s
   for (const route of ['/workspace', '/knowledge', '/channels', '/runtime', '/control-tower', '/administration']) {
     assert.match(navigation, new RegExp(route.replace('/', '\\/')))
   }
+  assert.match(theme, /export const nexusTheme = createTheme\(/)
   assert.match(theme, /MuiButton:/)
   assert.match(theme, /minHeight:\s*44/)
   assert.match(theme, /prefers-reduced-motion/)
-  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
+  assert.match(provider, /applyMuiLocale\(nexusTheme, muiLocale\)/)
+  assert.match(provider, /<ThemeProvider theme=\{theme\}>/)
   assert.match(provider, /<CssBaseline \/>/)
+  assert.doesNotMatch(provider, /createTheme\(/)
   assert.equal(existsSync(join(WEBAPP_ROOT, 'src', 'app', 'app-shell.css')), false)
   assert.doesNotMatch(shell, />\s*\{scope\.tenant_key\}\s*</)
   assert.doesNotMatch(shell, />\s*\{scope\.tenant_hash\}\s*</)
@@ -70,15 +73,17 @@ test('normal operators fail closed with concise recovery copy when no scope exis
   assert.doesNotMatch(route, /requires_explicit_admin_scope|LegacyWorkspaceFallback/)
 })
 
-test('canonical shell has one theme authority and no route stylesheet authority', () => {
+test('catalog bootstrap and React application each have one bounded root authority', () => {
   const main = read('src/main.tsx')
+  const application = read('src/application.tsx')
   const sourcePaths = [
     'src/styles/tokens.css',
     'src/styles/components.css',
     'src/app/app-shell.css',
   ]
   for (const path of sourcePaths) assert.equal(existsSync(join(WEBAPP_ROOT, path)), false)
-  assert.equal((main.match(/<NexusThemeProvider>/g) ?? []).length, 1)
-  assert.equal((main.match(/from '@\/theme\/NexusThemeProvider'/g) ?? []).length, 1)
-  assert.doesNotMatch(main, /tokens\.css|components\.css|app-shell\.css/)
+  assert.equal((main.match(/await import\('\.\/application'\)/g) ?? []).length, 1)
+  assert.equal((application.match(/<NexusThemeProvider>/g) ?? []).length, 1)
+  assert.equal((application.match(/from '@\/theme\/NexusThemeProvider'/g) ?? []).length, 1)
+  assert.doesNotMatch(main + application, /tokens\.css|components\.css|app-shell\.css/)
 })

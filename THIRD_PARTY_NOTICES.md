@@ -21,6 +21,46 @@ A candidate with missing, unknown, denied, unreviewed or identity-mismatched
 license evidence is not releasable. This notice does not override that gate and
 does not itself constitute a legal approval.
 
+## Operator-interface localization
+
+The operator web application includes these unmodified MIT-licensed runtime
+libraries:
+
+- `pkg:npm/i18next@26.3.6`
+- `pkg:npm/react-i18next@17.0.11`
+
+Upstream source and license authorities:
+
+- <https://github.com/i18next/i18next>
+- <https://github.com/i18next/react-i18next>
+
+The English, German and Montenegrin catalog candidates are produced in an
+isolated, non-production tooling workflow with these exact translation models:
+
+- `Helsinki-NLP/opus-mt-zh-en` at revision
+  `cf109095479db38d6df799875e34039d4938aaa6` — `CC-BY-4.0`;
+- `Helsinki-NLP/opus-mt-en-de` at revision
+  `6183067f769a302e3861815543b9f312c71b0ca4` — `CC-BY-4.0`;
+- `Helsinki-NLP/opus-mt-en-zls` at resolved revision
+  `f127a88f95d3550a38f6fe8075f91d0548220f3a` — `Apache-2.0`, using the
+  `>>srp_Latn<<` target prefix before reviewed Montenegrin normalization.
+
+Upstream model and license authorities:
+
+- <https://huggingface.co/Helsinki-NLP/opus-mt-zh-en>
+- <https://huggingface.co/Helsinki-NLP/opus-mt-en-de>
+- <https://huggingface.co/Helsinki-NLP/opus-mt-en-zls>
+
+The model weights, tokenizers, PyTorch runtime and generation workflow are not
+included in the Nexus application or release image. Only reviewed text catalog
+outputs and their immutable provenance metadata may enter the product branch.
+
+Catalog generation is not release authority. The product gate independently
+requires exact occurrence-key coverage, placeholder preservation, no source
+language residue, reviewed terminology, browser acceptance and immutable
+source binding. Any model, revision, license, catalog, override or review-policy
+change invalidates the recorded catalog provenance and requires a new review.
+
 ## LGPL-reviewed Python components
 
 The exact candidate currently includes these unmodified Python distributions:

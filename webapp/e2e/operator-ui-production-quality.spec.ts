@@ -113,10 +113,11 @@ test('visible primary controls meet the 44px target contract', async ({ page }) 
   await page.setViewportSize({ width: 1440, height: 1000 })
   await mockResponsiveConsole(page)
   await page.goto('/administration')
+  await expect(page.getByRole('main')).toBeVisible()
 
   const targets = page.locator('button:visible, a[href]:visible, [role="tab"]:visible, [role="combobox"]:visible, [role="switch"]:visible')
+  await expect.poll(() => targets.count()).toBeGreaterThan(5)
   const count = await targets.count()
-  expect(count).toBeGreaterThan(5)
   for (let index = 0; index < count; index += 1) {
     const box = await targets.nth(index).boundingBox()
     expect(box?.height ?? 0, `target ${index} is below 44px`).toBeGreaterThanOrEqual(44)
