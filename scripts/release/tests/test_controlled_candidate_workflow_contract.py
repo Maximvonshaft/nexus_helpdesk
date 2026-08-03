@@ -82,24 +82,43 @@ class ControlledCandidateWorkflowContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, CANONICAL)
 
-    def test_guard_runs_for_successful_push_and_checks_main_inside_job(self) -> None:
+    def test_guard_classifies_inside_job_and_downstream_jobs_require_eligibility(self) -> None:
         guard = WORKFLOW[
             WORKFLOW.index("  guard-main:") : WORKFLOW.index("  build-assure-publish:")
         ]
-        job_if = guard[
-            guard.index("    if:") : guard.index("    permissions:")
-        ]
+        guard_header = guard[: guard.index("    steps:")]
+        self.assertNotIn("\n    if:", guard_header)
         self.assertIn(
-            "github.event.workflow_run.conclusion == 'success'",
-            job_if,
-        )
-        self.assertNotIn("github.event.workflow_run.event", job_if)
-        self.assertNotIn("github.event.workflow_run.head_branch", job_if)
-        self.assertIn('test "$TRIGGER_BRANCH" = "main"', guard)
-        self.assertIn(
-            'test "$(git rev-parse origin/main)" = "$SOURCE_SHA"',
+            "eligible: ${{ steps.classify.outputs.eligible }}",
             guard,
         )
+        self.assertIn("id: classify", guard)
+        self.assertIn(
+            'echo "eligible=${eligible}" >> "$GITHUB_OUTPUT"',
+            guard,
+        )
+        for marker in (
+            'test "$TRIGGER_NAME" = "Canonical Acceptance"',
+            'test "$TRIGGER_EVENT" = "push"',
+            'test "$TRIGGER_BRANCH" = "main"',
+            'test "$TRIGGER_CONCLUSION" = "success"',
+            "if: steps.classify.outputs.eligible == 'true'",
+            'test "$(git rev-parse origin/main)" = "$SOURCE_SHA"',
+        ):
+            self.assertIn(marker, guard)
+
+        build = WORKFLOW[
+            WORKFLOW.index("  build-assure-publish:") : WORKFLOW.index("  recovery:")
+        ]
+        recovery = WORKFLOW[
+            WORKFLOW.index("  recovery:") : WORKFLOW.index("  bind-and-attest:")
+        ]
+        bind = WORKFLOW[WORKFLOW.index("  bind-and-attest:") :]
+        for job in (build, recovery, bind):
+            self.assertIn(
+                "if: needs.guard-main.outputs.eligible == 'true'",
+                job,
+            )
 
     def test_actions_are_pinned_and_permissions_are_job_scoped(self) -> None:
         uses = re.findall(r"(?m)^\s*-?\s*uses:\s*([^\s]+)", WORKFLOW)
