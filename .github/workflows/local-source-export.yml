@@ -1,4 +1,4 @@
-name: Local Browser Runtime
+name: Local Runtime Export
 
 on:
   pull_request:
@@ -6,14 +6,16 @@ on:
       - main
     paths:
       - .github/workflows/local-source-export.yml
+      - docs/local-export-link.md
 
 permissions:
   contents: read
 
 jobs:
-  export-browser:
+  export-local-runtime:
+    if: github.event.pull_request.head.ref == 'automation/local-export-20260803-ai-dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout exact pull request head
         uses: actions/checkout@v4
@@ -21,6 +23,35 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           submodules: false
+
+      - name: Record immutable source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          printf '%s\n' "${{ github.event.pull_request.base.sha }}" > BASE_SOURCE_COMMIT.txt
+          printf '%s\n' "${{ github.event.pull_request.head.sha }}" > EXPORT_HEAD_COMMIT.txt
+          git status --short
+
+      - name: Build bounded source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -q -r nexus-source.zip . \
+            -x '.git/*' \
+               'node_modules/*' \
+               'webapp/node_modules/*' \
+               'frontend_dist/*' \
+               '**/__pycache__/*' \
+               '**/.pytest_cache/*' \
+               '**/.mypy_cache/*' \
+               '**/.ruff_cache/*' \
+               '**/.venv/*' \
+               '**/venv/*' \
+               '*.env' \
+               '.env' \
+               '.env.*'
+          sha256sum nexus-source.zip > NEXUS_SOURCE_SHA256SUMS.txt
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,21 +70,21 @@ jobs:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/playwright-browsers
         run: npx playwright install firefox
 
-      - name: Record browser identity
+      - name: Archive browser runtime
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "${{ github.event.pull_request.base.sha }}" > BASE_SOURCE_COMMIT.txt
-          printf '%s\n' "${{ github.event.pull_request.head.sha }}" > EXPORT_HEAD_COMMIT.txt
-          find playwright-browsers -maxdepth 3 -type f -name firefox -o -name firefox-bin | sort > PLAYWRIGHT_FIREFOX_FILES.txt
+          find playwright-browsers -maxdepth 4 -type f \( -name firefox -o -name firefox-bin \) | sort > PLAYWRIGHT_FIREFOX_FILES.txt
           tar -czf nexus-playwright-firefox-1.61.1.tgz playwright-browsers
           sha256sum nexus-playwright-firefox-1.61.1.tgz > PLAYWRIGHT_FIREFOX_SHA256SUMS.txt
 
-      - name: Upload browser runtime
+      - name: Upload local runtime export
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-playwright-firefox-1.61.1
+          name: nexus-local-runtime-fa7da390
           path: |
+            nexus-source.zip
+            NEXUS_SOURCE_SHA256SUMS.txt
             nexus-playwright-firefox-1.61.1.tgz
             PLAYWRIGHT_FIREFOX_FILES.txt
             PLAYWRIGHT_FIREFOX_SHA256SUMS.txt
