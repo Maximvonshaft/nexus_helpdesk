@@ -15,13 +15,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 130
     env:
-      MAIN_SHA: dbc64cde9b448a49763ef5d4339a4e4a3e8542c4
+      MAIN_SHA: 36ccc400ab4a3b612fa4e5f3bed0a5e0d65a68c9
       EVIDENCE_DIR: artifacts/final-postmerge-observer
     steps:
       - name: Checkout exact current main
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: dbc64cde9b448a49763ef5d4339a4e4a3e8542c4
+          ref: 36ccc400ab4a3b612fa4e5f3bed0a5e0d65a68c9
           fetch-depth: 0
           persist-credentials: false
 
@@ -54,7 +54,6 @@ jobs:
           sha = os.environ["MAIN_SHA"]
           token = os.environ["GH_TOKEN"]
           out = Path(os.environ["EVIDENCE_DIR"])
-          api = "https://api.github.com"
           required_jobs = {
               "guard-main",
               "build-assure-publish",
@@ -64,7 +63,7 @@ jobs:
 
           def get(path: str) -> dict:
               request = urllib.request.Request(
-                  api + path,
+                  "https://api.github.com" + path,
                   headers={
                       "Accept": "application/vnd.github+json",
                       "Authorization": f"Bearer {token}",
@@ -93,33 +92,25 @@ jobs:
           for _ in range(480):
               encoded = urllib.parse.quote(sha, safe="")
               payload = get(f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100")
-              runs = [
-                  run for run in payload.get("workflow_runs", [])
-                  if run.get("head_sha") == sha
-              ]
+              runs = [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == sha]
               canonical_runs = [
                   run for run in runs
                   if run.get("name") == "Canonical Acceptance"
                   and run.get("event") == "push"
                   and run.get("head_branch") == "main"
               ]
-              canonical_runs.sort(
-                  key=lambda run: (run.get("created_at") or "", int(run["id"]))
-              )
+              canonical_runs.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
               canonical = canonical_runs[-1] if canonical_runs else None
-
               controlled_runs = [
                   run for run in runs
                   if run.get("name") == "controlled-candidate-convergence"
                   and run.get("event") == "workflow_run"
               ]
-              controlled_runs.sort(
-                  key=lambda run: (run.get("created_at") or "", int(run["id"]))
-              )
+              controlled_runs.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
               controlled = controlled_runs[-1] if controlled_runs else None
 
               observation = {
-                  "schema": "nexus.final_postmerge_workflow_observation.v2",
+                  "schema": "nexus.final_postmerge_workflow_observation.v3",
                   "observed_at": datetime.now(timezone.utc).isoformat(),
                   "main_sha": sha,
                   "canonical": compact(canonical),
@@ -132,19 +123,11 @@ jobs:
 
               if canonical and canonical.get("status") == "completed":
                   if canonical.get("conclusion") != "success":
-                      raise SystemExit(
-                          f"exact-main Canonical failed: {canonical.get('id')} "
-                          f"{canonical.get('conclusion')}"
-                      )
+                      raise SystemExit(f"exact-main Canonical failed: {canonical.get('id')} {canonical.get('conclusion')}")
                   if controlled and controlled.get("status") == "completed":
                       if controlled.get("conclusion") != "success":
-                          raise SystemExit(
-                              f"Controlled Convergence failed: {controlled.get('id')} "
-                              f"{controlled.get('conclusion')}"
-                          )
-                      jobs_payload = get(
-                          f"/repos/{repo}/actions/runs/{controlled['id']}/jobs?per_page=100"
-                      )
+                          raise SystemExit(f"Controlled Convergence failed: {controlled.get('id')} {controlled.get('conclusion')}")
+                      jobs_payload = get(f"/repos/{repo}/actions/runs/{controlled['id']}/jobs?per_page=100")
                       jobs = jobs_payload.get("jobs", [])
                       by_name = {job.get("name"): job for job in jobs}
                       missing = sorted(required_jobs - set(by_name))
@@ -154,9 +137,7 @@ jobs:
                           if (by_name.get(name) or {}).get("conclusion") != "success"
                       }
                       if missing or failed:
-                          raise SystemExit(
-                              f"Controlled jobs invalid; missing={missing}; failed={failed}"
-                          )
+                          raise SystemExit(f"Controlled jobs invalid; missing={missing}; failed={failed}")
                       controlled_jobs = {
                           name: {
                               "id": by_name[name].get("id"),
@@ -171,7 +152,7 @@ jobs:
               raise SystemExit("exact-main workflow chain did not reach terminal success")
 
           result = {
-              "schema": "nexus.final_postmerge_workflow_result.v2",
+              "schema": "nexus.final_postmerge_workflow_result.v3",
               "status": "pass",
               "main_sha": sha,
               "canonical": compact(canonical),
@@ -199,7 +180,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: final-postmerge-observer-dbc64cde
+          name: final-postmerge-observer-36ccc400
           path: artifacts/final-postmerge-observer
           retention-days: 14
           if-no-files-found: error
