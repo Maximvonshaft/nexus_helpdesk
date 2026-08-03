@@ -41,13 +41,20 @@ jobs:
         working-directory: webapp
         run: npm ci
 
-      - name: Run baseline frontend contracts
+      - name: Run baseline frontend tests
         working-directory: webapp
         shell: bash
         run: |
           set -o pipefail
           npm test 2>&1 | tee ../BASELINE_FRONTEND_TESTS.log
-          npm run architecture 2>&1 | tee ../BASELINE_FRONTEND_ARCHITECTURE.log
+
+      - name: Run baseline architecture without temporary exporter
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'mv /tmp/local-source-export.yml .github/workflows/local-source-export.yml 2>/dev/null || true' EXIT
+          mv .github/workflows/local-source-export.yml /tmp/local-source-export.yml
+          (cd webapp && npm run architecture) 2>&1 | tee BASELINE_FRONTEND_ARCHITECTURE.log
 
       - name: Build exact baseline frontend
         working-directory: webapp
