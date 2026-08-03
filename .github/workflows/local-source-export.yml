@@ -1,0 +1,57 @@
+name: Local Source Export
+
+on:
+  push:
+    branches:
+      - automation/local-export-20260803-ai-dispatch
+    paths:
+      - .github/workflows/local-source-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Record immutable source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee SOURCE_COMMIT.txt
+          git status --short
+
+      - name: Build bounded source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -q -r nexus-source.zip . \
+            -x '.git/*' \
+               'node_modules/*' \
+               'webapp/node_modules/*' \
+               'frontend_dist/*' \
+               '**/__pycache__/*' \
+               '**/.pytest_cache/*' \
+               '**/.mypy_cache/*' \
+               '**/.ruff_cache/*' \
+               '**/.venv/*' \
+               '**/venv/*' \
+               '*.env' \
+               '.env' \
+               '.env.*'
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-source-fa7da390
+          path: nexus-source.zip
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
