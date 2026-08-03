@@ -1,0 +1,119 @@
+name: Live Production Readiness Probe
+
+on:
+  pull_request:
+    types: [ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: live-production-readiness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE_URL: https://mcs.speedaf.com
+  EXPECTED_SHA: fa7da3904046b1e9eac3d605b9ea39e0f91419a9
+  EXPECTED_IMAGE: ghcr.io/maximvonshaft/nexus_helpdesk@sha256:432fb87cfabc537cd97c8465a6532cb7ec79c6346cdac61a1fcdfa5bafffd88e
+  EXPECTED_MIGRATION: 20260801_i18n_ui_locale
+
+jobs:
+  probe:
+    if: >-
+      github.event.pull_request.head.ref == 'ops/post-merge-production-evidence-fa7da390' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Probe live production identity and readiness
+        id: live
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-live-production
+          request() {
+            local path="$1" body="$2" headers="$3" code_file="$4"
+            curl --fail-with-body --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              --dump-header "$headers" --output "$body" \
+              --write-out '%{http_code}' "${BASE_URL}${path}" > "$code_file"
+          }
+          request /healthz /tmp/nexus-live-production/health.json /tmp/nexus-live-production/health.headers /tmp/nexus-live-production/health.code
+          request /readyz /tmp/nexus-live-production/ready.json /tmp/nexus-live-production/ready.headers /tmp/nexus-live-production/ready.code
+          request / /tmp/nexus-live-production/root.html /tmp/nexus-live-production/root.headers /tmp/nexus-live-production/root.code
+
+          jq . /tmp/nexus-live-production/health.json
+          jq . /tmp/nexus-live-production/ready.json
+          printf 'health_code=%s\nready_code=%s\nroot_code=%s\n' \
+            "$(cat /tmp/nexus-live-production/health.code)" \
+            "$(cat /tmp/nexus-live-production/ready.code)" \
+            "$(cat /tmp/nexus-live-production/root.code)"
+
+          jq -e --arg sha "$EXPECTED_SHA" --arg image "$EXPECTED_IMAGE" '
+            .status == "ok" and
+            .env == "production" and
+            .git_sha == $sha and
+            .frontend_build_sha == $sha and
+            .image_tag == $image and
+            .release_metadata_complete == true
+          ' /tmp/nexus-live-production/health.json >/dev/null
+
+          jq -e --arg sha "$EXPECTED_SHA" --arg image "$EXPECTED_IMAGE" --arg migration "$EXPECTED_MIGRATION" '
+            .status == "ready" and
+            .database == "ok" and
+            .git_sha == $sha and
+            .frontend_build_sha == $sha and
+            .image_tag == $image and
+            .release_metadata_complete == true and
+            .release_metadata_ready == true and
+            .migration_revision == $migration and
+            .migration.ok == true and
+            .migration.expected == $migration and
+            .migration.observed == $migration and
+            .frontend.ok == true and
+            .storage.ok == true and
+            .runtime_contract_signing.ok == true and
+            (.reason_codes | length == 0)
+          ' /tmp/nexus-live-production/ready.json >/dev/null
+
+          grep -Eiq '<!doctype html|<html' /tmp/nexus-live-production/root.html
+          grep -Eiq '^strict-transport-security:[[:space:]]*max-age=31536000' /tmp/nexus-live-production/health.headers
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' /tmp/nexus-live-production/health.headers
+          grep -Eiq '^x-frame-options:[[:space:]]*DENY' /tmp/nexus-live-production/health.headers
+          grep -Eiq '^content-security-policy:' /tmp/nexus-live-production/root.headers
+
+          jq -n \
+            --arg base_url "$BASE_URL" \
+            --arg source_sha "$(jq -r '.git_sha' /tmp/nexus-live-production/health.json)" \
+            --arg image "$(jq -r '.image_tag' /tmp/nexus-live-production/health.json)" \
+            --arg migration "$(jq -r '.migration_revision' /tmp/nexus-live-production/ready.json)" \
+            '{schema:"nexus.live-production-readiness.v1",status:"pass",base_url:$base_url,source_sha:$source_sha,image:$image,migration_revision:$migration,health:"ok",readiness:"ready",database:"ok",frontend:"ok",storage:"ok",runtime_contract_signing:"ok",security_headers:"pass"}' \
+            > /tmp/nexus-live-production/summary.json
+
+      - name: Publish live probe result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OUTCOME: ${{ steps.live.outcome }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -f /tmp/nexus-live-production/summary.json ]]; then
+            payload="$(jq -c . /tmp/nexus-live-production/summary.json)"
+          else
+            health="$(jq -c . /tmp/nexus-live-production/health.json 2>/dev/null || printf null)"
+            ready="$(jq -c . /tmp/nexus-live-production/ready.json 2>/dev/null || printf null)"
+            payload="$(jq -nc --arg outcome "$OUTCOME" --argjson health "$health" --argjson ready "$ready" '{schema:"nexus.live-production-readiness.v1",status:"fail",workflow_outcome:$outcome,observed_health:$health,observed_readiness:$ready}')"
+          fi
+          body=$(cat <<EOF
+          ## Live production readiness probe
+
+          \`\`\`json
+          ${payload}
+          \`\`\`
+          EOF
+          )
+          gh api --method POST "/repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
