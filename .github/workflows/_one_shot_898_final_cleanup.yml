@@ -1,0 +1,114 @@
+name: one-shot-898-final-cleanup
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'audit/898-final-postmerge-observer-20260803'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MAIN_SHA: 36ccc400ab4a3b612fa4e5f3bed0a5e0d65a68c9
+      SELF_BRANCH: audit/898-final-postmerge-observer-20260803
+    steps:
+      - name: Checkout exact current main with cleanup credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 36ccc400ab4a3b612fa4e5f3bed0a5e0d65a68c9
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Delete closed-work temporary branches and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$MAIN_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$MAIN_SHA"
+          mkdir -p artifacts/final-cleanup
+          : > artifacts/final-cleanup/refs.jsonl
+          owner="${GITHUB_REPOSITORY%%/*}"
+
+          branches=(
+            audit/898-postmerge-main-observer-20260803
+            audit/898-rc-failure-log
+            audit/909-final-main-evidence
+            audit/912-final-controlled-rc-witness-20260802
+            fix/898-authorized-scope-continuity
+            fix/898-canonical-receipt-scan
+            fix/898-controlled-convergence-eligibility-output
+            fix/898-controlled-convergence-executable-guard
+            fix/898-controlled-convergence-trigger-guard
+            fix/898-webchat-recovery-and-gates
+            fix/898-webchat-recovery-final
+            fix/898-webchat-recovery-final-clean
+            fix/898-webchat-transport-authority
+            tmp/898-final-squash-base-20260802
+            tmp/898-focus-continuity-20260802
+            tmp/898-mobile-focus-continuity-20260802
+            tmp/898-p1-fix-work-20260802
+            tmp/898-p1-squash-base-20260802
+          )
+          tags=(
+            tmp-898-eligibility-test-30778537327
+            tmp-898-eligibility-test-30778739089
+            tmp-898-eligibility-workflow-30778537327
+            tmp-898-eligibility-workflow-30778739089
+            tmp-898-test-blob-30765490573
+            tmp-898-workflow-blob-30765490573
+          )
+
+          for branch in "${branches[@]}"; do
+            encoded="$(jq -rn --arg value "${owner}:${branch}" '$value|@uri')"
+            open_count="$(gh api "/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${encoded}&per_page=1" --jq 'length')"
+            test "$open_count" = "0"
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+              status=deleted
+            else
+              status=absent
+            fi
+            jq -cn --arg kind branch --arg ref "$branch" --arg status "$status" '{kind:$kind,ref:$ref,status:$status}' >> artifacts/final-cleanup/refs.jsonl
+          done
+
+          for tag in "${tags[@]}"; do
+            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+              git push origin --delete "refs/tags/${tag}"
+              status=deleted
+            else
+              status=absent
+            fi
+            jq -cn --arg kind tag --arg ref "$tag" --arg status "$status" '{kind:$kind,ref:$ref,status:$status}' >> artifacts/final-cleanup/refs.jsonl
+          done
+
+          jq -s \
+            --arg schema nexus.final_temporary_ref_cleanup.v1 \
+            --arg status pass \
+            --arg main_sha "$MAIN_SHA" \
+            '{schema:$schema,status:$status,main_sha:$main_sha,refs:.}' \
+            artifacts/final-cleanup/refs.jsonl \
+            > artifacts/final-cleanup/result.json
+          test "$(jq -r '.status' artifacts/final-cleanup/result.json)" = pass
+
+      - name: Upload cleanup evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: final-temporary-ref-cleanup
+          path: artifacts/final-cleanup/result.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Delete final observer branch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git push origin --delete "$SELF_BRANCH"
