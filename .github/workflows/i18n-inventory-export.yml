@@ -1,0 +1,69 @@
+name: I18N Inventory Export
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - webapp/**
+      - scripts/i18n/operator_catalog_overrides_v1.json
+      - scripts/i18n/critical_operator_catalog_overrides_v1.json
+      - .github/workflows/i18n-inventory-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact tooling candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build exact localization inventory
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node scripts/assert-i18n-inventory.mjs
+          sha256sum ../frontend_dist/i18n-inventory.json > ../frontend_dist/i18n-inventory.sha256
+          cp ../scripts/i18n/operator_catalog_overrides_v1.json ../frontend_dist/operator_catalog_overrides_v1.json
+          cp ../scripts/i18n/critical_operator_catalog_overrides_v1.json ../frontend_dist/critical_operator_catalog_overrides_v1.json
+          sha256sum \
+            ../frontend_dist/operator_catalog_overrides_v1.json \
+            ../frontend_dist/critical_operator_catalog_overrides_v1.json \
+            > ../frontend_dist/i18n-review-authorities.sha256
+          tar -czf ../frontend_dist/i18n-source-snapshot.tar.gz \
+            src \
+            scripts/vite-i18n-plugin.mjs \
+            tests/i18n-transform-contract.test.mjs
+          sha256sum ../frontend_dist/i18n-source-snapshot.tar.gz \
+            > ../frontend_dist/i18n-source-snapshot.sha256
+
+      - name: Upload immutable inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: i18n-inventory-${{ github.event.pull_request.head.sha }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            frontend_dist/i18n-inventory.json
+            frontend_dist/i18n-inventory-summary.json
+            frontend_dist/i18n-inventory.sha256
+            frontend_dist/operator_catalog_overrides_v1.json
+            frontend_dist/critical_operator_catalog_overrides_v1.json
+            frontend_dist/i18n-review-authorities.sha256
+            frontend_dist/i18n-source-snapshot.tar.gz
+            frontend_dist/i18n-source-snapshot.sha256

@@ -1,0 +1,210 @@
+name: I18N Exact Product Catalog Rebind
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/i18n-exact-product-catalog-rebind.yml
+
+permissions:
+  contents: write
+
+jobs:
+  rebind-exact-product-catalogs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PRODUCT_HEAD_SHA: 7b11a78afa30e54832ed0e8f43ac1a59db8ff224
+      SOURCE_GENERATION_HEAD_SHA: cbd7e4c0d0d0f84fc95afaf2425d8311cbc2deea
+      SOURCE_GENERATION_ARTIFACT_SHA256: 6de82fce62b4daf45fa8d28139e001d1acce6172bc6f89828ca460ba9d6d5f14
+    steps:
+      - name: Checkout exact product candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.PRODUCT_HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build exact product inventory
+        working-directory: webapp
+        run: |
+          set -Eeuo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          node scripts/assert-i18n-inventory.mjs
+
+      - name: Rebind generated catalogs to the exact product inventory
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          repository = Path.cwd()
+          inventory_path = repository / 'frontend_dist/i18n-inventory.json'
+          metadata_path = repository / 'webapp/design/i18n-production-catalog-metadata.json'
+          catalog_paths = {
+              'en': repository / 'webapp/public/i18n/en.json',
+              'de': repository / 'webapp/public/i18n/de.json',
+              'cnr': repository / 'webapp/public/i18n/cnr.json',
+          }
+          output = Path('/tmp/nexus-i18n-exact-rebind')
+          output.mkdir(parents=True, exist_ok=True)
+
+          inventory_raw = inventory_path.read_bytes()
+          inventory = json.loads(inventory_raw)
+          if inventory.get('schema_version') != 2 or not isinstance(inventory.get('messages'), list):
+              raise RuntimeError('exact_product_inventory_invalid')
+          messages = inventory['messages']
+          expected_keys = {message['key'] for message in messages}
+          if len(expected_keys) != len(messages):
+              raise RuntimeError('exact_product_inventory_duplicate_keys')
+          (output / 'i18n-inventory.json').write_bytes(inventory_raw)
+
+          metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+          if metadata.get('policy') != 'production_candidate_requires_human_semantic_review_and_exact_head_acceptance':
+              raise RuntimeError('catalog_policy_invalid')
+          if set(metadata.get('models', {})) != {'en', 'de', 'cnr'}:
+              raise RuntimeError('catalog_model_provenance_invalid')
+
+          token_pattern = re.compile(r'\{\{\d+\}\}|%(?:\d+\$)?[sdif]|\{[A-Za-z_][A-Za-z0-9_]*\}')
+          message_by_key = {message['key']: message for message in messages}
+          removed_by_locale = {}
+          rendered = {}
+          filtered_catalogs = {}
+          for locale, path in catalog_paths.items():
+              catalog = json.loads(path.read_text(encoding='utf-8'))
+              keys = set(catalog)
+              missing = sorted(expected_keys - keys)
+              extras = sorted(keys - expected_keys)
+              if missing:
+                  raise RuntimeError(json.dumps({
+                      'error': 'exact_product_catalog_missing_keys',
+                      'locale': locale,
+                      'missing': missing[:50],
+                      'count': len(missing),
+                  }))
+              removed_by_locale[locale] = extras
+              filtered = {key: catalog[key] for key in sorted(expected_keys)}
+              filtered_catalogs[locale] = filtered
+              raw = (json.dumps(filtered, ensure_ascii=False, indent=2, sort_keys=True) + '\n').encode('utf-8')
+              rendered[locale] = raw
+              (output / f'catalog-{locale}.review.json').write_bytes(raw)
+
+          reference_removed = removed_by_locale['en']
+          if any(removed_by_locale[locale] != reference_removed for locale in ('de', 'cnr')):
+              raise RuntimeError(json.dumps({
+                  'error': 'catalog_locale_keysets_diverged',
+                  'removed_by_locale': removed_by_locale,
+              }))
+
+          token_diagnostics = []
+          for locale, catalog in filtered_catalogs.items():
+              for key, translated in catalog.items():
+                  message = message_by_key[key]
+                  source_tokens = sorted(token_pattern.findall(str(message['source'])))
+                  translated_tokens = sorted(token_pattern.findall(str(translated)))
+                  if source_tokens != translated_tokens:
+                      token_diagnostics.append({
+                          'locale': locale,
+                          'key': key,
+                          'source': message['source'],
+                          'translation': translated,
+                          'source_tokens': source_tokens,
+                          'translation_tokens': translated_tokens,
+                          'kind': message.get('kind'),
+                          'occurrences': message.get('occurrences', []),
+                      })
+          (output / 'format-token-diagnostics.json').write_text(
+              json.dumps(token_diagnostics, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+
+          metadata['inventory_messages'] = len(messages)
+          metadata['unique_sources'] = len({message['source'] for message in messages})
+          metadata['inventory_sha256'] = hashlib.sha256(inventory_raw).hexdigest()
+          metadata['catalog_sha256'] = {
+              locale: hashlib.sha256(raw).hexdigest()
+              for locale, raw in rendered.items()
+          }
+          metadata['exact_product_binding'] = {
+              'product_head_sha': os.environ['PRODUCT_HEAD_SHA'],
+              'source_generation_head_sha': os.environ['SOURCE_GENERATION_HEAD_SHA'],
+              'source_generation_artifact_sha256': os.environ['SOURCE_GENERATION_ARTIFACT_SHA256'],
+              'operation': 'verified_catalog_subset_rebind',
+              'removed_catalog_keys': reference_removed,
+          }
+          metadata_raw = (json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + '\n').encode('utf-8')
+          (output / 'production-catalog-metadata.json').write_bytes(metadata_raw)
+
+          report = {
+              'schema': 'nexus.i18n-exact-product-catalog-rebind.v1',
+              'product_head_sha': os.environ['PRODUCT_HEAD_SHA'],
+              'source_generation_head_sha': os.environ['SOURCE_GENERATION_HEAD_SHA'],
+              'inventory_messages': len(messages),
+              'unique_sources': metadata['unique_sources'],
+              'inventory_sha256': metadata['inventory_sha256'],
+              'removed_catalog_keys': reference_removed,
+              'removed_catalog_key_count': len(reference_removed),
+              'catalog_sha256': metadata['catalog_sha256'],
+              'format_token_mismatch_count': len(token_diagnostics),
+          }
+          (output / 'exact-product-rebind-report.json').write_text(
+              json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+          PY
+
+      - name: Validate rebound catalogs with product authority
+        run: |
+          set -Eeuo pipefail
+          cp /tmp/nexus-i18n-exact-rebind/catalog-en.review.json webapp/public/i18n/en.json
+          cp /tmp/nexus-i18n-exact-rebind/catalog-de.review.json webapp/public/i18n/de.json
+          cp /tmp/nexus-i18n-exact-rebind/catalog-cnr.review.json webapp/public/i18n/cnr.json
+          cp /tmp/nexus-i18n-exact-rebind/production-catalog-metadata.json webapp/design/i18n-production-catalog-metadata.json
+          cd webapp
+          node scripts/assert-i18n-catalogs.mjs
+
+      - name: Upload immutable exact-product evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: i18n-exact-product-catalogs-${{ env.PRODUCT_HEAD_SHA }}
+          retention-days: 14
+          if-no-files-found: error
+          path: /tmp/nexus-i18n-exact-rebind
+
+      - name: Publish exact-product catalogs to output branch
+        env:
+          OUTPUT_BRANCH: tooling/i18n-catalog-output
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'nexus-i18n-catalog-bot'
+          git config user.email 'nexus-i18n-catalog-bot@users.noreply.github.com'
+          git fetch origin "$OUTPUT_BRANCH"
+          git checkout -B "$OUTPUT_BRANCH" "origin/$OUTPUT_BRANCH"
+          mkdir -p catalogs/operator-ui
+          cp /tmp/nexus-i18n-exact-rebind/catalog-en.review.json catalogs/operator-ui/en.json
+          cp /tmp/nexus-i18n-exact-rebind/catalog-de.review.json catalogs/operator-ui/de.json
+          cp /tmp/nexus-i18n-exact-rebind/catalog-cnr.review.json catalogs/operator-ui/cnr.json
+          cp /tmp/nexus-i18n-exact-rebind/production-catalog-metadata.json catalogs/operator-ui/production-catalog-metadata.json
+          cp /tmp/nexus-i18n-exact-rebind/exact-product-rebind-report.json catalogs/operator-ui/exact-product-rebind-report.json
+          git add catalogs/operator-ui
+          if git diff --cached --quiet; then
+            echo 'Exact-product catalog output is already current.'
+            exit 0
+          fi
+          git commit -m "tooling(i18n): bind catalogs to exact product head"
+          git push origin "HEAD:$OUTPUT_BRANCH"

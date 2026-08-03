@@ -1,3 +1,4 @@
+import { getIntlLocale } from '@/i18n/runtime'
 import type { BadgeTone } from '@/lib/types'
 
 const displayTextLabels: Record<string, string> = {
@@ -116,7 +117,7 @@ function validTimeZone(value: string | undefined | null) {
   const candidate = String(value || '').trim()
   if (!candidate) return null
   try {
-    new Intl.DateTimeFormat('zh-CN', { timeZone: candidate }).format(0)
+    new Intl.DateTimeFormat(getIntlLocale(), { timeZone: candidate }).format(0)
     return candidate
   } catch {
     return null
@@ -137,7 +138,7 @@ export function formatDateTime(value?: string | null, timeZone = operatorTimeZon
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return String(value)
   try {
-    return new Intl.DateTimeFormat('zh-CN', {
+    return new Intl.DateTimeFormat(getIntlLocale(), {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -151,6 +152,20 @@ export function formatDateTime(value?: string | null, timeZone = operatorTimeZon
   } catch {
     return date.toISOString()
   }
+}
+
+export function formatNumber(
+  value: number,
+  options?: Intl.NumberFormatOptions,
+) {
+  return new Intl.NumberFormat(getIntlLocale(), options).format(value)
+}
+
+export function formatPercent(value: number, maximumFractionDigits = 1) {
+  return formatNumber(value, {
+    style: 'percent',
+    maximumFractionDigits,
+  })
 }
 
 /**

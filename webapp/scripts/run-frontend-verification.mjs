@@ -16,6 +16,7 @@ const stages = [
   ['unit-tests', npm, ['test']],
   ['build', npm, ['run', 'build']],
   ['i18n-inventory', process.execPath, ['scripts/assert-i18n-inventory.mjs']],
+  ['i18n-catalogs', process.execPath, ['scripts/assert-i18n-catalogs.mjs']],
   ['route-splitting', process.execPath, ['scripts/assert-route-splitting.mjs']],
   ['size-report', npm, ['run', 'size-report']],
   ['draft-focused-browser', process.execPath, ['scripts/run-draft-focused-browser.mjs']],
