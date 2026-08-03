@@ -1,9 +1,9 @@
 name: Local Source Export
 
 on:
-  push:
+  pull_request:
     branches:
-      - automation/local-export-20260803-ai-dispatch
+      - main
     paths:
       - .github/workflows/local-source-export.yml
 
@@ -15,9 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact pull request head
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           submodules: false
 
@@ -26,6 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           git rev-parse HEAD | tee SOURCE_COMMIT.txt
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
           git status --short
 
       - name: Build bounded source archive
