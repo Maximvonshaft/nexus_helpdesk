@@ -1,12 +1,21 @@
 import { Alert, Box, Button, Typography } from '@mui/material'
+import { useQueryClient } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   OperatorLoadingState,
   OperatorPageBoundary,
 } from '@/app/OperatorPresentation'
 import { useLogout, useSession } from '@/hooks/useAuth'
+import {
+  claimRecoveryUiLocale,
+  readRecoveryUiLocale,
+  resolvePreferredUiLocale,
+} from '@/i18n/localeAuthority'
+import { getUiLocale, setUiLocale, synchronizeAuthenticatedUiLocale } from '@/i18n/runtime'
+import { uiPreferenceApi } from '@/lib/uiPreferenceApi'
+import type { AuthUser } from '@/lib/types'
 import { AppShell } from './AppShell'
 import type { AppRouteKey } from './navigation'
 import { usePasswordRecoveryGuard } from './usePasswordRecoveryGuard'
@@ -21,10 +30,55 @@ export function AuthenticatedAppPage({
   children: ReactNode
 }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const logout = useLogout()
   const session = useSession()
+  const localeAdoptionStarted = useRef(false)
   const capabilities = useMemo(() => new Set(session.data?.capabilities ?? []), [session.data?.capabilities])
   const passwordRecoveryRequired = usePasswordRecoveryGuard(session.data?.must_change_password, activeRoute)
+
+  useEffect(() => {
+    const currentUser = session.data
+    if (!currentUser?.ui_locale) return
+
+    if (currentUser.ui_locale_configured === false) {
+      // A recovery state belonging to another account is cleared by claim,
+      // but the current document still runs in that stale locale. Re-resolve
+      // the durable/browser preference before adopting a locale for this user.
+      const pendingRecovery = readRecoveryUiLocale()
+      if (claimRecoveryUiLocale(currentUser.id)) return
+      if (pendingRecovery) {
+        const preferredLocale = resolvePreferredUiLocale()
+        if (preferredLocale !== getUiLocale()) {
+          const transition = setUiLocale(preferredLocale)
+          if (!transition.applied || transition.changed) return
+        }
+      }
+      if (localeAdoptionStarted.current) return
+      localeAdoptionStarted.current = true
+      const selectedLocale = getUiLocale()
+      void uiPreferenceApi.updateLocale(selectedLocale)
+        .then((response) => {
+          queryClient.setQueryData<AuthUser>(['session'], (cached) => cached
+            ? {
+                ...cached,
+                ui_locale: response.ui_locale,
+                ui_locale_configured: true,
+              }
+            : cached)
+        })
+        .catch(() => {
+          // Authentication remains valid. The account stays on its safe server
+          // default and adoption is retried on a later authenticated navigation.
+          localeAdoptionStarted.current = false
+        })
+      return
+    }
+
+    if (synchronizeAuthenticatedUiLocale(currentUser.ui_locale, currentUser.id)) {
+      window.location.reload()
+    }
+  }, [queryClient, session.data])
 
   const handleLogout = () => {
     logout()

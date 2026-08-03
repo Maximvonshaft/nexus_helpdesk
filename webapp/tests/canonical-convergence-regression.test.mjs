@@ -64,9 +64,12 @@ test('MUI, operator presentation and operational status are the only shared auth
   const status = read('src/domain/operationalPresentation.ts')
   const supportStatus = read('src/lib/supportStatus.ts')
   const workspaceStatus = read('src/lib/operatorWorkspacePresentation.ts')
-  assert.match(theme, /createTheme\(/)
-  assert.match(provider, /<ThemeProvider theme=\{nexusTheme\}>/)
+  assert.match(theme, /export const nexusTheme = createTheme\(/)
+  assert.match(provider, /import \{ nexusTheme \} from '\.\/nexusTheme'/)
+  assert.match(provider, /applyMuiLocale\(nexusTheme, muiLocale\)/)
+  assert.match(provider, /<ThemeProvider theme=\{theme\}>/)
   assert.match(provider, /<CssBaseline \/>/)
+  assert.doesNotMatch(provider, /createTheme\(/)
   for (const name of [
     'OperatorPageBoundary',
     'OperatorEmptyState',

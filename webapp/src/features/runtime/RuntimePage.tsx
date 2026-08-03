@@ -18,7 +18,7 @@ import {
   OperatorTechnicalDisclosure,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
-import { sanitizeDisplayText } from '@/lib/format'
+import { formatNumber, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { runtimePresentation } from '@/lib/supportStatus'
 import type { ReleaseReadiness, ReleaseReadinessProfile } from '@/lib/types'
@@ -55,8 +55,10 @@ type ReadinessProfiles = Record<ReleaseReadinessProfile, ReleaseReadiness>
 
 function compactLatency(value: number | null | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '暂无'
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s`
-  return `${Math.max(0, Math.round(value))}ms`
+  if (value >= 1000) {
+    return `${formatNumber(value / 1000, { maximumFractionDigits: value >= 10000 ? 0 : 1 })}s`
+  }
+  return `${formatNumber(Math.max(0, Math.round(value)))}ms`
 }
 
 function ProductionActivationPanel({

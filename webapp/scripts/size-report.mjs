@@ -36,7 +36,7 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 const entryPair = Object.entries(manifest).find(([, record]) => record?.isEntry === true)
 if (!entryPair) fail('production entry not found in Vite manifest')
 
-const [entryKey] = entryPair
+const [entryKey, entryRecord] = entryPair
 const initialStaticKeys = new Set()
 const visitStatic = (key) => {
   if (initialStaticKeys.has(key)) return
@@ -46,6 +46,13 @@ const visitStatic = (key) => {
   for (const importedKey of record?.imports || []) visitStatic(importedKey)
 }
 visitStatic(entryKey)
+
+// The locale bootstrap awaits one immediate dynamic import of the main React
+// application. Count that module and all of its static dependencies as first-
+// screen JavaScript, while leaving route-level dynamic imports out of the budget.
+for (const immediateDynamicKey of entryRecord?.dynamicImports || []) {
+  visitStatic(immediateDynamicKey)
+}
 
 const initialStaticFiles = new Set(
   [...initialStaticKeys]

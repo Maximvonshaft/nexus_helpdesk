@@ -5,6 +5,7 @@ const CJK_RE = /[\u3400-\u9fff]/u
 const RUNTIME_IMPORT = '@/i18n/runtime'
 const TRANSLATE_IDENTIFIER = '__nexusTranslateStatic'
 const TEMPLATE_IDENTIFIER = '__nexusTranslateTemplate'
+const TECHNICAL_CALL_RE = /(?:^|\.)(?:apiRequest|staticJsonAssetRequest|fetch|mutate|mutateAsync|send|dispatch|emit|track|log|setItem|removeItem|setQueryData)$|(?:^|\.)[^.]*Api\./iu
 
 function isModuleSpecifier(node) {
   const parent = node.parent
@@ -58,7 +59,132 @@ function isTechnicalControlFlowValue(node) {
   return false
 }
 
-function isExcludedString(node, sourceFile) {
+function expressionIdentity(node) {
+  if (ts.isIdentifier(node)) return node.text
+  if (ts.isPropertyAccessExpression(node)) {
+    const owner = expressionIdentity(node.expression)
+    return owner ? `${owner}.${node.name.text}` : node.name.text
+  }
+  return ''
+}
+
+function technicalReference(node, identifiers, properties) {
+  if (ts.isIdentifier(node)) {
+    identifiers.add(node.text)
+    return
+  }
+  if (ts.isPropertyAccessExpression(node)) {
+    properties.add(node.name.text)
+    technicalReference(node.expression, identifiers, properties)
+    return
+  }
+  if (ts.isElementAccessExpression(node)) {
+    technicalReference(node.expression, identifiers, properties)
+    if (ts.isStringLiteral(node.argumentExpression)) properties.add(node.argumentExpression.text)
+  }
+}
+
+function technicalFacts(sourceFile) {
+  const identifiers = new Set()
+  const properties = new Set()
+
+  const visit = (node) => {
+    if (
+      ts.isBinaryExpression(node)
+      && [
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.EqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsToken,
+      ].includes(node.operatorToken.kind)
+    ) {
+      technicalReference(node.left, identifiers, properties)
+      technicalReference(node.right, identifiers, properties)
+    }
+
+    if (ts.isSwitchStatement(node)) {
+      technicalReference(node.expression, identifiers, properties)
+    }
+
+    if (ts.isCallExpression(node) && TECHNICAL_CALL_RE.test(expressionIdentity(node.expression))) {
+      node.arguments.forEach((argument) => technicalReference(argument, identifiers, properties))
+    }
+
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return { identifiers, properties }
+}
+
+function propertyNameText(name) {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
+  return ''
+}
+
+function isInsideTechnicalCall(node) {
+  let current = node
+  while (current.parent) {
+    const parent = current.parent
+    if (ts.isCallExpression(parent)) {
+      const isArgument = parent.arguments.some((argument) => (
+        argument === current
+        || (current.pos >= argument.pos && current.end <= argument.end)
+      ))
+      return isArgument && TECHNICAL_CALL_RE.test(expressionIdentity(parent.expression))
+    }
+    if (ts.isStatement(parent) || ts.isSourceFile(parent)) return false
+    current = parent
+  }
+  return false
+}
+
+function isInsideTechnicalVariable(node, facts) {
+  let current = node
+  while (current.parent) {
+    const parent = current.parent
+    if (ts.isVariableDeclaration(parent) && parent.initializer) {
+      return Boolean(
+        ts.isIdentifier(parent.name)
+        && facts.identifiers.has(parent.name.text)
+        && current.pos >= parent.initializer.pos
+        && current.end <= parent.initializer.end
+      )
+    }
+    if (ts.isStatement(parent) || ts.isSourceFile(parent)) return false
+    current = parent
+  }
+  return false
+}
+
+function isTechnicalDataValue(node, facts) {
+  const parent = node.parent
+  if (!parent) return false
+
+  if (
+    ts.isVariableDeclaration(parent)
+    && parent.initializer === node
+    && ts.isIdentifier(parent.name)
+    && facts.identifiers.has(parent.name.text)
+  ) return true
+
+  if (
+    ts.isBinaryExpression(parent)
+    && parent.right === node
+    && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && ts.isIdentifier(parent.left)
+    && facts.identifiers.has(parent.left.text)
+  ) return true
+
+  if (
+    ts.isPropertyAssignment(parent)
+    && parent.initializer === node
+    && facts.properties.has(propertyNameText(parent.name))
+  ) return true
+
+  return isInsideTechnicalCall(node) || isInsideTechnicalVariable(node, facts)
+}
+
+function isExcludedString(node, sourceFile, facts) {
   if (!CJK_RE.test(node.text)) return true
   if (sourceFile.fileName.replaceAll('\\', '/').includes('/src/i18n/')) return true
   return (
@@ -66,6 +192,7 @@ function isExcludedString(node, sourceFile) {
     || isPropertyName(node)
     || isTypePosition(node)
     || isTechnicalControlFlowValue(node)
+    || isTechnicalDataValue(node, facts)
   )
 }
 
@@ -221,6 +348,7 @@ export function transformPresentationSource(code, id, collect = () => {}) {
     }
 
     const visitFor = (sourceFile) => {
+      const facts = technicalFacts(sourceFile)
       const visit = (node) => {
         if (
           ts.isJsxAttribute(node)
@@ -258,7 +386,7 @@ export function transformPresentationSource(code, id, collect = () => {}) {
 
         if (
           (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
-          && !isExcludedString(node, sourceFile)
+          && !isExcludedString(node, sourceFile, facts)
         ) {
           changed = true
           const key = record(node.text, node, 'static_literal', sourceFile)
@@ -267,7 +395,11 @@ export function transformPresentationSource(code, id, collect = () => {}) {
 
         if (ts.isTemplateExpression(node)) {
           const { pattern, values } = templatePattern(node)
-          if (CJK_RE.test(pattern) && !sourceFile.fileName.replaceAll('\\', '/').includes('/src/i18n/')) {
+          if (
+            CJK_RE.test(pattern)
+            && !sourceFile.fileName.replaceAll('\\', '/').includes('/src/i18n/')
+            && !isTechnicalDataValue(node, facts)
+          ) {
             changed = true
             const key = record(pattern, node, 'template', sourceFile)
             return templateTranslationCall(

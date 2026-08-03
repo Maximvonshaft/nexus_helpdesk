@@ -7,16 +7,34 @@ from pydantic import BaseModel, Field
 
 from .schemas import AuthUserRead, LoginResponse
 
+UILocale = Literal["zh-CN", "en", "de", "cnr"]
+
 
 class AuthSessionUserRead(AuthUserRead):
     must_change_password: bool = False
     password_changed_at: datetime | None = None
     last_login_at: datetime | None = None
     mfa_enabled: bool = False
+    ui_locale: UILocale = "zh-CN"
+    ui_locale_configured: bool = False
 
 
 class AuthSessionResponse(LoginResponse):
     user: AuthSessionUserRead
+
+
+class UIPreferenceUpdateRequest(BaseModel):
+    # The service layer owns canonicalization so aliases such as EN, de-CH and
+    # sr-Latn-ME do not create a second schema-level normalization authority.
+    ui_locale: str = Field(
+        min_length=2,
+        max_length=16,
+        json_schema_extra={"enum": ["zh-CN", "en", "de", "cnr"]},
+    )
+
+
+class UIPreferenceRead(BaseModel):
+    ui_locale: UILocale
 
 
 class PasswordChangeRequest(BaseModel):

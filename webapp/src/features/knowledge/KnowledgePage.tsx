@@ -28,7 +28,7 @@ import {
   operatorScrollBehavior,
   operatorToneColor,
 } from '@/app/OperatorPresentation'
-import { sanitizeDisplayText } from '@/lib/format'
+import { formatNumber, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import { knowledgeStatusPresentation } from '@/lib/supportStatus'
 import type { KnowledgeItem } from '@/lib/types'
@@ -478,7 +478,7 @@ export function KnowledgePage({ canManage }: { canManage: boolean }) {
                     <Box component="article" key={`${hit.item_id}-${hit.chunk_index}`} sx={{ borderTop: 1, borderColor: 'divider', pt: 1.25 }}>
                       <Typography variant="subtitle2">{sanitizeDisplayText(hit.title)}</Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{sanitizeDisplayText(hit.direct_answer || hit.text).slice(0, 260)}</Typography>
-                      <Typography variant="caption" color="text.disabled">匹配度 {typeof hit.score === 'number' ? hit.score.toFixed(3) : hit.score}</Typography>
+                      <Typography variant="caption" color="text.disabled">匹配度 {typeof hit.score === 'number' ? formatNumber(hit.score, { maximumFractionDigits: 3 }) : hit.score}</Typography>
                     </Box>
                   ))}
                 </Stack>

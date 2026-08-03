@@ -24,7 +24,7 @@ import {
   normalizeOperatorTone,
 } from '@/app/OperatorPresentation'
 import { canonicalAppHref } from '@/app/canonicalRoutes'
-import { sanitizeDisplayText } from '@/lib/format'
+import { formatNumber, formatPercent, sanitizeDisplayText } from '@/lib/format'
 import { supportApi } from '@/lib/supportApi'
 import type {
   BusinessOutcomeMetric,
@@ -93,31 +93,31 @@ function GovernanceRow({ item }: { item: ControlTowerGovernanceLane }) {
 
 function metricValue(item: BusinessOutcomeMetric) {
   if (item.value == null) return '暂无样本'
-  if (item.unit === 'ratio') return `${(item.value * 100).toFixed(1)}%`
-  if (item.unit === 'seconds') return `${Math.round(item.value)} 秒`
-  return item.value.toFixed(item.value % 1 === 0 ? 0 : 1)
+  if (item.unit === 'ratio') return formatPercent(item.value)
+  if (item.unit === 'seconds') return `${formatNumber(Math.round(item.value))} 秒`
+  return formatNumber(item.value, { maximumFractionDigits: item.value % 1 === 0 ? 0 : 1 })
 }
 
 function metricTarget(item: BusinessOutcomeMetric) {
   const operator = item.direction === 'min' ? '≥' : '≤'
-  if (item.unit === 'ratio') return `${operator} ${(item.target * 100).toFixed(1)}%`
-  if (item.unit === 'seconds') return `${operator} ${Math.round(item.target)} 秒`
-  return `${operator} ${item.target}`
+  if (item.unit === 'ratio') return `${operator} ${formatPercent(item.target)}`
+  if (item.unit === 'seconds') return `${operator} ${formatNumber(Math.round(item.target))} 秒`
+  return `${operator} ${formatNumber(item.target)}`
 }
 
 function metricTrend(item: BusinessOutcomeMetric) {
   if (item.previous_value == null || item.delta == null) return '无上一窗口样本'
   const label = item.trend === 'improving' ? '改善' : item.trend === 'declining' ? '下降' : '稳定'
   const delta = item.unit === 'ratio'
-    ? `${item.delta >= 0 ? '+' : ''}${(item.delta * 100).toFixed(1)} 个百分点`
-    : `${item.delta >= 0 ? '+' : ''}${item.delta.toFixed(1)}${item.unit === 'seconds' ? ' 秒' : ''}`
+    ? `${item.delta >= 0 ? '+' : '-'}${formatNumber(Math.abs(item.delta * 100), { maximumFractionDigits: 1 })} 个百分点`
+    : `${item.delta >= 0 ? '+' : '-'}${formatNumber(Math.abs(item.delta), { maximumFractionDigits: 1 })}${item.unit === 'seconds' ? ' 秒' : ''}`
   return `${label} · ${delta}`
 }
 
 function OutcomeMetricRow({ item }: { item: BusinessOutcomeMetric }) {
   const href = canonicalAppHref(item.drilldown)
   const denominatorLabel = item.denominator > 0
-    ? `${item.numerator} / ${item.denominator}`
+    ? `${formatNumber(item.numerator)} / ${formatNumber(item.denominator)}`
     : '暂无可评估样本'
   return (
     <TableRow hover>

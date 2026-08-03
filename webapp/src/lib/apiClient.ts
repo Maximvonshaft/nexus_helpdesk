@@ -1,8 +1,11 @@
 import { mapApiErrorMessage } from '@/lib/apiErrorMap'
+import { DEFAULT_HTTP_TIMEOUT_MS, fetchWithTimeout } from './httpTransport'
+
+export { staticJsonAssetRequest } from './staticJsonAssetRequest'
+export type { StaticJsonAssetOptions } from './staticJsonAssetRequest'
 
 const STORAGE_KEY = 'helpdesk-webapp-token'
 const REQUEST_ID_HEADER = 'X-Request-Id'
-const DEFAULT_API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000)
 const FRONTEND_METRICS_PATH = '/api/observability/frontend-metrics'
 const PUBLIC_API_PATHS = [
   '/api/auth/login',
@@ -144,26 +147,9 @@ export type ApiRequestOptions = RequestInit & {
   requireApiPath?: boolean
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), Math.max(timeoutMs, 1000))
-  const externalSignal = init.signal
-  const abortFromExternal = () => controller.abort()
-
-  if (externalSignal?.aborted) controller.abort()
-  else externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
-
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    globalThis.clearTimeout(timeout)
-    externalSignal?.removeEventListener('abort', abortFromExternal)
-  }
-}
-
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const {
-    timeoutMs = DEFAULT_API_TIMEOUT_MS,
+    timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
     requestIdPrefix = 'req',
     requireApiPath = false,
     ...init

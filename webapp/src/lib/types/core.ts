@@ -1,3 +1,5 @@
+import type { UiLocale } from '@/i18n/runtime'
+
 export type BadgeTone = 'default' | 'warning' | 'success' | 'danger'
 export interface AuthUser {
   id: number
@@ -11,6 +13,11 @@ export interface AuthUser {
   password_changed_at?: string | null
   last_login_at?: string | null
   mfa_enabled?: boolean
+  // Session responses always provide these values. They remain optional in the
+  // shared transport shape because AdminUser list responses intentionally do
+  // not project per-account UI preferences.
+  ui_locale?: UiLocale
+  ui_locale_configured?: boolean
 }
 export interface AuthSessionResponse {
   access_token: string

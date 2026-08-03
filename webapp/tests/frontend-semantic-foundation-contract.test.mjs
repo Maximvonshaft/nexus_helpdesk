@@ -16,13 +16,17 @@ const workspace = [
 
 test('one MUI theme and one bounded operator presentation own visual semantics', () => {
   const main = read('src/main.tsx')
+  const application = read('src/application.tsx')
   const theme = read('src/theme/nexusTheme.ts')
   const provider = read('src/theme/NexusThemeProvider.tsx')
   const presentation = read('src/app/OperatorPresentation.tsx')
-  assert.match(main, /NexusThemeProvider/)
+  assert.match(main, /await import\('\.\/application'\)/)
+  assert.match(application, /NexusThemeProvider/)
   assert.match(provider, /ThemeProvider/)
   assert.match(provider, /CssBaseline/)
-  assert.match(theme, /createTheme/)
+  assert.match(provider, /applyMuiLocale\(nexusTheme, muiLocale\)/)
+  assert.doesNotMatch(provider, /createTheme\(/)
+  assert.match(theme, /export const nexusTheme = createTheme/)
   for (const name of [
     'OperatorPageBoundary',
     'OperatorEmptyState',

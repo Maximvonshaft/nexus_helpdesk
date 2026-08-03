@@ -5,6 +5,10 @@ const TARGET_SPECS = [
   'e2e/operator-authorized-scope.spec.ts',
   'e2e/operator-workspace.spec.ts',
   'e2e/operator-ui-production-quality.spec.ts',
+  'e2e/i18n-production.spec.ts',
+  'e2e/i18n-runtime-integrity.spec.ts',
+  'e2e/i18n-runtime-hardening.spec.ts',
+  'e2e/i18n-evidence-preservation.spec.ts',
   'e2e/smoke.spec.ts',
 ]
 

@@ -7,6 +7,7 @@ const root = resolve(process.cwd())
 const read = (path) => readFileSync(resolve(root, path), 'utf8')
 
 const main = read('src/main.tsx')
+const application = read('src/application.tsx')
 const theme = read('src/theme/nexusTheme.ts')
 const provider = read('src/theme/NexusThemeProvider.tsx')
 const a11yCss = read('src/a11y.css')
@@ -20,11 +21,12 @@ test('MUI buttons and icon buttons meet the shared target and focus contract', (
   assert.match(theme, /outlineOffset:\s*2/)
 })
 
-test('global accessibility foundation loads without runtime patchers', () => {
-  assert.match(main, /import '@\/a11y\.css'/)
-  assert.match(main, /NexusThemeProvider/)
+test('global accessibility foundation loads once after the catalog bootstrap', () => {
+  assert.match(main, /await import\('\.\/application'\)/)
+  assert.match(application, /import '@\/a11y\.css'/)
+  assert.match(application, /NexusThemeProvider/)
   assert.match(provider, /<CssBaseline \/>/)
-  assert.doesNotMatch(main, /a11yRuntime|initA11yRuntimeRepair/)
+  assert.doesNotMatch(main + application, /a11yRuntime|initA11yRuntimeRepair/)
 })
 
 test('reduced motion is owned once by the MUI theme and CSS remains bounded', () => {
