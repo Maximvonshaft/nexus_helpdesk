@@ -1,0 +1,31 @@
+name: Cleanup Post-merge Evidence Probe
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    if: >-
+      github.event.pull_request.number == 925 &&
+      github.event.pull_request.head.ref == 'ops/post-merge-production-evidence-fa7da390' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Close probe PR and delete probe branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          gh api --method PATCH "/repos/${REPO}/pulls/${PR_NUMBER}" -f state=closed >/dev/null
+          encoded="${BRANCH//\//%2F}"
+          gh api --method DELETE "/repos/${REPO}/git/refs/heads/${encoded}" >/dev/null
