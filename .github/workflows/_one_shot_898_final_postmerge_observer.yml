@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 130
     env:
       MAIN_SHA: 36ccc400ab4a3b612fa4e5f3bed0a5e0d65a68c9
+      CANONICAL_RUN_ID: '30779665117'
       EVIDENCE_DIR: artifacts/final-postmerge-observer
     steps:
       - name: Checkout exact current main
@@ -35,7 +36,7 @@ jobs:
           test -z "$(git status --porcelain)"
           mkdir -p "$EVIDENCE_DIR"
 
-      - name: Observe official exact-main workflow chain
+      - name: Bind and verify official workflow chain
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -45,13 +46,14 @@ jobs:
           import json
           import os
           import time
-          import urllib.parse
+          import urllib.error
           import urllib.request
           from datetime import datetime, timezone
           from pathlib import Path
 
           repo = os.environ["GITHUB_REPOSITORY"]
           sha = os.environ["MAIN_SHA"]
+          canonical_id = int(os.environ["CANONICAL_RUN_ID"])
           token = os.environ["GH_TOKEN"]
           out = Path(os.environ["EVIDENCE_DIR"])
           required_jobs = {
@@ -60,104 +62,130 @@ jobs:
               "recovery",
               "bind-and-attest",
           }
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "nexus-final-postmerge-observer",
+          }
 
-          def get(path: str) -> dict:
-              request = urllib.request.Request(
-                  "https://api.github.com" + path,
-                  headers={
-                      "Accept": "application/vnd.github+json",
-                      "Authorization": f"Bearer {token}",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                      "User-Agent": "nexus-final-postmerge-observer",
-                  },
-              )
+          def get_json(path: str) -> dict:
+              request = urllib.request.Request("https://api.github.com" + path, headers=headers)
               with urllib.request.urlopen(request, timeout=30) as response:
                   return json.load(response)
 
-          def compact(run: dict | None) -> dict | None:
-              if run is None:
-                  return None
-              return {
-                  key: run.get(key)
-                  for key in (
-                      "id", "name", "event", "status", "conclusion",
-                      "head_branch", "head_sha", "run_number", "run_attempt",
-                      "created_at", "updated_at", "html_url", "path",
-                  )
-              }
+          def get_text(path: str) -> str:
+              request = urllib.request.Request("https://api.github.com" + path, headers=headers)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return response.read().decode("utf-8", errors="replace")
 
-          canonical = None
+          canonical = get_json(f"/repos/{repo}/actions/runs/{canonical_id}")
+          expected_canonical = {
+              "name": "Canonical Acceptance",
+              "event": "push",
+              "head_branch": "main",
+              "head_sha": sha,
+              "status": "completed",
+              "conclusion": "success",
+          }
+          for key, value in expected_canonical.items():
+              if canonical.get(key) != value:
+                  raise SystemExit(f"canonical mismatch: {key}={canonical.get(key)!r}, expected={value!r}")
+
           controlled = None
           controlled_jobs = None
+          guard_log = None
           for _ in range(480):
-              encoded = urllib.parse.quote(sha, safe="")
-              payload = get(f"/repos/{repo}/actions/runs?head_sha={encoded}&per_page=100")
-              runs = [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == sha]
-              canonical_runs = [
-                  run for run in runs
-                  if run.get("name") == "Canonical Acceptance"
-                  and run.get("event") == "push"
-                  and run.get("head_branch") == "main"
-              ]
-              canonical_runs.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
-              canonical = canonical_runs[-1] if canonical_runs else None
-              controlled_runs = [
-                  run for run in runs
+              payload = get_json(f"/repos/{repo}/actions/runs?event=workflow_run&per_page=100")
+              candidates = [
+                  run for run in payload.get("workflow_runs", [])
                   if run.get("name") == "controlled-candidate-convergence"
-                  and run.get("event") == "workflow_run"
+                  and run.get("created_at", "") >= canonical.get("updated_at", "")
               ]
-              controlled_runs.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
-              controlled = controlled_runs[-1] if controlled_runs else None
-
+              candidates.sort(key=lambda run: (run.get("created_at") or "", int(run["id"])))
+              for run in candidates:
+                  jobs_payload = get_json(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+                  jobs = jobs_payload.get("jobs", [])
+                  guard = next((job for job in jobs if job.get("name") == "guard-main"), None)
+                  if not guard or guard.get("status") != "completed":
+                      continue
+                  try:
+                      log = get_text(f"/repos/{repo}/actions/jobs/{guard['id']}/logs")
+                  except urllib.error.HTTPError:
+                      continue
+                  markers = (
+                      f"CANDIDATE_SHA: {sha}",
+                      f"SOURCE_SHA: {sha}",
+                      f"TRIGGER_RUN_ID: {canonical_id}",
+                      "TRIGGER_NAME: Canonical Acceptance",
+                      "TRIGGER_EVENT: push",
+                      "TRIGGER_BRANCH: main",
+                      "TRIGGER_CONCLUSION: success",
+                  )
+                  if all(marker in log for marker in markers):
+                      controlled = run
+                      controlled_jobs = {job.get("name"): job for job in jobs}
+                      guard_log = log
+                      break
               observation = {
-                  "schema": "nexus.final_postmerge_workflow_observation.v3",
+                  "schema": "nexus.final_postmerge_workflow_observation.v4",
                   "observed_at": datetime.now(timezone.utc).isoformat(),
                   "main_sha": sha,
-                  "canonical": compact(canonical),
-                  "controlled": compact(controlled),
+                  "canonical_run_id": canonical_id,
+                  "controlled_run_id": controlled.get("id") if controlled else None,
               }
               (out / "workflow-observation.json").write_text(
                   json.dumps(observation, indent=2, sort_keys=True) + "\n",
                   encoding="utf-8",
               )
-
-              if canonical and canonical.get("status") == "completed":
-                  if canonical.get("conclusion") != "success":
-                      raise SystemExit(f"exact-main Canonical failed: {canonical.get('id')} {canonical.get('conclusion')}")
-                  if controlled and controlled.get("status") == "completed":
-                      if controlled.get("conclusion") != "success":
-                          raise SystemExit(f"Controlled Convergence failed: {controlled.get('id')} {controlled.get('conclusion')}")
-                      jobs_payload = get(f"/repos/{repo}/actions/runs/{controlled['id']}/jobs?per_page=100")
-                      jobs = jobs_payload.get("jobs", [])
-                      by_name = {job.get("name"): job for job in jobs}
-                      missing = sorted(required_jobs - set(by_name))
-                      failed = {
-                          name: (by_name.get(name) or {}).get("conclusion")
-                          for name in sorted(required_jobs)
-                          if (by_name.get(name) or {}).get("conclusion") != "success"
-                      }
-                      if missing or failed:
-                          raise SystemExit(f"Controlled jobs invalid; missing={missing}; failed={failed}")
-                      controlled_jobs = {
-                          name: {
-                              "id": by_name[name].get("id"),
-                              "status": by_name[name].get("status"),
-                              "conclusion": by_name[name].get("conclusion"),
-                          }
-                          for name in sorted(required_jobs)
-                      }
-                      break
+              if controlled:
+                  if controlled.get("status") != "completed":
+                      time.sleep(15)
+                      continue
+                  if controlled.get("conclusion") != "success":
+                      raise SystemExit(
+                          f"official Controlled failed: {controlled.get('id')} {controlled.get('conclusion')}"
+                      )
+                  missing = sorted(required_jobs - set(controlled_jobs))
+                  failed = {
+                      name: (controlled_jobs.get(name) or {}).get("conclusion")
+                      for name in sorted(required_jobs)
+                      if (controlled_jobs.get(name) or {}).get("conclusion") != "success"
+                  }
+                  if missing or failed:
+                      raise SystemExit(f"official Controlled jobs invalid; missing={missing}; failed={failed}")
+                  break
               time.sleep(15)
           else:
-              raise SystemExit("exact-main workflow chain did not reach terminal success")
+              raise SystemExit("official Controlled run was not bound to exact Canonical trigger")
 
           result = {
-              "schema": "nexus.final_postmerge_workflow_result.v3",
+              "schema": "nexus.final_postmerge_workflow_result.v4",
               "status": "pass",
               "main_sha": sha,
-              "canonical": compact(canonical),
-              "controlled": compact(controlled),
-              "controlled_jobs": controlled_jobs,
+              "canonical": {
+                  key: canonical.get(key)
+                  for key in ("id", "name", "event", "head_branch", "head_sha", "status", "conclusion", "html_url")
+              },
+              "controlled": {
+                  key: controlled.get(key)
+                  for key in ("id", "name", "event", "head_branch", "head_sha", "status", "conclusion", "html_url")
+              },
+              "controlled_jobs": {
+                  name: {
+                      "id": controlled_jobs[name].get("id"),
+                      "status": controlled_jobs[name].get("status"),
+                      "conclusion": controlled_jobs[name].get("conclusion"),
+                  }
+                  for name in sorted(required_jobs)
+              },
+              "guard_trigger_binding": {
+                  "canonical_run_id": canonical_id,
+                  "source_sha": sha,
+                  "event": "push",
+                  "branch": "main",
+                  "conclusion": "success",
+              },
           }
           (out / "workflow-result.json").write_text(
               json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -174,13 +202,14 @@ jobs:
           if test -f "$EVIDENCE_DIR/workflow-result.json"; then
             test "$(jq -r '.status' "$EVIDENCE_DIR/workflow-result.json")" = "pass"
             test "$(jq -r '.main_sha' "$EVIDENCE_DIR/workflow-result.json")" = "$MAIN_SHA"
+            test "$(jq -r '.canonical.id' "$EVIDENCE_DIR/workflow-result.json")" = "$CANONICAL_RUN_ID"
           fi
 
       - name: Upload final exact-main workflow observation
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: final-postmerge-observer-36ccc400
+          name: final-postmerge-observer-36ccc400-v2
           path: artifacts/final-postmerge-observer
           retention-days: 14
           if-no-files-found: error
