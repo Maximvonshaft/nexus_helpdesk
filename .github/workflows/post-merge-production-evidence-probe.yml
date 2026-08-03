@@ -1,0 +1,185 @@
+name: Post-merge Production Evidence Probe
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  actions: read
+  attestations: read
+  contents: write
+  packages: read
+  pull-requests: write
+
+concurrency:
+  group: post-merge-production-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  TARGET_SHA: fa7da3904046b1e9eac3d605b9ea39e0f91419a9
+  EXPECTED_BRANCH: ops/post-merge-production-evidence-fa7da390
+
+jobs:
+  probe:
+    if: >-
+      github.event.pull_request.head.ref == 'ops/post-merge-production-evidence-fa7da390' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout probe branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Collect exact-main and controlled-candidate evidence
+        id: collect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/nexus-post-merge-evidence/candidate
+          api() {
+            gh api -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "$@"
+          }
+          find_run() {
+            local name="$1" event="$2" branch="$3"
+            api --method GET "/repos/${REPO}/actions/runs" -f head_sha="$TARGET_SHA" -f per_page=100 \
+              | jq -c --arg name "$name" --arg event "$event" --arg branch "$branch" '
+                  [.workflow_runs[]
+                    | select(.name == $name and .event == $event and .head_sha == env.TARGET_SHA)
+                    | select(($branch == "") or (.head_branch == $branch))]
+                  | sort_by(.run_number)
+                  | last // empty'
+          }
+          wait_for_run() {
+            local name="$1" event="$2" branch="$3" output="$4"
+            local run=""
+            for _ in $(seq 1 240); do
+              run="$(find_run "$name" "$event" "$branch")"
+              if [[ -n "$run" ]]; then
+                status="$(jq -r '.status' <<<"$run")"
+                if [[ "$status" == completed ]]; then
+                  printf '%s\n' "$run" > "$output"
+                  return 0
+                fi
+              fi
+              sleep 20
+            done
+            echo "workflow_run_timeout:${name}:${event}:${branch}" >&2
+            exit 1
+          }
+
+          wait_for_run 'Canonical Acceptance' 'push' 'main' /tmp/nexus-post-merge-evidence/canonical-run.json
+          canonical_conclusion="$(jq -r '.conclusion' /tmp/nexus-post-merge-evidence/canonical-run.json)"
+          test "$canonical_conclusion" = success
+          canonical_id="$(jq -r '.id' /tmp/nexus-post-merge-evidence/canonical-run.json)"
+          api "/repos/${REPO}/actions/runs/${canonical_id}/jobs?per_page=100" \
+            > /tmp/nexus-post-merge-evidence/canonical-jobs.json
+          jq -e '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 0' \
+            /tmp/nexus-post-merge-evidence/canonical-jobs.json >/dev/null
+          jq -e '[.jobs[] | select(.name == "required-gate" and .conclusion == "success")] | length == 1' \
+            /tmp/nexus-post-merge-evidence/canonical-jobs.json >/dev/null
+
+          wait_for_run 'controlled-candidate-convergence' 'workflow_run' '' /tmp/nexus-post-merge-evidence/convergence-run.json
+          convergence_conclusion="$(jq -r '.conclusion' /tmp/nexus-post-merge-evidence/convergence-run.json)"
+          test "$convergence_conclusion" = success
+          convergence_id="$(jq -r '.id' /tmp/nexus-post-merge-evidence/convergence-run.json)"
+          api "/repos/${REPO}/actions/runs/${convergence_id}/jobs?per_page=100" \
+            > /tmp/nexus-post-merge-evidence/convergence-jobs.json
+          jq -e '[.jobs[] | select(.conclusion != "success" and .conclusion != "skipped")] | length == 0' \
+            /tmp/nexus-post-merge-evidence/convergence-jobs.json >/dev/null
+
+          api "/repos/${REPO}/actions/runs/${convergence_id}/artifacts?per_page=100" \
+            > /tmp/nexus-post-merge-evidence/convergence-artifacts.json
+          candidate_name="controlled-candidate-${TARGET_SHA}"
+          build_name="controlled-build-${TARGET_SHA}"
+          recovery_name="controlled-recovery-${TARGET_SHA}"
+          for required in "$candidate_name" "$build_name" "$recovery_name"; do
+            jq -e --arg name "$required" '[.artifacts[] | select(.name == $name and .expired == false)] | length == 1' \
+              /tmp/nexus-post-merge-evidence/convergence-artifacts.json >/dev/null
+          done
+          artifact_id="$(jq -r --arg name "$candidate_name" '.artifacts[] | select(.name == $name) | .id' /tmp/nexus-post-merge-evidence/convergence-artifacts.json)"
+          api "/repos/${REPO}/actions/artifacts/${artifact_id}/zip" \
+            > /tmp/nexus-post-merge-evidence/controlled-candidate.zip
+          unzip -q /tmp/nexus-post-merge-evidence/controlled-candidate.zip \
+            -d /tmp/nexus-post-merge-evidence/candidate
+
+          manifest="$(find /tmp/nexus-post-merge-evidence/candidate -name controlled-candidate-manifest.json -type f -print -quit)"
+          receipt="$(find /tmp/nexus-post-merge-evidence/candidate -name canonical-acceptance-receipt.json -type f -print -quit)"
+          scan="$(find /tmp/nexus-post-merge-evidence/candidate -name artifact-scan.json -type f -print -quit)"
+          env_file="$(find /tmp/nexus-post-merge-evidence/candidate -name controlled-candidate.env -type f -print -quit)"
+          test -n "$manifest"
+          test -n "$receipt"
+          test -n "$scan"
+          test -n "$env_file"
+          jq -e --arg sha "$TARGET_SHA" '.candidate.source_sha == $sha and .candidate.frontend_build_sha == $sha' "$manifest" >/dev/null
+          jq -e '.status == "pass"' "$scan" >/dev/null
+          jq -e --arg sha "$TARGET_SHA" '.source_sha == $sha and .event == "push" and .conclusion == "success"' "$receipt" >/dev/null
+          app_reference="$(jq -r '.candidate.registry_reference' "$manifest")"
+          app_digest="$(jq -r '.candidate.registry_digest' "$manifest")"
+          sidecar_reference="$(jq -r '.candidate.whatsapp_sidecar.registry_reference' "$manifest")"
+          sidecar_digest="$(jq -r '.candidate.whatsapp_sidecar.registry_digest' "$manifest")"
+          app_attestation="$(jq -r '.candidate.attestation_url' "$manifest")"
+          sidecar_attestation="$(jq -r '.candidate.whatsapp_sidecar.attestation_url' "$manifest")"
+          migration="$(jq -r '.candidate.migration_revision' "$manifest")"
+          [[ "$app_reference" =~ ^ghcr\.io/.+@sha256:[0-9a-f]{64}$ ]]
+          [[ "$sidecar_reference" =~ ^ghcr\.io/.+@sha256:[0-9a-f]{64}$ ]]
+          [[ "$app_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$sidecar_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$app_attestation" =~ ^https://github\.com/ ]]
+          [[ "$sidecar_attestation" =~ ^https://github\.com/ ]]
+          grep -Fxq "GIT_SHA=${TARGET_SHA}" "$env_file"
+          grep -Fxq "ACTIVATION_EVIDENCE_SOURCE_SHA=${TARGET_SHA}" "$env_file"
+          grep -Fxq "ACTIVATION_EVIDENCE_IMAGE_DIGEST=${app_digest}" "$env_file"
+
+          jq -n \
+            --arg source_sha "$TARGET_SHA" \
+            --argjson canonical_run_id "$canonical_id" \
+            --arg canonical_url "$(jq -r '.html_url' /tmp/nexus-post-merge-evidence/canonical-run.json)" \
+            --argjson convergence_run_id "$convergence_id" \
+            --arg convergence_url "$(jq -r '.html_url' /tmp/nexus-post-merge-evidence/convergence-run.json)" \
+            --arg application_reference "$app_reference" \
+            --arg application_digest "$app_digest" \
+            --arg application_attestation "$app_attestation" \
+            --arg sidecar_reference "$sidecar_reference" \
+            --arg sidecar_digest "$sidecar_digest" \
+            --arg sidecar_attestation "$sidecar_attestation" \
+            --arg migration_revision "$migration" \
+            '{schema:"nexus.post-merge-production-evidence.v1",status:"pass",source_sha:$source_sha,canonical_acceptance:{run_id:$canonical_run_id,url:$canonical_url,event:"push",branch:"main",conclusion:"success",required_gate:"success"},controlled_candidate:{run_id:$convergence_run_id,url:$convergence_url,conclusion:"success",application_reference:$application_reference,application_digest:$application_digest,application_attestation:$application_attestation,sidecar_reference:$sidecar_reference,sidecar_digest:$sidecar_digest,sidecar_attestation:$sidecar_attestation,migration_revision:$migration_revision,registry_pullback_verified:true,recovery_gate:true,deployment_performed:false,external_effects_authorized:false}}' \
+            > /tmp/nexus-post-merge-evidence/summary.json
+          jq . /tmp/nexus-post-merge-evidence/summary.json
+
+      - name: Publish evidence to probe PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -Eeuo pipefail
+          summary="$(jq -c . /tmp/nexus-post-merge-evidence/summary.json)"
+          body=$(cat <<EOF
+          ## Post-merge production evidence
+
+          \`\`\`json
+          ${summary}
+          \`\`\`
+          EOF
+          )
+          gh api --method POST "/repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
+
+      - name: Close probe PR and delete probe branch
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -Eeuo pipefail
+          gh api --method PATCH "/repos/${REPO}/pulls/${PR_NUMBER}" -f state=closed >/dev/null
+          gh api --method DELETE "/repos/${REPO}/git/refs/heads/${EXPECTED_BRANCH//\//%2F}" >/dev/null
