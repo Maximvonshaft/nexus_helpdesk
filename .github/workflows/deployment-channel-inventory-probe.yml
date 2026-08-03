@@ -1,0 +1,140 @@
+name: Deployment Channel Inventory Probe
+
+on:
+  pull_request:
+    types: [ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: deployment-channel-inventory-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    if: >-
+      github.event.pull_request.head.ref == 'ops/post-merge-production-evidence-fa7da390' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+      PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+      PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+      PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+      PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+      PRODUCTION_SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+      PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      NEXUS_PROD_HOST: ${{ secrets.NEXUS_PROD_HOST }}
+      NEXUS_PROD_USER: ${{ secrets.NEXUS_PROD_USER }}
+      NEXUS_PROD_SSH_KEY: ${{ secrets.NEXUS_PROD_SSH_KEY }}
+      NEXUS_PROD_PORT: ${{ secrets.NEXUS_PROD_PORT }}
+      NEXUS_SSH_HOST: ${{ secrets.NEXUS_SSH_HOST }}
+      NEXUS_SSH_USER: ${{ secrets.NEXUS_SSH_USER }}
+      NEXUS_SSH_KEY: ${{ secrets.NEXUS_SSH_KEY }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      STAGING_METRICS_TOKEN: ${{ secrets.STAGING_METRICS_TOKEN }}
+      VAR_PROD_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+      VAR_PROD_SSH_USER: ${{ vars.PROD_SSH_USER }}
+      VAR_PROD_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+      VAR_PRODUCTION_HOST: ${{ vars.PRODUCTION_HOST }}
+      VAR_PRODUCTION_USER: ${{ vars.PRODUCTION_USER }}
+      VAR_PRODUCTION_PORT: ${{ vars.PRODUCTION_PORT }}
+      VAR_NEXUS_PROD_HOST: ${{ vars.NEXUS_PROD_HOST }}
+      VAR_NEXUS_PROD_USER: ${{ vars.NEXUS_PROD_USER }}
+      VAR_NEXUS_PROD_PORT: ${{ vars.NEXUS_PROD_PORT }}
+    steps:
+      - name: Inventory channel availability without revealing values
+        id: inventory
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, os, socket
+          names = [
+            'PROD_SSH_HOST','PROD_SSH_USER','PROD_SSH_PRIVATE_KEY','PROD_SSH_PORT',
+            'PRODUCTION_SSH_HOST','PRODUCTION_SSH_USER','PRODUCTION_SSH_PRIVATE_KEY','PRODUCTION_SSH_PORT',
+            'DEPLOY_HOST','DEPLOY_USER','DEPLOY_SSH_KEY','DEPLOY_PORT',
+            'NEXUS_PROD_HOST','NEXUS_PROD_USER','NEXUS_PROD_SSH_KEY','NEXUS_PROD_PORT',
+            'NEXUS_SSH_HOST','NEXUS_SSH_USER','NEXUS_SSH_KEY',
+            'SSH_HOST','SSH_USER','SSH_PRIVATE_KEY',
+            'SERVER_HOST','SERVER_USER','SERVER_SSH_KEY',
+            'CLOUDFLARE_API_TOKEN','CF_API_TOKEN','CLOUDFLARE_TUNNEL_TOKEN',
+            'CLOUDFLARE_ACCOUNT_ID','CLOUDFLARE_ZONE_ID','STAGING_METRICS_TOKEN',
+            'VAR_PROD_SSH_HOST','VAR_PROD_SSH_USER','VAR_PROD_SSH_PORT',
+            'VAR_PRODUCTION_HOST','VAR_PRODUCTION_USER','VAR_PRODUCTION_PORT',
+            'VAR_NEXUS_PROD_HOST','VAR_NEXUS_PROD_USER','VAR_NEXUS_PROD_PORT',
+          ]
+          presence = {name: bool(os.environ.get(name, '').strip()) for name in names}
+          dns = []
+          try:
+            dns = sorted({item[4][0] for item in socket.getaddrinfo('mcs.speedaf.com', 443, type=socket.SOCK_STREAM)})
+          except Exception as exc:
+            dns = [f'error:{type(exc).__name__}']
+          ports = {}
+          for port in (22, 80, 443):
+            try:
+              with socket.create_connection(('178.105.160.174', port), timeout=5):
+                ports[str(port)] = True
+            except Exception:
+              ports[str(port)] = False
+          groups = {
+            'prod': all(presence.get(x) for x in ('PROD_SSH_HOST','PROD_SSH_USER','PROD_SSH_PRIVATE_KEY')),
+            'production': all(presence.get(x) for x in ('PRODUCTION_SSH_HOST','PRODUCTION_SSH_USER','PRODUCTION_SSH_PRIVATE_KEY')),
+            'deploy': all(presence.get(x) for x in ('DEPLOY_HOST','DEPLOY_USER','DEPLOY_SSH_KEY')),
+            'nexus_prod': all(presence.get(x) for x in ('NEXUS_PROD_HOST','NEXUS_PROD_USER','NEXUS_PROD_SSH_KEY')),
+            'nexus': all(presence.get(x) for x in ('NEXUS_SSH_HOST','NEXUS_SSH_USER','NEXUS_SSH_KEY')),
+            'generic_ssh': all(presence.get(x) for x in ('SSH_HOST','SSH_USER','SSH_PRIVATE_KEY')),
+            'server': all(presence.get(x) for x in ('SERVER_HOST','SERVER_USER','SERVER_SSH_KEY')),
+            'cloudflare_api': bool(presence.get('CLOUDFLARE_API_TOKEN') or presence.get('CF_API_TOKEN')),
+            'cloudflare_tunnel': presence.get('CLOUDFLARE_TUNNEL_TOKEN', False),
+          }
+          result = {
+            'schema':'nexus.deployment-channel-inventory.v1',
+            'status':'pass',
+            'secret_presence':presence,
+            'complete_channels':groups,
+            'public_dns_addresses':dns,
+            'historical_server_ports':ports,
+          }
+          with open('/tmp/deployment-channel-inventory.json','w',encoding='utf-8') as f:
+            json.dump(result,f,indent=2,sort_keys=True)
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+
+      - name: Publish bounded inventory
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -Eeuo pipefail
+          payload="$(jq -c . /tmp/deployment-channel-inventory.json)"
+          body=$(cat <<EOF
+          ## Deployment channel inventory
+
+          \`\`\`json
+          ${payload}
+          \`\`\`
+          EOF
+          )
+          gh api --method POST "/repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="$body" >/dev/null
