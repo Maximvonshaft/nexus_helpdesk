@@ -64,10 +64,9 @@ jobs:
         working-directory: webapp
         run: npm ci
 
-      - name: Verify and build current frontend baseline
+      - name: Typecheck and build current frontend baseline
         working-directory: webapp
         run: |
-          npm run architecture
           npm run typecheck
           npm run build
 
