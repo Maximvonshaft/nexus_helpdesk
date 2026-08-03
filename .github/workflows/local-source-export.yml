@@ -15,7 +15,7 @@ jobs:
   export-local-runtime:
     if: github.event.pull_request.head.ref == 'automation/local-export-20260803-ai-dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout exact pull request head
         uses: actions/checkout@v4
@@ -64,6 +64,21 @@ jobs:
         working-directory: webapp
         run: npm ci
 
+      - name: Verify and build current frontend baseline
+        working-directory: webapp
+        run: |
+          npm run architecture
+          npm run typecheck
+          npm run build
+
+      - name: Archive exact frontend dependencies and baseline build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf nexus-webapp-node-modules.tgz -C webapp node_modules
+          tar -czf nexus-frontend-dist-before.tgz frontend_dist
+          sha256sum nexus-webapp-node-modules.tgz nexus-frontend-dist-before.tgz > NEXUS_FRONTEND_SHA256SUMS.txt
+
       - name: Install Playwright Firefox runtime
         working-directory: webapp
         env:
@@ -81,10 +96,13 @@ jobs:
       - name: Upload local runtime export
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-local-runtime-fa7da390
+          name: nexus-local-runtime-full-fa7da390
           path: |
             nexus-source.zip
             NEXUS_SOURCE_SHA256SUMS.txt
+            nexus-webapp-node-modules.tgz
+            nexus-frontend-dist-before.tgz
+            NEXUS_FRONTEND_SHA256SUMS.txt
             nexus-playwright-firefox-1.61.1.tgz
             PLAYWRIGHT_FIREFOX_FILES.txt
             PLAYWRIGHT_FIREFOX_SHA256SUMS.txt
