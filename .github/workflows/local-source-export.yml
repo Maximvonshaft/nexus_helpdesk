@@ -1,4 +1,4 @@
-name: Local Source Export
+name: Local Build Dependencies
 
 on:
   pull_request:
@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  export-source:
+  prepare-local-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - name: Checkout exact pull request head
         uses: actions/checkout@v4
@@ -22,38 +22,61 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Record immutable source identity
+      - name: Record immutable identities
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD | tee SOURCE_COMMIT.txt
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          git status --short
+          printf '%s\n' "${{ github.event.pull_request.base.sha }}" > BASE_SOURCE_COMMIT.txt
+          printf '%s\n' "${{ github.event.pull_request.head.sha }}" > EXPORT_HEAD_COMMIT.txt
 
-      - name: Build bounded source archive
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Install exact frontend dependency lock
+        working-directory: webapp
+        run: npm ci
+
+      - name: Run baseline frontend contracts
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee ../BASELINE_FRONTEND_TESTS.log
+          npm run architecture 2>&1 | tee ../BASELINE_FRONTEND_ARCHITECTURE.log
+
+      - name: Build exact baseline frontend
+        working-directory: webapp
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ../BASELINE_FRONTEND_BUILD.log
+
+      - name: Package local build inputs
         shell: bash
         run: |
           set -euo pipefail
-          zip -q -r nexus-source.zip . \
-            -x '.git/*' \
-               'node_modules/*' \
-               'webapp/node_modules/*' \
-               'frontend_dist/*' \
-               '**/__pycache__/*' \
-               '**/.pytest_cache/*' \
-               '**/.mypy_cache/*' \
-               '**/.ruff_cache/*' \
-               '**/.venv/*' \
-               '**/venv/*' \
-               '*.env' \
-               '.env' \
-               '.env.*'
+          tar -czf nexus-webapp-node-modules.tgz webapp/node_modules
+          zip -q -r nexus-baseline-frontend-dist.zip frontend_dist
+          sha256sum nexus-webapp-node-modules.tgz nexus-baseline-frontend-dist.zip > LOCAL_BUILD_SHA256SUMS.txt
 
-      - name: Upload source archive
+      - name: Upload local build inputs
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-source-fa7da390
-          path: nexus-source.zip
+          name: nexus-local-build-inputs-fa7da390
+          path: |
+            nexus-webapp-node-modules.tgz
+            nexus-baseline-frontend-dist.zip
+            BASE_SOURCE_COMMIT.txt
+            EXPORT_HEAD_COMMIT.txt
+            BASELINE_FRONTEND_TESTS.log
+            BASELINE_FRONTEND_ARCHITECTURE.log
+            BASELINE_FRONTEND_BUILD.log
+            LOCAL_BUILD_SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
